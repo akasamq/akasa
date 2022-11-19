@@ -22,7 +22,7 @@ struct Cli {
 enum Commands {
     /// Start the broker
     Start {
-        /// The ip:port pair to bind
+        /// The socket address to bind
         #[clap(long, value_name = "IP:PORT", default_value = "127.0.0.1:1883")]
         bind: SocketAddr,
     },
