@@ -90,13 +90,13 @@ async fn echo(
     // FIXME: message length can be 64+ KB
     let mut buf = [0u8; 1024];
     loop {
-        let msg: Msg = async { Ok(Msg::Socket(conn.read(&mut buf).await?)) }
+        let msg: Msg = async { conn.read(&mut buf).await.map(Msg::Socket) }
             .or(async {
-                let data = messages
+                messages
                     .recv_async()
                     .await
-                    .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
-                Ok::<Msg, io::Error>(Msg::Channel(data))
+                    .map(Msg::Channel)
+                    .map_err(|_| io::ErrorKind::BrokenPipe.into())
             })
             .await?;
         match msg {
