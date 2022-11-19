@@ -1,4 +1,3 @@
-
 pub fn init() {
     if std::env::var("RUST_LOG").is_err() {
         // should recognize RUST_LOG_STYLE environment variable
