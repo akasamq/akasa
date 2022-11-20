@@ -29,6 +29,7 @@ pub struct NodeContent {
 
 impl RouteTable {
     pub fn get_matches(&self, topic_name: &TopicNameRef) -> Vec<Arc<RwLock<NodeContent>>> {
+        // FIXME: revist `split_once`, handle last split correct
         let (topic_item, rest_items) = topic_name.split_once(LEVEL_SEP).expect("split once");
         let mut filters = Vec::new();
         for item in [topic_item, MATCH_ALL, MATCH_ONE] {
@@ -40,6 +41,7 @@ impl RouteTable {
     }
 
     pub fn subscribe(&self, topic_filter: &TopicFilterRef, fd: RawFd) {
+        // FIXME: revist `split_once`, handle last split correct
         let (filter_item, rest_items) = topic_filter.split_once(LEVEL_SEP).expect("split once");
         // Since subscribe is not an frequent action, string clone here is acceptable.
         self.nodes
@@ -49,6 +51,7 @@ impl RouteTable {
     }
 
     pub fn unsubscribe(&self, topic_filter: &TopicFilterRef, fd: RawFd) {
+        // FIXME: revist `split_once`, handle last split correct
         let (filter_item, rest_items) = topic_filter.split_once(LEVEL_SEP).expect("split once");
         if let Some(mut pair) = self.nodes.get_mut(filter_item) {
             if pair.value_mut().remove(rest_items, fd) {
@@ -80,6 +83,7 @@ impl RouteNode {
                 filters.push(Arc::clone(&self.content));
             }
         } else {
+            // FIXME: revist `split_once`, handle last split correct
             if let Some((topic_item, rest_items)) = topic_items.split_once(LEVEL_SEP) {
                 for item in [topic_item, MATCH_ALL, MATCH_ONE] {
                     if let Some(pair) = self.nodes.get(item) {
@@ -93,6 +97,7 @@ impl RouteNode {
     }
 
     fn insert(&self, topic_filter: &TopicFilterRef, filter_items: &str, fd: RawFd) {
+        // FIXME: revist `split_once`, handle last split correct
         if let Some((filter_item, rest_items)) = filter_items.split_once(LEVEL_SEP) {
             self.nodes
                 .entry(filter_item.to_string())
@@ -109,6 +114,7 @@ impl RouteNode {
     }
 
     fn remove(&self, filter_items: &str, fd: RawFd) -> bool {
+        // FIXME: revist `split_once`, handle last split correct
         if let Some((filter_item, rest_items)) = filter_items.split_once(LEVEL_SEP) {
             if let Some(mut pair) = self.nodes.get_mut(filter_item) {
                 if pair.value_mut().remove(rest_items, fd) {
