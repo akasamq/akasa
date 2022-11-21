@@ -1,10 +1,9 @@
-use std::ops::Deref;
 use std::os::unix::io::RawFd;
 use std::sync::Arc;
 
 use dashmap::DashMap;
 use hashbrown::HashSet;
-use mqtt::{TopicFilter, TopicFilterRef, TopicNameRef};
+use mqtt::TopicFilter;
 use parking_lot::RwLock;
 
 const MATCH_ALL: &str = "#";
@@ -12,7 +11,7 @@ const MATCH_ONE: &str = "+";
 const LEVEL_SEP: char = '/';
 
 pub struct RouteTable {
-    nodes: Arc<DashMap<String, RouteNode>>,
+    nodes: DashMap<String, RouteNode>,
 }
 
 struct RouteNode {
@@ -31,12 +30,12 @@ pub struct NodeContent {
 impl RouteTable {
     pub fn new() -> RouteTable {
         RouteTable {
-            nodes: Arc::new(DashMap::new()),
+            nodes: DashMap::new(),
         }
     }
 
-    pub fn get_matches(&self, topic_name: &TopicNameRef) -> Vec<Arc<RwLock<NodeContent>>> {
-        let (topic_item, rest_items) = split_topic(topic_name.deref());
+    pub fn get_matches(&self, topic_name: &str) -> Vec<Arc<RwLock<NodeContent>>> {
+        let (topic_item, rest_items) = split_topic(topic_name);
         let mut filters = Vec::new();
         for item in [topic_item, MATCH_ALL, MATCH_ONE] {
             if let Some(pair) = self.nodes.get(item) {
@@ -46,8 +45,8 @@ impl RouteTable {
         filters
     }
 
-    pub fn subscribe(&self, topic_filter: &TopicFilterRef, fd: RawFd) {
-        let (filter_item, rest_items) = split_topic(topic_filter.deref());
+    pub fn subscribe(&self, topic_filter: &str, fd: RawFd) {
+        let (filter_item, rest_items) = split_topic(topic_filter);
         // Since subscribe is not an frequent action, string clone here is acceptable.
         self.nodes
             .entry(filter_item.to_string())
@@ -55,8 +54,8 @@ impl RouteTable {
             .insert(topic_filter, rest_items, fd);
     }
 
-    pub fn unsubscribe(&self, topic_filter: &TopicFilterRef, fd: RawFd) {
-        let (filter_item, rest_items) = split_topic(topic_filter.deref());
+    pub fn unsubscribe(&self, topic_filter: &str, fd: RawFd) {
+        let (filter_item, rest_items) = split_topic(topic_filter);
         // bool variable is for resolve dead lock of access `self.nodes`
         let mut remove_node = false;
         if let Some(mut pair) = self.nodes.get_mut(filter_item) {
@@ -101,7 +100,7 @@ impl RouteNode {
         }
     }
 
-    fn insert(&self, topic_filter: &TopicFilterRef, filter_items: Option<&str>, fd: RawFd) {
+    fn insert(&self, topic_filter: &str, filter_items: Option<&str>, fd: RawFd) {
         if let Some(filter_items) = filter_items {
             let (filter_item, rest_items) = split_topic(filter_items);
             self.nodes
@@ -111,8 +110,7 @@ impl RouteNode {
         } else {
             let mut content = self.content.write();
             if content.topic_filter.is_none() {
-                content.topic_filter =
-                    Some(unsafe { TopicFilter::new_unchecked(topic_filter.deref()) });
+                content.topic_filter = Some(unsafe { TopicFilter::new_unchecked(topic_filter) });
             }
             content.clients.insert(fd);
         }
