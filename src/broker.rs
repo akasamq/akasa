@@ -48,9 +48,10 @@ async fn broker(id: usize, bind: SocketAddr, global_state: Arc<GlobalState>) -> 
         let (sender, receiver) = bounded(4);
         global_state.connections.insert(fd, sender);
         log::info!(
-            "executor {:03}, {} connected, total {} connections ",
+            "executor {:03}, #{} {} connected, total {} connections ",
             id,
             peer_addr,
+            fd,
             global_state.connections.len()
         );
         spawn_local({
@@ -85,9 +86,10 @@ async fn handle_connection(
         Internal((RawFd, InternalMsg)),
     }
 
+    let mut session = mqtt::Session::default();
     loop {
         let recv_data = async {
-            mqtt::handle_conntion(&mut conn, current_fd, global_state)
+            mqtt::handle_conntion(&mut session, &mut conn, current_fd, global_state)
                 .await
                 .map(Msg::Socket)
         };

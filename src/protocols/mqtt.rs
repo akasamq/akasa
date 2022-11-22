@@ -5,24 +5,33 @@ use std::sync::Arc;
 use bytes::Bytes;
 use dashmap::DashMap;
 use flume::Sender;
-use futures_lite::io::AsyncReadExt;
+use futures_lite::io::{AsyncReadExt, AsyncWriteExt};
 use glommio::net::{Preallocated, TcpStream};
 
 use mqtt::{
     control::{
         fixed_header::FixedHeader,
         packet_type::{ControlType, PacketType},
+        variable_header::ConnectReturnCode,
     },
     packet::{
-        ConnectPacket, DisconnectPacket, PingreqPacket, PublishPacket, SubscribePacket,
+        suback::SubscribeReturnCode, ConnackPacket, ConnectPacket, DisconnectPacket, PingreqPacket,
+        PingrespPacket, PubackPacket, PublishPacket, SubackPacket, SubscribePacket, UnsubackPacket,
         UnsubscribePacket, VariablePacket,
     },
-    Decodable,
+    Decodable, Encodable, TopicName,
 };
 
 use crate::state::{GlobalState, InternalMsg};
 
+#[derive(Default)]
+pub struct Session {
+    connected: bool,
+    disconnected: bool,
+}
+
 pub async fn handle_conntion(
+    session: &mut Session,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
     global_state: &Arc<GlobalState>,
@@ -62,37 +71,47 @@ pub async fn handle_conntion(
         }
     };
 
+    // FIXME: rewrite with better performance
     let mut buffer = vec![0u8; fixed_header.remaining_length as usize];
     conn.read_exact(&mut buffer).await?;
     let packet = VariablePacket::decode_with(&mut Cursor::new(buffer), Some(fixed_header))
         .map_err(|err| io::Error::from(io::ErrorKind::InvalidData))?;
-    handle_packet(packet, current_fd, global_state).await?;
-    Ok(false)
+    handle_packet(session, packet, conn, current_fd, global_state).await?;
+    Ok(session.disconnected)
 }
 
+#[inline]
 async fn handle_packet(
+    session: &mut Session,
     packet: VariablePacket,
+    conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
     global_state: &Arc<GlobalState>,
 ) -> io::Result<()> {
+    if !matches!(packet, VariablePacket::ConnectPacket(..)) && !session.connected {
+        log::info!("#{} not connected", current_fd);
+        return Err(io::Error::from(io::ErrorKind::InvalidData));
+    }
     match packet {
         VariablePacket::ConnectPacket(packet) => {
-            handle_connect(packet, current_fd, global_state).await?;
+            handle_connect(packet, conn, current_fd, global_state).await?;
+            session.connected = true;
         }
         VariablePacket::DisconnectPacket(packet) => {
-            handle_disconnect(packet, current_fd, global_state).await?;
+            handle_disconnect(packet, conn, current_fd, global_state).await?;
+            session.disconnected = true;
         }
         VariablePacket::PublishPacket(packet) => {
-            handle_publish(packet, current_fd, global_state).await?;
+            handle_publish(packet, conn, current_fd, global_state).await?;
         }
         VariablePacket::SubscribePacket(packet) => {
-            handle_subscribe(packet, current_fd, global_state).await?;
+            handle_subscribe(packet, conn, current_fd, global_state).await?;
         }
         VariablePacket::UnsubscribePacket(packet) => {
-            handle_unsubscribe(packet, current_fd, global_state).await?;
+            handle_unsubscribe(packet, conn, current_fd, global_state).await?;
         }
         VariablePacket::PingreqPacket(packet) => {
-            handle_pingreq(packet, current_fd, global_state).await?;
+            handle_pingreq(packet, conn, current_fd, global_state).await?;
         }
         _ => {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
@@ -101,49 +120,133 @@ async fn handle_packet(
     Ok(())
 }
 
+#[inline]
 async fn handle_connect(
     packet: ConnectPacket,
+    conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
     global_state: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    Ok(())
-}
-async fn handle_disconnect(
-    packet: DisconnectPacket,
-    current_fd: RawFd,
-    global_state: &Arc<GlobalState>,
-) -> io::Result<()> {
-    Ok(())
-}
-async fn handle_publish(
-    packet: PublishPacket,
-    current_fd: RawFd,
-    global_state: &Arc<GlobalState>,
-) -> io::Result<()> {
-    Ok(())
-}
-async fn handle_subscribe(
-    packet: SubscribePacket,
-    current_fd: RawFd,
-    global_state: &Arc<GlobalState>,
-) -> io::Result<()> {
-    Ok(())
-}
-async fn handle_unsubscribe(
-    packet: UnsubscribePacket,
-    current_fd: RawFd,
-    global_state: &Arc<GlobalState>,
-) -> io::Result<()> {
-    Ok(())
-}
-async fn handle_pingreq(
-    packet: PingreqPacket,
-    current_fd: RawFd,
-    global_state: &Arc<GlobalState>,
-) -> io::Result<()> {
+    log::debug!("#{} received a connect packet: {:#?}", current_fd, packet);
+    let rv_packet = ConnackPacket::new(false, ConnectReturnCode::ConnectionAccepted);
+    let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+    rv_packet.encode(&mut buf)?;
+    conn.write_all(&buf).await?;
     Ok(())
 }
 
+#[inline]
+async fn handle_disconnect(
+    packet: DisconnectPacket,
+    conn: &mut TcpStream<Preallocated>,
+    current_fd: RawFd,
+    global_state: &Arc<GlobalState>,
+) -> io::Result<()> {
+    log::debug!(
+        "#{} received a disconnect packet: {:#?}",
+        current_fd,
+        packet
+    );
+    Ok(())
+}
+
+#[inline]
+async fn handle_publish(
+    packet: PublishPacket,
+    conn: &mut TcpStream<Preallocated>,
+    current_fd: RawFd,
+    global_state: &Arc<GlobalState>,
+) -> io::Result<()> {
+    log::debug!("#{} received a publish packet: {:#?}", current_fd, packet);
+    let msg = InternalMsg::Publish {
+        topic_name: Arc::new(TopicName::new(packet.topic_name()).unwrap()),
+        qos: packet.qos(),
+        payload: Arc::new(packet.payload().to_vec()),
+    };
+    let matches = global_state.route_table.get_matches(packet.topic_name());
+    let mut senders = Vec::new();
+    for content in matches {
+        let content = content.read();
+        for (fd, qos) in &content.clients {
+            if let Some(pair) = global_state.connections.get(fd) {
+                senders.push((*pair.key(), pair.value().clone()));
+            }
+        }
+    }
+
+    for (sender_fd, sender) in senders {
+        if let Err(err) = sender.send_async((current_fd, msg.clone())).await {
+            log::error!("send publish to connection #{} failed: {}", sender_fd, err);
+        }
+    }
+
+    if let Some(pkid) = packet.qos().split().1 {
+        let rv_packet = PubackPacket::new(pkid);
+        let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+        rv_packet.encode(&mut buf)?;
+        conn.write_all(&buf).await?;
+    }
+    Ok(())
+}
+
+#[inline]
+async fn handle_subscribe(
+    packet: SubscribePacket,
+    conn: &mut TcpStream<Preallocated>,
+    current_fd: RawFd,
+    global_state: &Arc<GlobalState>,
+) -> io::Result<()> {
+    log::debug!("#{} received a subscribe packet: {:#?}", current_fd, packet);
+    let mut return_codes = Vec::with_capacity(packet.subscribes().len());
+    for (filter, qos) in packet.subscribes() {
+        global_state.route_table.subscribe(filter, current_fd, *qos);
+        return_codes.push(SubscribeReturnCode::MaximumQoSLevel0);
+    }
+    let rv_packet = SubackPacket::new(packet.packet_identifier(), return_codes);
+    let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+    rv_packet.encode(&mut buf)?;
+    conn.write_all(&buf).await?;
+    Ok(())
+}
+
+#[inline]
+async fn handle_unsubscribe(
+    packet: UnsubscribePacket,
+    conn: &mut TcpStream<Preallocated>,
+    current_fd: RawFd,
+    global_state: &Arc<GlobalState>,
+) -> io::Result<()> {
+    log::debug!(
+        "#{} received a unsubscribe packet: {:#?}",
+        current_fd,
+        packet
+    );
+    for filter in packet.subscribes() {
+        global_state.route_table.unsubscribe(filter, current_fd);
+    }
+    let rv_packet = UnsubackPacket::new(packet.packet_identifier());
+    let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+    rv_packet.encode(&mut buf)?;
+    conn.write_all(&buf).await?;
+    Ok(())
+}
+
+#[inline]
+async fn handle_pingreq(
+    packet: PingreqPacket,
+    conn: &mut TcpStream<Preallocated>,
+    current_fd: RawFd,
+    global_state: &Arc<GlobalState>,
+) -> io::Result<()> {
+    log::debug!("#{} received a ping packet", current_fd);
+    let rv_packet = PingrespPacket::new();
+    let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+    rv_packet.encode(&mut buf)?;
+    conn.write_all(&buf).await?;
+    Ok(())
+}
+
+#[inline]
 pub async fn handle_internal(
     sender: RawFd,
     msg: InternalMsg,
@@ -151,5 +254,19 @@ pub async fn handle_internal(
     current_fd: RawFd,
     global_state: &Arc<GlobalState>,
 ) -> io::Result<()> {
+    match msg {
+        InternalMsg::Publish {
+            topic_name,
+            qos,
+            payload,
+        } => {
+            log::debug!("#{} received publish message from #{}", current_fd, sender);
+            let rv_packet =
+                PublishPacket::new(TopicName::clone(&topic_name), qos, payload.to_vec());
+            let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+            rv_packet.encode(&mut buf)?;
+            conn.write_all(&buf).await?;
+        }
+    }
     Ok(())
 }

@@ -2,8 +2,8 @@ use std::os::unix::io::RawFd;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use hashbrown::HashSet;
-use mqtt::TopicFilter;
+use hashbrown::HashMap;
+use mqtt::{qos::QualityOfService, TopicFilter};
 use parking_lot::RwLock;
 
 const MATCH_ALL: &str = "#";
@@ -24,7 +24,7 @@ pub struct NodeContent {
     /// Returned NodeContent always have topic_filter
     // I wonder if `topic_filter` field is worth saving, since it cost quite some memory.
     pub topic_filter: Option<TopicFilter>,
-    pub clients: HashSet<RawFd>,
+    pub clients: HashMap<RawFd, QualityOfService>,
 }
 
 impl RouteTable {
@@ -45,13 +45,13 @@ impl RouteTable {
         filters
     }
 
-    pub fn subscribe(&self, topic_filter: &str, fd: RawFd) {
+    pub fn subscribe(&self, topic_filter: &str, fd: RawFd, qos: QualityOfService) {
         let (filter_item, rest_items) = split_topic(topic_filter);
         // Since subscribe is not an frequent action, string clone here is acceptable.
         self.nodes
             .entry(filter_item.to_string())
             .or_insert_with(RouteNode::new)
-            .insert(topic_filter, rest_items, fd);
+            .insert(topic_filter, rest_items, fd, qos);
     }
 
     pub fn unsubscribe(&self, topic_filter: &str, fd: RawFd) {
@@ -72,7 +72,7 @@ impl RouteNode {
         RouteNode {
             content: Arc::new(RwLock::new(NodeContent {
                 topic_filter: None,
-                clients: HashSet::new(),
+                clients: HashMap::new(),
             })),
             nodes: Arc::new(DashMap::new()),
         }
@@ -100,19 +100,25 @@ impl RouteNode {
         }
     }
 
-    fn insert(&self, topic_filter: &str, filter_items: Option<&str>, fd: RawFd) {
+    fn insert(
+        &self,
+        topic_filter: &str,
+        filter_items: Option<&str>,
+        fd: RawFd,
+        qos: QualityOfService,
+    ) {
         if let Some(filter_items) = filter_items {
             let (filter_item, rest_items) = split_topic(filter_items);
             self.nodes
                 .entry(filter_item.to_string())
                 .or_insert_with(RouteNode::new)
-                .insert(topic_filter, rest_items, fd);
+                .insert(topic_filter, rest_items, fd, qos);
         } else {
             let mut content = self.content.write();
             if content.topic_filter.is_none() {
                 content.topic_filter = Some(unsafe { TopicFilter::new_unchecked(topic_filter) });
             }
-            content.clients.insert(fd);
+            content.clients.insert(fd, qos);
         }
     }
 
@@ -162,7 +168,7 @@ impl NodeContent {
 
     // TODO: This function is for assert the RouteTable info
     #[cfg(test)]
-    fn to_simple(&self) -> (Option<String>, HashSet<RawFd>) {
+    fn to_simple(&self) -> (Option<String>, HashMap<RawFd, QualityOfService>) {
         let filter = self.topic_filter.as_ref().map(|v| v.to_string());
         let clients = self.clients.clone();
         (filter, clients)
@@ -188,17 +194,28 @@ mod tests {
         for action in actions {
             match action.clone() {
                 Sub(filter, fd) => {
-                    table.subscribe(&TopicFilter::new(filter).unwrap(), fd);
+                    table.subscribe(
+                        &TopicFilter::new(filter).unwrap(),
+                        fd,
+                        QualityOfService::Level0,
+                    );
                 }
                 UnSub(filter, fd) => {
                     table.unsubscribe(&TopicFilter::new(filter).unwrap(), fd);
                 }
                 Query(name, expected) => {
-                    let expected_map: HashMap<String, HashSet<RawFd>> = expected
+                    let expected_map: HashMap<String, HashMap<RawFd, QualityOfService>> = expected
                         .into_iter()
-                        .map(|(k, v)| (k.to_string(), v.into_iter().collect::<HashSet<_>>()))
+                        .map(|(k, v)| {
+                            (
+                                k.to_string(),
+                                v.into_iter()
+                                    .map(|v| (v, QualityOfService::Level0))
+                                    .collect::<HashMap<_, _>>(),
+                            )
+                        })
                         .collect();
-                    let map: HashMap<String, HashSet<RawFd>> = table
+                    let map: HashMap<String, HashMap<RawFd, QualityOfService>> = table
                         .get_matches(&TopicName::new(name).unwrap())
                         .into_iter()
                         .map(|content| {

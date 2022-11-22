@@ -1,16 +1,20 @@
 use std::os::unix::io::RawFd;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use dashmap::DashMap;
 use flume::Sender;
-use mqtt::packet::QoSWithPacketIdentifier;
+use mqtt::{packet::QoSWithPacketIdentifier, TopicName};
 
 use crate::route::RouteTable;
 
+#[derive(Clone)]
 pub enum InternalMsg {
     Publish {
+        topic_name: Arc<TopicName>,
         qos: QoSWithPacketIdentifier,
-        payload: bytes::Bytes,
+        // TODO: maybe should change to bytes::Bytes
+        payload: Arc<Vec<u8>>,
     },
 }
 
