@@ -76,14 +76,14 @@ async fn broker(id: usize, bind: SocketAddr, global_state: Arc<GlobalState>) -> 
 
 async fn handle_connection(
     mut conn: TcpStream<Preallocated>,
-    receiver: Receiver<(RawFd, InternalMsg)>,
+    receiver: Receiver<(RawFd, Arc<InternalMsg>)>,
     current_fd: RawFd,
     global_state: &Arc<GlobalState>,
 ) -> io::Result<()> {
     enum Msg {
         // EOF reached
         Socket(bool),
-        Internal((RawFd, InternalMsg)),
+        Internal((RawFd, Arc<InternalMsg>)),
     }
 
     let mut session = mqtt::Session::default();

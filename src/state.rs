@@ -1,7 +1,6 @@
 use std::os::unix::io::RawFd;
 use std::sync::Arc;
 
-use bytes::Bytes;
 use dashmap::DashMap;
 use flume::Sender;
 use mqtt::{packet::QoSWithPacketIdentifier, TopicName};
@@ -11,15 +10,15 @@ use crate::route::RouteTable;
 #[derive(Clone)]
 pub enum InternalMsg {
     Publish {
-        topic_name: Arc<TopicName>,
+        topic_name: TopicName,
         qos: QoSWithPacketIdentifier,
         // TODO: maybe should change to bytes::Bytes
-        payload: Arc<Vec<u8>>,
+        payload: Vec<u8>,
     },
 }
 
 pub struct GlobalState {
-    pub connections: DashMap<RawFd, Sender<(RawFd, InternalMsg)>>,
+    pub connections: DashMap<RawFd, Sender<(RawFd, Arc<InternalMsg>)>>,
     pub route_table: RouteTable,
 }
 

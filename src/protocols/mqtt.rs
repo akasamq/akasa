@@ -2,17 +2,12 @@ use std::io::{self, Cursor};
 use std::os::unix::io::RawFd;
 use std::sync::Arc;
 
-use bytes::Bytes;
-use dashmap::DashMap;
-use flume::Sender;
 use futures_lite::io::{AsyncReadExt, AsyncWriteExt};
 use glommio::net::{Preallocated, TcpStream};
 
 use mqtt::{
     control::{
-        fixed_header::FixedHeader,
-        packet_type::{ControlType, PacketType},
-        variable_header::ConnectReturnCode,
+        fixed_header::FixedHeader, packet_type::PacketType, variable_header::ConnectReturnCode,
     },
     packet::{
         suback::SubscribeReturnCode, ConnackPacket, ConnectPacket, DisconnectPacket, PingreqPacket,
@@ -158,11 +153,11 @@ async fn handle_publish(
     global_state: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!("#{} received a publish packet: {:#?}", current_fd, packet);
-    let msg = InternalMsg::Publish {
-        topic_name: Arc::new(TopicName::new(packet.topic_name()).unwrap()),
+    let msg = Arc::new(InternalMsg::Publish {
+        topic_name: TopicName::new(packet.topic_name()).unwrap(),
         qos: packet.qos(),
-        payload: Arc::new(packet.payload().to_vec()),
-    };
+        payload: packet.payload().to_vec(),
+    });
     let matches = global_state.route_table.get_matches(packet.topic_name());
     let mut senders = Vec::new();
     for content in matches {
@@ -175,7 +170,7 @@ async fn handle_publish(
     }
 
     for (sender_fd, sender) in senders {
-        if let Err(err) = sender.send_async((current_fd, msg.clone())).await {
+        if let Err(err) = sender.send_async((current_fd, Arc::clone(&msg))).await {
             log::error!("send publish to connection #{} failed: {}", sender_fd, err);
         }
     }
@@ -249,20 +244,19 @@ async fn handle_pingreq(
 #[inline]
 pub async fn handle_internal(
     sender: RawFd,
-    msg: InternalMsg,
+    msg: Arc<InternalMsg>,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
     global_state: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    match msg {
+    match msg.as_ref() {
         InternalMsg::Publish {
             topic_name,
             qos,
             payload,
         } => {
             log::debug!("#{} received publish message from #{}", current_fd, sender);
-            let rv_packet =
-                PublishPacket::new(TopicName::clone(&topic_name), qos, payload.to_vec());
+            let rv_packet = PublishPacket::new(topic_name.clone(), *qos, payload.to_vec());
             let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
             rv_packet.encode(&mut buf)?;
             conn.write_all(&buf).await?;
