@@ -1,13 +1,16 @@
 mod broker;
+mod config;
 mod logger;
 mod monitor;
 mod protocols;
 mod route;
 mod script_engine;
 mod state;
+mod storage;
 
 use std::error::Error as StdErr;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
@@ -26,6 +29,10 @@ enum Commands {
         /// The socket address to bind
         #[clap(long, value_name = "IP:PORT", default_value = "127.0.0.1:1883")]
         bind: SocketAddr,
+
+        /// The config file path
+        #[clap(long, value_name = "FILE")]
+        config: PathBuf,
     },
 }
 
@@ -36,7 +43,7 @@ fn main() -> Result<(), Box<dyn StdErr>> {
     log::debug!("{:?}", cli);
 
     match cli.command {
-        Commands::Start { bind } => broker::start(bind)?,
+        Commands::Start { bind, config } => broker::start(bind, config)?,
     }
     Ok(())
 }
