@@ -75,19 +75,16 @@ impl RetainNode {
     ) {
         match prev_item {
             MATCH_ALL => {
-                println!("match all");
                 assert!(filter_items.is_none(), "invalid topic filter");
                 for pair in self.nodes.iter() {
                     pair.value().get_matches(MATCH_ALL, None, retains);
                 }
                 // Topic name "abc" will match topic filter "abc/#", since "#" also represent parent level.
                 if let Some(content) = self.content.as_ref() {
-                    println!("all.push: {:?}", content);
                     retains.push(Arc::clone(content));
                 }
             }
             MATCH_ONE => {
-                println!("match one, filter_items: {:?}", filter_items);
                 if let Some((filter_item, rest_items)) = filter_items.map(split_topic) {
                     for pair in self.nodes.iter() {
                         pair.value().get_matches(filter_item, rest_items, retains);
@@ -95,7 +92,6 @@ impl RetainNode {
                 } else {
                     for pair in self.nodes.iter() {
                         if let Some(content) = pair.value().content.as_ref() {
-                            println!("one.push: {:?}", content);
                             retains.push(Arc::clone(content));
                         }
                     }
@@ -103,14 +99,9 @@ impl RetainNode {
             }
             _ => {
                 if let Some(pair) = self.nodes.get(prev_item) {
-                    println!(
-                        "match item, prev_item: {}, filter_items: {:?}",
-                        prev_item, filter_items
-                    );
                     if let Some((filter_item, rest_items)) = filter_items.map(split_topic) {
                         pair.value().get_matches(filter_item, rest_items, retains);
                     } else if let Some(content) = pair.value().content.as_ref() {
-                        println!("item.push: {:?}", content);
                         retains.push(Arc::clone(content));
                     }
                 }

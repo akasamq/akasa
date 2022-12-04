@@ -217,7 +217,7 @@ mod tests {
                     table.unsubscribe(&TopicFilter::new(filter).unwrap(), ClientId(id));
                 }
                 Query(name, expected) => {
-                    let expected_map: HashMap<String, HashMap<ClientId, QualityOfService>> =
+                    let mut expected_items: Vec<(String, HashMap<ClientId, QualityOfService>)> =
                         expected
                             .into_iter()
                             .map(|(k, v)| {
@@ -229,7 +229,7 @@ mod tests {
                                 )
                             })
                             .collect();
-                    let map: HashMap<String, HashMap<ClientId, QualityOfService>> = table
+                    let mut items: Vec<(String, HashMap<ClientId, QualityOfService>)> = table
                         .get_matches(&TopicName::new(name).unwrap())
                         .into_iter()
                         .map(|content| {
@@ -237,7 +237,9 @@ mod tests {
                             (k.unwrap(), v)
                         })
                         .collect();
-                    assert_eq!(map, expected_map);
+                    items.sort_by_key(|(k, _)| k.to_string());
+                    expected_items.sort_by_key(|(k, _)| k.to_string());
+                    assert_eq!(items, expected_items);
                 }
             }
         }
