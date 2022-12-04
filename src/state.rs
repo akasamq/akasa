@@ -5,8 +5,7 @@ use flume::{bounded, Receiver, Sender};
 use mqtt::{QualityOfService, TopicName};
 use parking_lot::Mutex;
 
-use crate::protocols::mqtt::SessionState;
-use crate::route::RouteTable;
+use crate::protocols::mqtt::{RouteTable, SessionState};
 
 #[derive(Clone)]
 pub enum InternalMsg {
@@ -22,7 +21,7 @@ pub enum InternalMsg {
     },
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug, Default)]
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
 pub struct ClientId(pub u64);
 
 pub enum AddClientReceipt {

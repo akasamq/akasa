@@ -3,7 +3,6 @@ mod config;
 mod logger;
 mod monitor;
 mod protocols;
-mod route;
 mod script_engine;
 mod state;
 mod storage;

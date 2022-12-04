@@ -7,22 +7,22 @@ use parking_lot::RwLock;
 
 use crate::state::ClientId;
 
-const MATCH_ALL: &str = "#";
-const MATCH_ONE: &str = "+";
-const LEVEL_SEP: char = '/';
+pub(crate) const MATCH_ALL: &str = "#";
+pub(crate) const MATCH_ONE: &str = "+";
+pub(crate) const LEVEL_SEP: char = '/';
 
 pub struct RouteTable {
     nodes: DashMap<String, RouteNode>,
 }
 
 struct RouteNode {
-    content: Arc<RwLock<NodeContent>>,
+    content: Arc<RwLock<RouteContent>>,
     nodes: Arc<DashMap<String, RouteNode>>,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone)]
-pub struct NodeContent {
-    /// Returned NodeContent always have topic_filter
+pub struct RouteContent {
+    /// Returned RouteContent always have topic_filter
     // I wonder if `topic_filter` field is worth saving, since it cost quite some memory.
     pub topic_filter: Option<TopicFilter>,
     pub clients: HashMap<ClientId, QualityOfService>,
@@ -35,7 +35,7 @@ impl RouteTable {
         }
     }
 
-    pub fn get_matches(&self, topic_name: &str) -> Vec<Arc<RwLock<NodeContent>>> {
+    pub fn get_matches(&self, topic_name: &str) -> Vec<Arc<RwLock<RouteContent>>> {
         let (topic_item, rest_items) = split_topic(topic_name);
         let mut filters = Vec::new();
         for item in [topic_item, MATCH_ALL, MATCH_ONE] {
@@ -71,7 +71,7 @@ impl RouteTable {
 impl RouteNode {
     fn new() -> RouteNode {
         RouteNode {
-            content: Arc::new(RwLock::new(NodeContent {
+            content: Arc::new(RwLock::new(RouteContent {
                 topic_filter: None,
                 clients: HashMap::new(),
             })),
@@ -79,11 +79,13 @@ impl RouteNode {
         }
     }
 
+    // NOTE:
+    //   * Topic name "abc" will match topic filter "abc/#", since "#" also represent parent level
     fn get_matches(
         &self,
         prev_item: &str,
         topic_items: Option<&str>,
-        filters: &mut Vec<Arc<RwLock<NodeContent>>>,
+        filters: &mut Vec<Arc<RwLock<RouteContent>>>,
     ) {
         if prev_item == MATCH_ALL {
             if !self.content.read().is_empty() {
@@ -96,8 +98,15 @@ impl RouteNode {
                     pair.value().get_matches(item, rest_items, filters);
                 }
             }
-        } else if !self.content.read().is_empty() {
-            filters.push(Arc::clone(&self.content));
+        } else {
+            if !self.content.read().is_empty() {
+                filters.push(Arc::clone(&self.content));
+            }
+            if let Some(pair) = self.nodes.get(MATCH_ALL) {
+                if !pair.value().content.read().is_empty() {
+                    filters.push(Arc::clone(&pair.value().content));
+                }
+            }
         }
     }
 
@@ -153,16 +162,7 @@ impl RouteNode {
     }
 }
 
-#[inline]
-fn split_topic(topic: &str) -> (&str, Option<&str>) {
-    if let Some((head, rest)) = topic.split_once(LEVEL_SEP) {
-        (head, Some(rest))
-    } else {
-        (topic, None)
-    }
-}
-
-impl NodeContent {
+impl RouteContent {
     pub fn is_empty(&self) -> bool {
         self.clients.is_empty()
     }
@@ -176,6 +176,15 @@ impl NodeContent {
     }
 }
 
+#[inline]
+pub(crate) fn split_topic(topic: &str) -> (&str, Option<&str>) {
+    if let Some((head, rest)) = topic.split_once(LEVEL_SEP) {
+        (head, Some(rest))
+    } else {
+        (topic, None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,8 +194,11 @@ mod tests {
 
     #[derive(Clone)]
     enum Action<'a> {
+        // (TopicFilter, ClientId)
         Sub(&'a str, u64),
+        // (TopicFilter, ClientId)
         UnSub(&'a str, u64),
+        // (TopicName, Vec<(TopicFilter, Vec<ClientId>)>)
         Query(&'a str, Vec<(&'a str, Vec<u64>)>),
     }
 
@@ -263,7 +275,7 @@ mod tests {
             Sub("abc/ijk", 4),
             Sub("abc/+", 5),
             Sub("abc/#", 6),
-            Query("abc", vec![("abc", vec![3])]),
+            Query("abc", vec![("abc", vec![3]), ("abc/#", vec![6])]),
             Query(
                 "abc/ijk",
                 vec![("abc/ijk", vec![4]), ("abc/+", vec![5]), ("abc/#", vec![6])],
