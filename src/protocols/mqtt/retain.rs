@@ -1,6 +1,7 @@
 use std::mem;
 use std::sync::Arc;
 
+use bytes::Bytes;
 use dashmap::DashMap;
 use mqtt::{qos::QualityOfService, TopicName};
 
@@ -20,12 +21,10 @@ struct RetainNode {
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RetainContent {
-    topic_name: TopicName,
-    // TODO: may use QualityOfService
-    qos: QualityOfService,
-    // TODO: maybe should change to bytes::Bytes
-    payload: Vec<u8>,
-    client_id: ClientId,
+    pub topic_name: TopicName,
+    pub qos: QualityOfService,
+    pub payload: Bytes,
+    pub client_id: ClientId,
 }
 
 impl RetainTable {
@@ -155,7 +154,7 @@ impl RetainContent {
     pub fn new(
         topic_name: TopicName,
         qos: QualityOfService,
-        payload: Vec<u8>,
+        payload: Bytes,
         client_id: ClientId,
     ) -> RetainContent {
         RetainContent {
@@ -181,6 +180,7 @@ mod tests {
         ) -> RetainContent {
             let topic_name = unsafe { TopicName::new_unchecked(topic_name.to_string()) };
             let client_id = ClientId(client_id);
+            let payload = Bytes::from(payload);
             Self::new(topic_name, qos, payload, client_id)
         }
     }

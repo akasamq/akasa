@@ -2,6 +2,7 @@ use std::cmp;
 use std::collections::LinkedList;
 use std::io::{self, Cursor};
 use std::mem;
+use std::ops::Deref;
 use std::os::unix::io::RawFd;
 use std::sync::Arc;
 
@@ -19,9 +20,9 @@ use mqtt::{
         fixed_header::FixedHeader, packet_type::PacketType, variable_header::ConnectReturnCode,
     },
     packet::{
-        suback::SubscribeReturnCode, ConnackPacket, ConnectPacket, DisconnectPacket, PingreqPacket,
-        PingrespPacket, PubackPacket, PublishPacket, QoSWithPacketIdentifier, SubackPacket,
-        SubscribePacket, UnsubackPacket, UnsubscribePacket, VariablePacket,
+        ConnackPacket, ConnectPacket, DisconnectPacket, PingreqPacket, PingrespPacket,
+        PubackPacket, PublishPacket, QoSWithPacketIdentifier, SubackPacket, SubscribePacket,
+        UnsubackPacket, UnsubscribePacket, VariablePacket,
     },
     qos::QualityOfService,
     Decodable, Encodable, TopicFilter, TopicName,
@@ -40,7 +41,7 @@ pub struct Session {
     packet_id: u16,
     // For assign a message id received from inernal sender (pub/sub)
     message_id: u64,
-    pending_messages: LinkedList<(u64, InternalMsg)>,
+    pending_messages: LinkedList<(u64, PublishMessage)>,
 
     client_id: ClientId,
     client_identifier: String,
@@ -55,7 +56,7 @@ pub struct SessionState {
     packet_id: u16,
     // For assign a message id received from inernal sender (pub/sub)
     message_id: u64,
-    pending_messages: LinkedList<(u64, InternalMsg)>,
+    pending_messages: LinkedList<(u64, PublishMessage)>,
     receiver: Receiver<(ClientId, InternalMsg)>,
 
     client_id: ClientId,
@@ -92,7 +93,7 @@ impl Session {
         self.client_id
     }
 
-    fn push_message(&mut self, msg: InternalMsg) {
+    fn push_message(&mut self, msg: PublishMessage) {
         self.pending_messages.push_back((self.message_id, msg));
         self.message_id += 1;
     }
@@ -101,6 +102,16 @@ impl Session {
         self.packet_id = self.packet_id.wrapping_add(1);
         old_value
     }
+}
+
+struct PublishMessage {
+    topic_name: Arc<TopicName>,
+    // TODO: may use QualityOfService
+    qos: QualityOfService,
+    // TODO: maybe should change to bytes::Bytes
+    payload: Bytes,
+    subscribe_filter: Arc<TopicFilter>,
+    subscribe_qos: QualityOfService,
 }
 
 pub struct Will {
@@ -213,7 +224,7 @@ async fn handle_packet(
             handle_publish(session, packet, conn, current_fd, global_state).await?;
         }
         VariablePacket::SubscribePacket(packet) => {
-            handle_subscribe(session, packet, conn, current_fd, global_state).await?;
+            handle_subscribe(session, packet, conn, current_fd, config, global_state).await?;
         }
         VariablePacket::UnsubscribePacket(packet) => {
             handle_unsubscribe(session, packet, conn, current_fd, global_state).await?;
@@ -346,7 +357,7 @@ async fn handle_publish(
     global_state: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!("#{} received a publish packet: {:#?}", current_fd, packet);
-    publish(
+    send_publish(
         session,
         packet.topic_name(),
         packet.retain(),
@@ -373,16 +384,35 @@ async fn handle_subscribe(
     packet: SubscribePacket,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
+    config: &Arc<Config>,
     global_state: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!("#{} received a subscribe packet: {:#?}", current_fd, packet);
+    if packet.subscribes().is_empty() {
+        return Err(io::Error::from(io::ErrorKind::InvalidData));
+    }
     let mut return_codes = Vec::with_capacity(packet.subscribes().len());
     for (filter, qos) in packet.subscribes() {
+        let allowed_qos = cmp::min(*qos, config.max_allowed_qos());
+        for retain in global_state.retain_table.get_matches(filter) {
+            let topic_name = Arc::new(retain.topic_name.clone());
+            let subscribe_filter = Arc::new(filter.clone());
+            recv_publish(
+                session,
+                &topic_name,
+                retain.qos,
+                &retain.payload,
+                &subscribe_filter,
+                allowed_qos,
+                Some(conn),
+            )
+            .await?;
+        }
         global_state
             .route_table
-            .subscribe(filter, session.client_id, *qos);
-        // FIXME: max qos
-        return_codes.push(SubscribeReturnCode::MaximumQoSLevel0);
+            .subscribe(filter, session.client_id, allowed_qos);
+        session.subscribes.insert(filter.clone(), allowed_qos);
+        return_codes.push(allowed_qos.into());
     }
     let rv_packet = SubackPacket::new(packet.packet_identifier(), return_codes);
     let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
@@ -411,6 +441,7 @@ async fn handle_unsubscribe(
         global_state
             .route_table
             .unsubscribe(filter, session.client_id);
+        session.subscribes.remove(filter);
     }
     let rv_packet = UnsubackPacket::new(packet.packet_identifier());
     let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
@@ -449,7 +480,7 @@ pub async fn handle_will(
     global_state: &Arc<GlobalState>,
 ) -> io::Result<()> {
     if let Some(will) = session.will.take() {
-        publish(
+        send_publish(
             session,
             &will.topic,
             will.retain,
@@ -494,38 +525,21 @@ pub async fn handle_internal(
             ref subscribe_filter,
             subscribe_qos,
         } => {
-            if let Some(conn) = conn {
-                log::debug!(
-                    "{:?} received publish message from {:?}",
-                    session.client_id,
-                    sender
-                );
-                // FIXME: qos 1/2 message queue
-                let qos_with_id = match cmp::min(qos, subscribe_qos) {
-                    QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
-                    QualityOfService::Level1 => {
-                        let packet_id = session.incr_packet_id();
-                        QoSWithPacketIdentifier::Level1(packet_id)
-                    }
-                    QualityOfService::Level2 => {
-                        let packet_id = session.incr_packet_id();
-                        QoSWithPacketIdentifier::Level2(packet_id)
-                    }
-                };
-                let rv_packet = PublishPacket::new(
-                    TopicName::new(topic_name.to_string()).unwrap(),
-                    qos_with_id,
-                    payload.to_vec(),
-                );
-                let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-                rv_packet.encode(&mut buf)?;
-                {
-                    let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-                    conn.write_all(&buf).await?;
-                }
-            } else if qos != QualityOfService::Level0 {
-                session.push_message(msg);
-            }
+            log::debug!(
+                "{:?} received publish message from {:?}",
+                session.client_id,
+                sender
+            );
+            recv_publish(
+                session,
+                topic_name,
+                qos,
+                payload,
+                subscribe_filter,
+                subscribe_qos,
+                conn,
+            )
+            .await?;
         }
     }
     Ok(false)
@@ -534,7 +548,7 @@ pub async fn handle_internal(
 // ===========================
 // ==== Private Functions ====
 // ===========================
-async fn publish(
+async fn send_publish(
     session: &mut Session,
     topic_name: &str,
     retain: bool,
@@ -554,7 +568,7 @@ async fn publish(
             let content = Arc::new(RetainContent::new(
                 TopicName::new(topic_name).unwrap(),
                 qos,
-                payload.to_vec(),
+                Bytes::from(payload.to_vec()),
                 session.client_id,
             ));
             if let Some(old_retain_content) = global_state.retain_table.insert(content) {
@@ -598,4 +612,59 @@ async fn publish(
             }
         }
     }
+}
+
+async fn recv_publish(
+    session: &mut Session,
+    topic_name: &Arc<TopicName>,
+    // TODO: may use QualityOfService
+    qos: QualityOfService,
+    // TODO: maybe should change to bytes::Bytes
+    payload: &Bytes,
+    subscribe_filter: &Arc<TopicFilter>,
+    subscribe_qos: QualityOfService,
+    conn: Option<&mut TcpStream<Preallocated>>,
+) -> io::Result<()> {
+    if !session.subscribes.contains_key(subscribe_filter.as_ref()) {
+        let filter_str: &str = subscribe_filter.as_ref().deref();
+        log::warn!(
+            "received a publish message that is not subscribe: {}, session.subscribes: {:?}",
+            filter_str,
+            session.subscribes
+        );
+    }
+    if let Some(conn) = conn {
+        // FIXME: qos 1/2 message queue
+        let qos_with_id = match cmp::min(qos, subscribe_qos) {
+            QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
+            QualityOfService::Level1 => {
+                let packet_id = session.incr_packet_id();
+                QoSWithPacketIdentifier::Level1(packet_id)
+            }
+            QualityOfService::Level2 => {
+                let packet_id = session.incr_packet_id();
+                QoSWithPacketIdentifier::Level2(packet_id)
+            }
+        };
+        let rv_packet = PublishPacket::new(
+            TopicName::new(topic_name.to_string()).unwrap(),
+            qos_with_id,
+            payload.to_vec(),
+        );
+        let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+        rv_packet.encode(&mut buf)?;
+        {
+            let _permit = session.write_lock.acquire_permit(1).await.unwrap();
+            conn.write_all(&buf).await?;
+        }
+    } else if qos != QualityOfService::Level0 {
+        session.push_message(PublishMessage {
+            topic_name: Arc::clone(topic_name),
+            qos,
+            payload: payload.clone(),
+            subscribe_filter: Arc::clone(subscribe_filter),
+            subscribe_qos,
+        });
+    }
+    Ok(())
 }

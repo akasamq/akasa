@@ -1,3 +1,4 @@
+use mqtt::qos::QualityOfService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -49,5 +50,14 @@ impl Config {
             return false;
         }
         true
+    }
+
+    pub fn max_allowed_qos(&self) -> QualityOfService {
+        match self.max_allowed_qos {
+            0 => QualityOfService::Level0,
+            1 => QualityOfService::Level1,
+            2 => QualityOfService::Level2,
+            value => panic!("invalid Config.max_allowed_qos: {}", value),
+        }
     }
 }
