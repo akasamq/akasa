@@ -1,15 +1,18 @@
+use std::cmp;
 use std::collections::LinkedList;
 use std::io::{self, Cursor};
 use std::mem;
 use std::os::unix::io::RawFd;
 use std::sync::Arc;
 
+use bytes::Bytes;
 use flume::Receiver;
 use futures_lite::io::{AsyncReadExt, AsyncWriteExt};
 use glommio::{
     net::{Preallocated, TcpStream},
     sync::Semaphore,
 };
+use hashbrown::HashMap;
 
 use mqtt::{
     control::{
@@ -21,9 +24,10 @@ use mqtt::{
         SubscribePacket, UnsubackPacket, UnsubscribePacket, VariablePacket,
     },
     qos::QualityOfService,
-    Decodable, Encodable, TopicName,
+    Decodable, Encodable, TopicFilter, TopicName,
 };
 
+use super::retain::RetainContent;
 use crate::config::{AuthType, Config};
 use crate::state::{AddClientReceipt, ClientId, GlobalState, InternalMsg};
 
@@ -36,13 +40,14 @@ pub struct Session {
     packet_id: u16,
     // For assign a message id received from inernal sender (pub/sub)
     message_id: u64,
-    pending_messages: LinkedList<(u64, Arc<InternalMsg>)>,
+    pending_messages: LinkedList<(u64, InternalMsg)>,
 
     client_id: ClientId,
     client_identifier: String,
     username: Option<String>,
     clean_session: bool,
     will: Option<Will>,
+    subscribes: HashMap<TopicFilter, QualityOfService>,
 }
 
 pub struct SessionState {
@@ -50,10 +55,11 @@ pub struct SessionState {
     packet_id: u16,
     // For assign a message id received from inernal sender (pub/sub)
     message_id: u64,
-    pending_messages: LinkedList<(u64, Arc<InternalMsg>)>,
-    receiver: Receiver<(ClientId, Arc<InternalMsg>)>,
+    pending_messages: LinkedList<(u64, InternalMsg)>,
+    receiver: Receiver<(ClientId, InternalMsg)>,
 
     client_id: ClientId,
+    subscribes: HashMap<TopicFilter, QualityOfService>,
 }
 
 impl Session {
@@ -72,6 +78,7 @@ impl Session {
             username: None,
             clean_session: true,
             will: None,
+            subscribes: HashMap::new(),
         }
     }
 
@@ -85,7 +92,7 @@ impl Session {
         self.client_id
     }
 
-    fn push_message(&mut self, msg: Arc<InternalMsg>) {
+    fn push_message(&mut self, msg: InternalMsg) {
         self.pending_messages.push_back((self.message_id, msg));
         self.message_id += 1;
     }
@@ -105,7 +112,7 @@ pub struct Will {
 
 pub async fn handle_connection(
     session: &mut Session,
-    receiver: &mut Option<Receiver<(ClientId, Arc<InternalMsg>)>>,
+    receiver: &mut Option<Receiver<(ClientId, InternalMsg)>>,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
     config: &Arc<Config>,
@@ -173,7 +180,7 @@ pub async fn handle_connection(
 #[inline]
 async fn handle_packet(
     session: &mut Session,
-    receiver: &mut Option<Receiver<(ClientId, Arc<InternalMsg>)>>,
+    receiver: &mut Option<Receiver<(ClientId, InternalMsg)>>,
     packet: VariablePacket,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
@@ -224,7 +231,7 @@ async fn handle_packet(
 #[inline]
 async fn handle_connect(
     session: &mut Session,
-    receiver: &mut Option<Receiver<(ClientId, Arc<InternalMsg>)>>,
+    receiver: &mut Option<Receiver<(ClientId, InternalMsg)>>,
     packet: ConnectPacket,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
@@ -326,6 +333,7 @@ async fn handle_disconnect(
         current_fd,
         packet
     );
+    session.will = None;
     Ok(())
 }
 
@@ -338,35 +346,15 @@ async fn handle_publish(
     global_state: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!("#{} received a publish packet: {:#?}", current_fd, packet);
-    let msg = Arc::new(InternalMsg::Publish {
-        topic_name: TopicName::new(packet.topic_name()).unwrap(),
-        qos: packet.qos().split().0,
-        payload: packet.payload().to_vec(),
-    });
-    let matches = global_state.route_table.get_matches(packet.topic_name());
-    let mut senders = Vec::new();
-    for content in matches {
-        let content = content.read();
-        for (client_id, qos) in &content.clients {
-            if let Some((sender_client_id, sender)) = global_state.get_client_sender(client_id) {
-                senders.push((sender_client_id, sender));
-            }
-        }
-    }
-
-    for (sender_client_id, sender) in senders {
-        if let Err(err) = sender
-            .send_async((session.client_id, Arc::clone(&msg)))
-            .await
-        {
-            log::error!(
-                "send publish to connection {:?} failed: {}",
-                sender_client_id,
-                err
-            );
-        }
-    }
-
+    publish(
+        session,
+        packet.topic_name(),
+        packet.retain(),
+        packet.qos().split().0,
+        packet.payload(),
+        global_state,
+    )
+    .await;
     if let Some(pkid) = packet.qos().split().1 {
         let rv_packet = PubackPacket::new(pkid);
         let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
@@ -461,7 +449,15 @@ pub async fn handle_will(
     global_state: &Arc<GlobalState>,
 ) -> io::Result<()> {
     if let Some(will) = session.will.take() {
-        // FIXME: handle will message
+        publish(
+            session,
+            &will.topic,
+            will.retain,
+            will.qos,
+            &will.message,
+            global_state,
+        )
+        .await;
     }
     Ok(())
 }
@@ -469,14 +465,14 @@ pub async fn handle_will(
 #[inline]
 pub async fn handle_internal(
     session: &mut Session,
-    receiver: &Receiver<(ClientId, Arc<InternalMsg>)>,
+    receiver: &Receiver<(ClientId, InternalMsg)>,
     sender: ClientId,
-    msg: Arc<InternalMsg>,
+    msg: InternalMsg,
     conn: Option<&mut TcpStream<Preallocated>>,
     config: &Arc<Config>,
     global_state: &Arc<GlobalState>,
 ) -> io::Result<bool> {
-    match msg.as_ref() {
+    match msg {
         InternalMsg::Online { sender } => {
             let mut pending_messages = LinkedList::new();
             mem::swap(&mut session.pending_messages, &mut pending_messages);
@@ -486,14 +482,17 @@ pub async fn handle_internal(
                 pending_messages,
                 receiver: receiver.clone(),
                 client_id: session.client_id,
+                subscribes: session.subscribes.clone(),
             };
             sender.send_async(old_state).await.unwrap();
             return Ok(true);
         }
         InternalMsg::Publish {
-            topic_name,
+            ref topic_name,
             qos,
-            payload,
+            ref payload,
+            ref subscribe_filter,
+            subscribe_qos,
         } => {
             if let Some(conn) = conn {
                 log::debug!(
@@ -502,7 +501,7 @@ pub async fn handle_internal(
                     sender
                 );
                 // FIXME: qos 1/2 message queue
-                let qos_with_id = match qos {
+                let qos_with_id = match cmp::min(qos, subscribe_qos) {
                     QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
                     QualityOfService::Level1 => {
                         let packet_id = session.incr_packet_id();
@@ -513,18 +512,90 @@ pub async fn handle_internal(
                         QoSWithPacketIdentifier::Level2(packet_id)
                     }
                 };
-                let rv_packet =
-                    PublishPacket::new(topic_name.clone(), qos_with_id, payload.to_vec());
+                let rv_packet = PublishPacket::new(
+                    TopicName::new(topic_name.to_string()).unwrap(),
+                    qos_with_id,
+                    payload.to_vec(),
+                );
                 let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
                 rv_packet.encode(&mut buf)?;
                 {
                     let _permit = session.write_lock.acquire_permit(1).await.unwrap();
                     conn.write_all(&buf).await?;
                 }
-            } else if qos != &QualityOfService::Level0 {
+            } else if qos != QualityOfService::Level0 {
                 session.push_message(msg);
             }
         }
     }
     Ok(false)
+}
+
+// ===========================
+// ==== Private Functions ====
+// ===========================
+async fn publish(
+    session: &mut Session,
+    topic_name: &str,
+    retain: bool,
+    qos: QualityOfService,
+    payload: &[u8],
+    global_state: &Arc<GlobalState>,
+) {
+    if retain {
+        if payload.is_empty() {
+            if let Some(old_retain_content) = global_state.retain_table.remove(topic_name) {
+                log::debug!(
+                    "retain message removed, old retain content: {:?}",
+                    old_retain_content
+                );
+            }
+        } else {
+            let content = Arc::new(RetainContent::new(
+                TopicName::new(topic_name).unwrap(),
+                qos,
+                payload.to_vec(),
+                session.client_id,
+            ));
+            if let Some(old_retain_content) = global_state.retain_table.insert(content) {
+                log::debug!(
+                    "retain message insert, old retain content: {:?}",
+                    old_retain_content
+                );
+            }
+        }
+    }
+
+    let matches = global_state.route_table.get_matches(topic_name);
+    let mut senders = Vec::new();
+    for content in matches {
+        let content = content.read();
+        for (client_id, subscribe_qos) in &content.clients {
+            if let Some((sender_client_id, sender)) = global_state.get_client_sender(client_id) {
+                let subscribe_filter = Arc::new(content.topic_filter.clone().unwrap());
+                senders.push((sender_client_id, subscribe_filter, *subscribe_qos, sender));
+            }
+        }
+    }
+
+    if !senders.is_empty() {
+        let topic_name = Arc::new(TopicName::new(topic_name).unwrap());
+        let payload = Bytes::from(payload.to_vec());
+        for (sender_client_id, subscribe_filter, subscribe_qos, sender) in senders {
+            let msg = InternalMsg::Publish {
+                topic_name: Arc::clone(&topic_name),
+                qos,
+                payload: payload.clone(),
+                subscribe_filter,
+                subscribe_qos,
+            };
+            if let Err(err) = sender.send_async((session.client_id, msg)).await {
+                log::error!(
+                    "send publish to connection {:?} failed: {}",
+                    sender_client_id,
+                    err
+                );
+            }
+        }
+    }
 }

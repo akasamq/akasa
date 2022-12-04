@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
+use bytes::Bytes;
 use dashmap::DashMap;
 use flume::{bounded, Receiver, Sender};
-use mqtt::{QualityOfService, TopicName};
+use mqtt::{QualityOfService, TopicFilter, TopicName};
 use parking_lot::Mutex;
 
-use crate::protocols::mqtt::{RouteTable, SessionState};
+use crate::protocols::mqtt::{RetainTable, RouteTable, SessionState};
 
 #[derive(Clone)]
 pub enum InternalMsg {
@@ -13,11 +14,13 @@ pub enum InternalMsg {
         sender: Sender<SessionState>,
     },
     Publish {
-        topic_name: TopicName,
+        topic_name: Arc<TopicName>,
         // TODO: may use QualityOfService
         qos: QualityOfService,
         // TODO: maybe should change to bytes::Bytes
-        payload: Vec<u8>,
+        payload: Bytes,
+        subscribe_filter: Arc<TopicFilter>,
+        subscribe_qos: QualityOfService,
     },
 }
 
@@ -28,7 +31,7 @@ pub enum AddClientReceipt {
     Present(SessionState),
     New {
         client_id: ClientId,
-        receiver: Receiver<(ClientId, Arc<InternalMsg>)>,
+        receiver: Receiver<(ClientId, InternalMsg)>,
     },
 }
 
@@ -42,10 +45,13 @@ pub struct GlobalState {
     // MQTT client identifier => client internal id
     client_identifier_map: DashMap<String, ClientId>,
     // All clients (online/offline clients)
-    clients: DashMap<ClientId, Sender<(ClientId, Arc<InternalMsg>)>>,
+    clients: DashMap<ClientId, Sender<(ClientId, InternalMsg)>>,
 
     /// MQTT route table
     pub route_table: RouteTable,
+
+    /// MQTT retain table
+    pub retain_table: RetainTable,
 }
 
 impl GlobalState {
@@ -58,6 +64,7 @@ impl GlobalState {
             client_identifier_map: DashMap::new(),
             clients: DashMap::new(),
             route_table: RouteTable::new(),
+            retain_table: RetainTable::new(),
         }
     }
 
@@ -100,7 +107,7 @@ impl GlobalState {
     pub fn get_client_sender(
         &self,
         client_id: &ClientId,
-    ) -> Option<(ClientId, Sender<(ClientId, Arc<InternalMsg>)>)> {
+    ) -> Option<(ClientId, Sender<(ClientId, InternalMsg)>)> {
         self.clients
             .get(client_id)
             .map(|pair| (*pair.key(), pair.value().clone()))
@@ -143,7 +150,7 @@ impl GlobalState {
 
         let (sender, receiver) = bounded(1);
         internal_sender
-            .send_async((old_id, Arc::new(InternalMsg::Online { sender })))
+            .send_async((old_id, InternalMsg::Online { sender }))
             .await
             .unwrap();
         let session_state = receiver.recv_async().await.unwrap();

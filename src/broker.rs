@@ -103,7 +103,7 @@ async fn handle_connection(
 ) -> io::Result<()> {
     enum Msg {
         Socket(()),
-        Internal((ClientId, Arc<InternalMsg>)),
+        Internal((ClientId, InternalMsg)),
     }
 
     let mut session = mqtt::Session::new();
