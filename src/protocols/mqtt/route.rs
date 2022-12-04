@@ -79,8 +79,6 @@ impl RouteNode {
         }
     }
 
-    // NOTE:
-    //   * Topic name "abc" will match topic filter "abc/#", since "#" also represent parent level
     fn get_matches(
         &self,
         prev_item: &str,
@@ -102,6 +100,8 @@ impl RouteNode {
             if !self.content.read().is_empty() {
                 filters.push(Arc::clone(&self.content));
             }
+
+            // Topic name "abc" will match topic filter "abc/#", since "#" also represent parent level.
             if let Some(pair) = self.nodes.get(MATCH_ALL) {
                 if !pair.value().content.read().is_empty() {
                     filters.push(Arc::clone(&pair.value().content));
