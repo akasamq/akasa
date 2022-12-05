@@ -3,6 +3,7 @@ use std::io::{self, Cursor};
 use std::mem;
 use std::ops::Deref;
 use std::os::unix::io::RawFd;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -22,8 +23,8 @@ use mqtt::{
     Decodable, Encodable, TopicFilter, TopicName,
 };
 
-use crate::config::{AuthType, Config};
-use crate::state::{AddClientReceipt, ClientId, GlobalState, InternalMsg};
+use crate::config::AuthType;
+use crate::state::{AddClientReceipt, ClientId, ExecutorState, GlobalState, InternalMsg};
 
 use super::pending::PendingPackets;
 use super::retain::RetainContent;
@@ -34,8 +35,8 @@ pub async fn handle_connection(
     receiver: &mut Option<Receiver<(ClientId, InternalMsg)>>,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
-    config: &Arc<Config>,
-    global_state: &Arc<GlobalState>,
+    executor: &Rc<ExecutorState>,
+    global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     let mut buf = [0u8; 1];
     let n = conn.read(&mut buf).await?;
@@ -84,13 +85,7 @@ pub async fn handle_connection(
     let packet = VariablePacket::decode_with(&mut Cursor::new(buffer), Some(fixed_header))
         .map_err(|err| io::Error::from(io::ErrorKind::InvalidData))?;
     handle_packet(
-        session,
-        receiver,
-        packet,
-        conn,
-        current_fd,
-        config,
-        global_state,
+        session, receiver, packet, conn, current_fd, executor, global,
     )
     .await?;
     Ok(())
@@ -103,8 +98,8 @@ async fn handle_packet(
     packet: VariablePacket,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
-    config: &Arc<Config>,
-    global_state: &Arc<GlobalState>,
+    executor: &Rc<ExecutorState>,
+    global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     if !matches!(packet, VariablePacket::ConnectPacket(..)) && !session.connected {
         log::info!("#{} not connected", current_fd);
@@ -113,32 +108,26 @@ async fn handle_packet(
     match packet {
         VariablePacket::ConnectPacket(packet) => {
             handle_connect(
-                session,
-                receiver,
-                packet,
-                conn,
-                current_fd,
-                config,
-                global_state,
+                session, receiver, packet, conn, current_fd, executor, global,
             )
             .await?;
             session.connected = true;
         }
         VariablePacket::DisconnectPacket(packet) => {
-            handle_disconnect(session, packet, conn, current_fd, global_state).await?;
+            handle_disconnect(session, packet, conn, current_fd, global).await?;
             session.disconnected = true;
         }
         VariablePacket::PublishPacket(packet) => {
-            handle_publish(session, packet, conn, current_fd, global_state).await?;
+            handle_publish(session, packet, conn, current_fd, global).await?;
         }
         VariablePacket::SubscribePacket(packet) => {
-            handle_subscribe(session, packet, conn, current_fd, config, global_state).await?;
+            handle_subscribe(session, packet, conn, current_fd, global).await?;
         }
         VariablePacket::UnsubscribePacket(packet) => {
-            handle_unsubscribe(session, packet, conn, current_fd, global_state).await?;
+            handle_unsubscribe(session, packet, conn, current_fd, global).await?;
         }
         VariablePacket::PingreqPacket(packet) => {
-            handle_pingreq(session, packet, conn, current_fd, global_state).await?;
+            handle_pingreq(session, packet, conn, current_fd, global).await?;
         }
         _ => {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
@@ -154,16 +143,16 @@ async fn handle_connect(
     packet: ConnectPacket,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
-    config: &Arc<Config>,
-    global_state: &Arc<GlobalState>,
+    executor: &Rc<ExecutorState>,
+    global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!("#{} received a connect packet: {:#?}", current_fd, packet);
     let mut return_code = ConnectReturnCode::ConnectionAccepted;
-    for auth_type in &config.auth_types {
+    for auth_type in &global.config.auth_types {
         match auth_type {
             AuthType::UsernamePassword => {
                 if let Some(username) = packet.user_name() {
-                    if config.users.get(username).map(|s| s.as_str()) != packet.password() {
+                    if global.config.users.get(username).map(|s| s.as_str()) != packet.password() {
                         log::debug!("incorrect password for user: {}", username);
                         return_code = ConnectReturnCode::BadUserNameOrPassword;
                     }
@@ -182,6 +171,10 @@ async fn handle_connect(
     session.clean_session = packet.clean_session();
     session.client_identifier = packet.client_identifier().to_string();
     session.username = packet.user_name().map(|name| name.to_string());
+    session.keep_alive = packet.keep_alive();
+
+    // FIXME: spawn keep alive timer task to executor
+
     if let Some((topic, message)) = packet.will() {
         let will_qos = match packet.will_qos() {
             0 => QualityOfService::Level0,
@@ -202,10 +195,7 @@ async fn handle_connect(
     }
 
     let mut session_present = false;
-    match global_state
-        .add_client(session.client_identifier.as_str())
-        .await
-    {
+    match global.add_client(session.client_identifier.as_str()).await {
         AddClientReceipt::Present(old_state) => {
             session.client_packet_id = old_state.client_packet_id;
             session.server_packet_id = old_state.server_packet_id;
@@ -248,7 +238,7 @@ async fn handle_disconnect(
     packet: DisconnectPacket,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
-    global_state: &Arc<GlobalState>,
+    global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "#{} received a disconnect packet: {:#?}",
@@ -265,7 +255,7 @@ async fn handle_publish(
     packet: PublishPacket,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
-    global_state: &Arc<GlobalState>,
+    global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!("#{} received a publish packet: {:#?}", current_fd, packet);
     if packet.topic_name().starts_with('$') {
@@ -277,7 +267,7 @@ async fn handle_publish(
         packet.retain(),
         packet.qos().split().0,
         packet.payload(),
-        global_state,
+        global,
     )
     .await;
     if let Some(pkid) = packet.qos().split().1 {
@@ -298,8 +288,7 @@ async fn handle_subscribe(
     packet: SubscribePacket,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
-    config: &Arc<Config>,
-    global_state: &Arc<GlobalState>,
+    global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!("#{} received a subscribe packet: {:#?}", current_fd, packet);
     if packet.subscribes().is_empty() {
@@ -307,8 +296,8 @@ async fn handle_subscribe(
     }
     let mut return_codes = Vec::with_capacity(packet.subscribes().len());
     for (filter, qos) in packet.subscribes() {
-        let allowed_qos = cmp::min(*qos, config.max_allowed_qos());
-        for retain in global_state.retain_table.get_matches(filter) {
+        let allowed_qos = cmp::min(*qos, global.config.max_allowed_qos());
+        for retain in global.retain_table.get_matches(filter) {
             let topic_name = Arc::new(retain.topic_name.clone());
             let subscribe_filter = Arc::new(filter.clone());
             recv_publish(
@@ -322,7 +311,7 @@ async fn handle_subscribe(
             )
             .await?;
         }
-        global_state
+        global
             .route_table
             .subscribe(filter, session.client_id, allowed_qos);
         session.subscribes.insert(filter.clone(), allowed_qos);
@@ -344,7 +333,7 @@ async fn handle_unsubscribe(
     packet: UnsubscribePacket,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
-    global_state: &Arc<GlobalState>,
+    global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "#{} received a unsubscribe packet: {:#?}",
@@ -352,9 +341,7 @@ async fn handle_unsubscribe(
         packet
     );
     for filter in packet.subscribes() {
-        global_state
-            .route_table
-            .unsubscribe(filter, session.client_id);
+        global.route_table.unsubscribe(filter, session.client_id);
         session.subscribes.remove(filter);
     }
     let rv_packet = UnsubackPacket::new(packet.packet_identifier());
@@ -373,7 +360,7 @@ async fn handle_pingreq(
     packet: PingreqPacket,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
-    global_state: &Arc<GlobalState>,
+    global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!("#{} received a ping packet", current_fd);
     let rv_packet = PingrespPacket::new();
@@ -391,7 +378,7 @@ pub async fn handle_will(
     session: &mut Session,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
-    global_state: &Arc<GlobalState>,
+    global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     if let Some(will) = session.will.take() {
         send_publish(
@@ -400,7 +387,7 @@ pub async fn handle_will(
             will.retain,
             will.qos,
             &will.message,
-            global_state,
+            global,
         )
         .await;
     }
@@ -414,8 +401,7 @@ pub async fn handle_internal(
     sender: ClientId,
     msg: InternalMsg,
     conn: Option<&mut TcpStream<Preallocated>>,
-    config: &Arc<Config>,
-    global_state: &Arc<GlobalState>,
+    global: &Arc<GlobalState>,
 ) -> io::Result<bool> {
     match msg {
         InternalMsg::Online { sender } => {
@@ -469,11 +455,11 @@ async fn send_publish(
     retain: bool,
     qos: QualityOfService,
     payload: &[u8],
-    global_state: &Arc<GlobalState>,
+    global: &Arc<GlobalState>,
 ) {
     if retain {
         if payload.is_empty() {
-            if let Some(old_retain_content) = global_state.retain_table.remove(topic_name) {
+            if let Some(old_retain_content) = global.retain_table.remove(topic_name) {
                 log::debug!(
                     "retain message removed, old retain content: {:?}",
                     old_retain_content
@@ -486,7 +472,7 @@ async fn send_publish(
                 Bytes::from(payload.to_vec()),
                 session.client_id,
             ));
-            if let Some(old_retain_content) = global_state.retain_table.insert(content) {
+            if let Some(old_retain_content) = global.retain_table.insert(content) {
                 log::debug!(
                     "retain message insert, old retain content: {:?}",
                     old_retain_content
@@ -495,12 +481,12 @@ async fn send_publish(
         }
     }
 
-    let matches = global_state.route_table.get_matches(topic_name);
+    let matches = global.route_table.get_matches(topic_name);
     let mut senders = Vec::new();
     for content in matches {
         let content = content.read();
         for (client_id, subscribe_qos) in &content.clients {
-            if let Some((sender_client_id, sender)) = global_state.get_client_sender(client_id) {
+            if let Some((sender_client_id, sender)) = global.get_client_sender(client_id) {
                 let subscribe_filter = Arc::new(content.topic_filter.clone().unwrap());
                 senders.push((sender_client_id, subscribe_filter, *subscribe_qos, sender));
             }

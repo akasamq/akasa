@@ -15,6 +15,8 @@ pub struct Session {
     pub io_error: Option<io::Error>,
     pub(crate) connected: bool,
     pub(crate) disconnected: bool,
+    // keep alive timeout reached
+    pub(crate) timeout: bool,
     pub(crate) write_lock: Semaphore,
     // for record packet id send from client to server
     pub(crate) client_packet_id: u16,
@@ -25,6 +27,7 @@ pub struct Session {
     pub(crate) client_id: ClientId,
     pub(crate) client_identifier: String,
     pub(crate) username: Option<String>,
+    pub(crate) keep_alive: u16,
     pub(crate) clean_session: bool,
     pub(crate) will: Option<Will>,
     pub(crate) subscribes: HashMap<TopicFilter, QualityOfService>,
@@ -48,6 +51,7 @@ impl Session {
             io_error: None,
             connected: false,
             disconnected: false,
+            timeout: false,
             write_lock: Semaphore::new(1),
             client_packet_id: 0,
             server_packet_id: 0,
@@ -57,6 +61,7 @@ impl Session {
             client_id: ClientId::default(),
             client_identifier: String::new(),
             username: None,
+            keep_alive: 0,
             clean_session: true,
             will: None,
             subscribes: HashMap::new(),

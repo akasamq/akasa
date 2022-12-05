@@ -1,37 +1,15 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::Bytes;
 use dashmap::DashMap;
 use flume::{bounded, Receiver, Sender};
+use glommio::TaskQueueHandle;
 use mqtt::{QualityOfService, TopicFilter, TopicName};
 use parking_lot::Mutex;
 
+use crate::config::Config;
 use crate::protocols::mqtt::{RetainTable, RouteTable, SessionState};
-
-#[derive(Clone)]
-pub enum InternalMsg {
-    Online {
-        sender: Sender<SessionState>,
-    },
-    Publish {
-        topic_name: Arc<TopicName>,
-        qos: QualityOfService,
-        payload: Bytes,
-        subscribe_filter: Arc<TopicFilter>,
-        subscribe_qos: QualityOfService,
-    },
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
-pub struct ClientId(pub u64);
-
-pub enum AddClientReceipt {
-    Present(SessionState),
-    New {
-        client_id: ClientId,
-        receiver: Receiver<(ClientId, InternalMsg)>,
-    },
-}
 
 pub struct GlobalState {
     // The next client internal id
@@ -45,6 +23,9 @@ pub struct GlobalState {
     // All clients (online/offline clients)
     clients: DashMap<ClientId, Sender<(ClientId, InternalMsg)>>,
 
+    pub bind: SocketAddr,
+    pub config: Config,
+
     /// MQTT route table
     pub route_table: RouteTable,
 
@@ -53,7 +34,7 @@ pub struct GlobalState {
 }
 
 impl GlobalState {
-    pub fn new() -> GlobalState {
+    pub fn new(bind: SocketAddr, config: Config) -> GlobalState {
         GlobalState {
             // FIXME: load from db (rosksdb or sqlite3)
             next_client_id: Mutex::new(ClientId(0)),
@@ -61,6 +42,9 @@ impl GlobalState {
             client_id_map: DashMap::new(),
             client_identifier_map: DashMap::new(),
             clients: DashMap::new(),
+
+            bind,
+            config,
             route_table: RouteTable::new(),
             retain_table: RetainTable::new(),
         }
@@ -154,4 +138,40 @@ impl GlobalState {
         let session_state = receiver.recv_async().await.unwrap();
         AddClientReceipt::Present(session_state)
     }
+}
+
+pub struct ExecutorState {
+    pub id: usize,
+    pub gc_queue: TaskQueueHandle,
+}
+
+impl ExecutorState {
+    pub fn new(id: usize, gc_queue: TaskQueueHandle) -> ExecutorState {
+        ExecutorState { id, gc_queue }
+    }
+}
+
+#[derive(Clone)]
+pub enum InternalMsg {
+    Online {
+        sender: Sender<SessionState>,
+    },
+    Publish {
+        topic_name: Arc<TopicName>,
+        qos: QualityOfService,
+        payload: Bytes,
+        subscribe_filter: Arc<TopicFilter>,
+        subscribe_qos: QualityOfService,
+    },
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
+pub struct ClientId(pub u64);
+
+pub enum AddClientReceipt {
+    Present(SessionState),
+    New {
+        client_id: ClientId,
+        receiver: Receiver<(ClientId, InternalMsg)>,
+    },
 }
