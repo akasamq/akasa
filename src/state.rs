@@ -15,9 +15,7 @@ pub enum InternalMsg {
     },
     Publish {
         topic_name: Arc<TopicName>,
-        // TODO: may use QualityOfService
         qos: QualityOfService,
-        // TODO: maybe should change to bytes::Bytes
         payload: Bytes,
         subscribe_filter: Arc<TopicFilter>,
         subscribe_qos: QualityOfService,

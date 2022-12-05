@@ -166,14 +166,6 @@ impl RouteContent {
     pub fn is_empty(&self) -> bool {
         self.clients.is_empty()
     }
-
-    // TODO: This function is for assert the RouteTable info
-    #[cfg(test)]
-    fn to_simple(&self) -> (Option<String>, HashMap<ClientId, QualityOfService>) {
-        let filter = self.topic_filter.as_ref().map(|v| v.to_string());
-        let clients = self.clients.clone();
-        (filter, clients)
-    }
 }
 
 #[inline]
@@ -191,6 +183,14 @@ mod tests {
     use hashbrown::HashMap;
     use mqtt::TopicName;
     use Action::*;
+
+    impl RouteContent {
+        fn to_simple(&self) -> (Option<String>, HashMap<ClientId, QualityOfService>) {
+            let filter = self.topic_filter.as_ref().map(|v| v.to_string());
+            let clients = self.clients.clone();
+            (filter, clients)
+        }
+    }
 
     #[derive(Clone)]
     enum Action<'a> {

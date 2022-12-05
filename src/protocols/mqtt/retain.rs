@@ -169,8 +169,6 @@ impl RetainContent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hashbrown::{HashMap, HashSet};
-    use mqtt::TopicFilter;
     use Action::*;
     use QualityOfService::*;
 

@@ -1,5 +1,5 @@
 use std::cmp;
-use std::collections::LinkedList;
+use std::collections::VecDeque;
 use std::io::{self, Cursor};
 use std::mem;
 use std::ops::Deref;
@@ -41,7 +41,7 @@ pub struct Session {
     packet_id: u16,
     // For assign a message id received from inernal sender (pub/sub)
     message_id: u64,
-    pending_messages: LinkedList<(u64, PublishMessage)>,
+    pending_messages: VecDeque<(u64, PublishMessage)>,
 
     client_id: ClientId,
     client_identifier: String,
@@ -56,7 +56,7 @@ pub struct SessionState {
     packet_id: u16,
     // For assign a message id received from inernal sender (pub/sub)
     message_id: u64,
-    pending_messages: LinkedList<(u64, PublishMessage)>,
+    pending_messages: VecDeque<(u64, PublishMessage)>,
     receiver: Receiver<(ClientId, InternalMsg)>,
 
     client_id: ClientId,
@@ -72,7 +72,7 @@ impl Session {
             write_lock: Semaphore::new(1),
             packet_id: 0,
             message_id: 0,
-            pending_messages: LinkedList::new(),
+            pending_messages: VecDeque::new(),
 
             client_id: ClientId::default(),
             client_identifier: String::new(),
@@ -106,9 +106,7 @@ impl Session {
 
 struct PublishMessage {
     topic_name: Arc<TopicName>,
-    // TODO: may use QualityOfService
     qos: QualityOfService,
-    // TODO: maybe should change to bytes::Bytes
     payload: Bytes,
     subscribe_filter: Arc<TopicFilter>,
     subscribe_qos: QualityOfService,
@@ -281,6 +279,9 @@ async fn handle_connect(
             2 => QualityOfService::Level2,
             _ => unreachable!(),
         };
+        if topic.starts_with('$') {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
         let will = Will {
             retain: packet.will_retain(),
             qos: will_qos,
@@ -357,6 +358,9 @@ async fn handle_publish(
     global_state: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!("#{} received a publish packet: {:#?}", current_fd, packet);
+    if packet.topic_name().starts_with('$') {
+        return Err(io::Error::from(io::ErrorKind::InvalidData));
+    }
     send_publish(
         session,
         packet.topic_name(),
@@ -505,7 +509,7 @@ pub async fn handle_internal(
 ) -> io::Result<bool> {
     match msg {
         InternalMsg::Online { sender } => {
-            let mut pending_messages = LinkedList::new();
+            let mut pending_messages = VecDeque::new();
             mem::swap(&mut session.pending_messages, &mut pending_messages);
             let old_state = SessionState {
                 packet_id: session.packet_id,
@@ -617,9 +621,7 @@ async fn send_publish(
 async fn recv_publish(
     session: &mut Session,
     topic_name: &Arc<TopicName>,
-    // TODO: may use QualityOfService
     qos: QualityOfService,
-    // TODO: maybe should change to bytes::Bytes
     payload: &Bytes,
     subscribe_filter: &Arc<TopicFilter>,
     subscribe_qos: QualityOfService,
@@ -633,9 +635,9 @@ async fn recv_publish(
             session.subscribes
         );
     }
+    let final_qos = cmp::min(qos, subscribe_qos);
     if let Some(conn) = conn {
-        // FIXME: qos 1/2 message queue
-        let qos_with_id = match cmp::min(qos, subscribe_qos) {
+        let qos_with_id = match final_qos {
             QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
             QualityOfService::Level1 => {
                 let packet_id = session.incr_packet_id();
@@ -657,10 +659,10 @@ async fn recv_publish(
             let _permit = session.write_lock.acquire_permit(1).await.unwrap();
             conn.write_all(&buf).await?;
         }
-    } else if qos != QualityOfService::Level0 {
+    } else if final_qos != QualityOfService::Level0 {
         session.push_message(PublishMessage {
             topic_name: Arc::clone(topic_name),
-            qos,
+            qos: final_qos,
             payload: payload.clone(),
             subscribe_filter: Arc::clone(subscribe_filter),
             subscribe_qos,
