@@ -1,5 +1,4 @@
 use std::cmp;
-use std::collections::VecDeque;
 use std::io::{self, Cursor};
 use std::mem;
 use std::ops::Deref;
@@ -26,8 +25,9 @@ use mqtt::{
 use crate::config::{AuthType, Config};
 use crate::state::{AddClientReceipt, ClientId, GlobalState, InternalMsg};
 
+use super::pending::PendingPackets;
 use super::retain::RetainContent;
-use super::session::{PublishMessage, Session, SessionState, Will};
+use super::session::{PubPacket, Session, SessionState, Will};
 
 pub async fn handle_connection(
     session: &mut Session,
@@ -207,10 +207,10 @@ async fn handle_connect(
         .await
     {
         AddClientReceipt::Present(old_state) => {
-            session.packet_id = old_state.packet_id;
-            session.message_id = old_state.message_id;
+            session.client_packet_id = old_state.client_packet_id;
+            session.server_packet_id = old_state.server_packet_id;
             // FIXME: handle pending messages
-            session.pending_messages = old_state.pending_messages;
+            session.pending_packets = old_state.pending_packets;
             *receiver = Some(old_state.receiver);
 
             session.client_id = old_state.client_id;
@@ -419,12 +419,13 @@ pub async fn handle_internal(
 ) -> io::Result<bool> {
     match msg {
         InternalMsg::Online { sender } => {
-            let mut pending_messages = VecDeque::new();
-            mem::swap(&mut session.pending_messages, &mut pending_messages);
+            // FIXME: read max inflight and max packets from config
+            let mut pending_packets = PendingPackets::new(10, 1000);
+            mem::swap(&mut session.pending_packets, &mut pending_packets);
             let old_state = SessionState {
-                packet_id: session.packet_id,
-                message_id: session.message_id,
-                pending_messages,
+                client_packet_id: session.client_packet_id,
+                server_packet_id: session.server_packet_id,
+                pending_packets,
                 receiver: receiver.clone(),
                 client_id: session.client_id,
                 subscribes: session.subscribes.clone(),
@@ -550,11 +551,11 @@ async fn recv_publish(
         let qos_with_id = match final_qos {
             QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
             QualityOfService::Level1 => {
-                let packet_id = session.incr_packet_id();
+                let packet_id = session.incr_client_packet_id();
                 QoSWithPacketIdentifier::Level1(packet_id)
             }
             QualityOfService::Level2 => {
-                let packet_id = session.incr_packet_id();
+                let packet_id = session.incr_client_packet_id();
                 QoSWithPacketIdentifier::Level2(packet_id)
             }
         };
@@ -570,7 +571,7 @@ async fn recv_publish(
             conn.write_all(&buf).await?;
         }
     } else if final_qos != QualityOfService::Level0 {
-        session.push_message(PublishMessage {
+        session.push_packet(PubPacket {
             topic_name: Arc::clone(topic_name),
             qos: final_qos,
             payload: payload.clone(),
