@@ -9,12 +9,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use flume::Receiver;
 use futures_lite::io::{AsyncReadExt, AsyncWriteExt};
-use glommio::{
-    net::{Preallocated, TcpStream},
-    sync::Semaphore,
-};
-use hashbrown::HashMap;
-
+use glommio::net::{Preallocated, TcpStream};
 use mqtt::{
     control::{
         fixed_header::FixedHeader, packet_type::PacketType, variable_header::ConnectReturnCode,
@@ -28,96 +23,11 @@ use mqtt::{
     Decodable, Encodable, TopicFilter, TopicName,
 };
 
-use super::retain::RetainContent;
 use crate::config::{AuthType, Config};
 use crate::state::{AddClientReceipt, ClientId, GlobalState, InternalMsg};
 
-pub struct Session {
-    pub io_error: Option<io::Error>,
-    connected: bool,
-    disconnected: bool,
-    write_lock: Semaphore,
-    // for record packet id send from server to client
-    packet_id: u16,
-    // For assign a message id received from inernal sender (pub/sub)
-    message_id: u64,
-    pending_messages: VecDeque<(u64, PublishMessage)>,
-
-    client_id: ClientId,
-    client_identifier: String,
-    username: Option<String>,
-    clean_session: bool,
-    will: Option<Will>,
-    subscribes: HashMap<TopicFilter, QualityOfService>,
-}
-
-pub struct SessionState {
-    // for record packet id send from server to client
-    packet_id: u16,
-    // For assign a message id received from inernal sender (pub/sub)
-    message_id: u64,
-    pending_messages: VecDeque<(u64, PublishMessage)>,
-    receiver: Receiver<(ClientId, InternalMsg)>,
-
-    client_id: ClientId,
-    subscribes: HashMap<TopicFilter, QualityOfService>,
-}
-
-impl Session {
-    pub fn new() -> Session {
-        Session {
-            io_error: None,
-            connected: false,
-            disconnected: false,
-            write_lock: Semaphore::new(1),
-            packet_id: 0,
-            message_id: 0,
-            pending_messages: VecDeque::new(),
-
-            client_id: ClientId::default(),
-            client_identifier: String::new(),
-            username: None,
-            clean_session: true,
-            will: None,
-            subscribes: HashMap::new(),
-        }
-    }
-
-    pub fn clean_session(&self) -> bool {
-        self.clean_session
-    }
-    pub fn disconnected(&self) -> bool {
-        self.disconnected
-    }
-    pub fn client_id(&self) -> ClientId {
-        self.client_id
-    }
-
-    fn push_message(&mut self, msg: PublishMessage) {
-        self.pending_messages.push_back((self.message_id, msg));
-        self.message_id += 1;
-    }
-    fn incr_packet_id(&mut self) -> u16 {
-        let old_value = self.packet_id;
-        self.packet_id = self.packet_id.wrapping_add(1);
-        old_value
-    }
-}
-
-struct PublishMessage {
-    topic_name: Arc<TopicName>,
-    qos: QualityOfService,
-    payload: Bytes,
-    subscribe_filter: Arc<TopicFilter>,
-    subscribe_qos: QualityOfService,
-}
-
-pub struct Will {
-    retain: bool,
-    qos: QualityOfService,
-    topic: TopicName,
-    message: Vec<u8>,
-}
+use super::retain::RetainContent;
+use super::session::{PublishMessage, Session, SessionState, Will};
 
 pub async fn handle_connection(
     session: &mut Session,
