@@ -5,11 +5,15 @@ use std::ops::Deref;
 use std::os::unix::io::RawFd;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use flume::Receiver;
 use futures_lite::io::{AsyncReadExt, AsyncWriteExt};
-use glommio::net::{Preallocated, TcpStream};
+use glommio::{
+    net::{Preallocated, TcpStream},
+    timer::TimerActionRepeat,
+};
 use mqtt::{
     control::{
         fixed_header::FixedHeader, packet_type::PacketType, variable_header::ConnectReturnCode,
@@ -24,7 +28,7 @@ use mqtt::{
 };
 
 use crate::config::AuthType;
-use crate::state::{AddClientReceipt, ClientId, ExecutorState, GlobalState, InternalMsg};
+use crate::state::{AddClientReceipt, ClientId, ExecutorState, GlobalState, InternalMessage};
 
 use super::pending::PendingPackets;
 use super::retain::RetainContent;
@@ -32,7 +36,7 @@ use super::session::{PubPacket, Session, SessionState, Will};
 
 pub async fn handle_connection(
     session: &mut Session,
-    receiver: &mut Option<Receiver<(ClientId, InternalMsg)>>,
+    receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
     executor: &Rc<ExecutorState>,
@@ -94,7 +98,7 @@ pub async fn handle_connection(
 #[inline]
 async fn handle_packet(
     session: &mut Session,
-    receiver: &mut Option<Receiver<(ClientId, InternalMsg)>>,
+    receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     packet: VariablePacket,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
@@ -133,13 +137,14 @@ async fn handle_packet(
             return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
     }
+    *session.last_packet_time.write() = Instant::now();
     Ok(())
 }
 
 #[inline]
 async fn handle_connect(
     session: &mut Session,
-    receiver: &mut Option<Receiver<(ClientId, InternalMsg)>>,
+    receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     packet: ConnectPacket,
     conn: &mut TcpStream<Preallocated>,
     current_fd: RawFd,
@@ -173,7 +178,39 @@ async fn handle_connect(
     session.username = packet.user_name().map(|name| name.to_string());
     session.keep_alive = packet.keep_alive();
 
-    // FIXME: spawn keep alive timer task to executor
+    if session.keep_alive > 0 {
+        let interval = Duration::from_millis(session.keep_alive as u64 * 500);
+        let client_id = session.client_id;
+        let last_packet_time = Arc::clone(&session.last_packet_time);
+        let global = Arc::clone(global);
+        if let Err(err) = TimerActionRepeat::repeat_into(
+            move || {
+                // Need clone twice: https://stackoverflow.com/a/68462908/1274372
+                let last_packet_time = Arc::clone(&last_packet_time);
+                let global = Arc::clone(&global);
+                async move {
+                    {
+                        let last_packet_time = last_packet_time.read();
+                        if last_packet_time.elapsed() <= interval * 2 {
+                            return Some(interval);
+                        }
+                    }
+                    // timeout, kick it out
+                    if let Some(sender) = global.get_client_sender(&client_id) {
+                        let msg = InternalMessage::Kick {
+                            reason: "timeout".to_owned(),
+                        };
+                        sender.send_async((client_id, msg)).await;
+                    }
+                    None
+                }
+            },
+            executor.gc_queue,
+        ) {
+            log::warn!("spawn executor timer failed: {:?}", err);
+            return Err(io::Error::from(io::ErrorKind::Other));
+        }
+    }
 
     if let Some((topic, message)) = packet.will() {
         let will_qos = match packet.will_qos() {
@@ -397,14 +434,14 @@ pub async fn handle_will(
 #[inline]
 pub async fn handle_internal(
     session: &mut Session,
-    receiver: &Receiver<(ClientId, InternalMsg)>,
+    receiver: &Receiver<(ClientId, InternalMessage)>,
     sender: ClientId,
-    msg: InternalMsg,
+    msg: InternalMessage,
     conn: Option<&mut TcpStream<Preallocated>>,
     global: &Arc<GlobalState>,
 ) -> io::Result<bool> {
     match msg {
-        InternalMsg::Online { sender } => {
+        InternalMessage::Online { sender } => {
             // FIXME: read max inflight and max packets from config
             let mut pending_packets = PendingPackets::new(10, 1000);
             mem::swap(&mut session.pending_packets, &mut pending_packets);
@@ -417,9 +454,18 @@ pub async fn handle_internal(
                 subscribes: session.subscribes.clone(),
             };
             sender.send_async(old_state).await.unwrap();
-            return Ok(true);
+            Ok(true)
         }
-        InternalMsg::Publish {
+        InternalMessage::Kick { reason } => {
+            log::info!(
+                "kick client {:?}, reason: {}, offline: {}",
+                session.client_id,
+                reason,
+                session.disconnected
+            );
+            Ok(!session.disconnected)
+        }
+        InternalMessage::Publish {
             ref topic_name,
             qos,
             ref payload,
@@ -441,9 +487,9 @@ pub async fn handle_internal(
                 conn,
             )
             .await?;
+            Ok(false)
         }
     }
-    Ok(false)
 }
 
 // ===========================
@@ -486,9 +532,9 @@ async fn send_publish(
     for content in matches {
         let content = content.read();
         for (client_id, subscribe_qos) in &content.clients {
-            if let Some((sender_client_id, sender)) = global.get_client_sender(client_id) {
+            if let Some(sender) = global.get_client_sender(client_id) {
                 let subscribe_filter = Arc::new(content.topic_filter.clone().unwrap());
-                senders.push((sender_client_id, subscribe_filter, *subscribe_qos, sender));
+                senders.push((*client_id, subscribe_filter, *subscribe_qos, sender));
             }
         }
     }
@@ -497,7 +543,7 @@ async fn send_publish(
         let topic_name = Arc::new(TopicName::new(topic_name).unwrap());
         let payload = Bytes::from(payload.to_vec());
         for (sender_client_id, subscribe_filter, subscribe_qos, sender) in senders {
-            let msg = InternalMsg::Publish {
+            let msg = InternalMessage::Publish {
                 topic_name: Arc::clone(&topic_name),
                 qos,
                 payload: payload.clone(),

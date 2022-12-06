@@ -1,13 +1,15 @@
 use std::io;
 use std::sync::Arc;
+use std::time::Instant;
 
 use bytes::Bytes;
 use flume::Receiver;
 use glommio::sync::Semaphore;
 use hashbrown::HashMap;
 use mqtt::{qos::QualityOfService, TopicFilter, TopicName};
+use parking_lot::RwLock;
 
-use crate::state::{ClientId, InternalMsg};
+use crate::state::{ClientId, InternalMessage};
 
 use super::pending::PendingPackets;
 
@@ -15,8 +17,8 @@ pub struct Session {
     pub io_error: Option<io::Error>,
     pub(crate) connected: bool,
     pub(crate) disconnected: bool,
-    // keep alive timeout reached
-    pub(crate) timeout: bool,
+    // last package timestamp
+    pub(crate) last_packet_time: Arc<RwLock<Instant>>,
     pub(crate) write_lock: Semaphore,
     // for record packet id send from client to server
     pub(crate) client_packet_id: u16,
@@ -39,7 +41,7 @@ pub struct SessionState {
     // For record packet id send from server to client
     pub server_packet_id: u64,
     pub pending_packets: PendingPackets,
-    pub receiver: Receiver<(ClientId, InternalMsg)>,
+    pub receiver: Receiver<(ClientId, InternalMessage)>,
 
     pub client_id: ClientId,
     pub subscribes: HashMap<TopicFilter, QualityOfService>,
@@ -51,7 +53,7 @@ impl Session {
             io_error: None,
             connected: false,
             disconnected: false,
-            timeout: false,
+            last_packet_time: Arc::new(RwLock::new(Instant::now())),
             write_lock: Semaphore::new(1),
             client_packet_id: 0,
             server_packet_id: 0,

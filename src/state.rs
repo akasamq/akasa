@@ -21,7 +21,7 @@ pub struct GlobalState {
     // MQTT client identifier => client internal id
     client_identifier_map: DashMap<String, ClientId>,
     // All clients (online/offline clients)
-    clients: DashMap<ClientId, Sender<(ClientId, InternalMsg)>>,
+    clients: DashMap<ClientId, Sender<(ClientId, InternalMessage)>>,
 
     pub bind: SocketAddr,
     pub config: Config,
@@ -89,10 +89,8 @@ impl GlobalState {
     pub fn get_client_sender(
         &self,
         client_id: &ClientId,
-    ) -> Option<(ClientId, Sender<(ClientId, InternalMsg)>)> {
-        self.clients
-            .get(client_id)
-            .map(|pair| (*pair.key(), pair.value().clone()))
+    ) -> Option<Sender<(ClientId, InternalMessage)>> {
+        self.clients.get(client_id).map(|pair| pair.value().clone())
     }
 
     // Client connected
@@ -132,7 +130,7 @@ impl GlobalState {
 
         let (sender, receiver) = bounded(1);
         internal_sender
-            .send_async((old_id, InternalMsg::Online { sender }))
+            .send_async((old_id, InternalMessage::Online { sender }))
             .await
             .unwrap();
         let session_state = receiver.recv_async().await.unwrap();
@@ -152,10 +150,12 @@ impl ExecutorState {
 }
 
 #[derive(Clone)]
-pub enum InternalMsg {
-    Online {
-        sender: Sender<SessionState>,
-    },
+pub enum InternalMessage {
+    /// The client of the session connected, send the keept session to the connection loop
+    Online { sender: Sender<SessionState> },
+    /// Kick client out (disconnect the client)
+    Kick { reason: String },
+    /// A publish message matched
     Publish {
         topic_name: Arc<TopicName>,
         qos: QualityOfService,
@@ -172,6 +172,6 @@ pub enum AddClientReceipt {
     Present(SessionState),
     New {
         client_id: ClientId,
-        receiver: Receiver<(ClientId, InternalMsg)>,
+        receiver: Receiver<(ClientId, InternalMessage)>,
     },
 }

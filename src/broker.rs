@@ -17,7 +17,7 @@ use glommio::{
 
 use crate::config::Config;
 use crate::protocols::mqtt;
-use crate::state::{ClientId, ExecutorState, GlobalState, InternalMsg};
+use crate::state::{ClientId, ExecutorState, GlobalState, InternalMessage};
 
 pub fn start(bind: SocketAddr, config: PathBuf) -> io::Result<()> {
     let config: Config = {
@@ -102,7 +102,7 @@ async fn handle_connection(
 ) -> io::Result<()> {
     enum Msg {
         Socket(()),
-        Internal((ClientId, InternalMsg)),
+        Internal((ClientId, InternalMessage)),
     }
 
     let mut session = mqtt::Session::new();
@@ -174,7 +174,7 @@ async fn handle_connection(
                     .await
                     {
                         Ok(true) => {
-                            // been occupied by newly connected client
+                            // been occupied by newly connected client or kicked out
                             break;
                         }
                         Ok(false) => {}
@@ -197,6 +197,7 @@ async fn handle_connection(
                 .await
             {
                 Ok(true) => {
+                    // been occupied by newly connected client or kicked out
                     break;
                 }
                 Ok(false) => {}
