@@ -44,7 +44,7 @@ impl PendingPackets {
             last_sent,
             packet_id,
             packet,
-            dup: !sent,
+            dup: sent,
         });
         Ok(())
     }
@@ -97,14 +97,17 @@ impl PendingPackets {
         }
     }
 
-    pub fn get_ready_packet(&mut self, start_idx: usize) -> Option<(usize, &PendingPacketStatus)> {
+    pub fn get_ready_packet(
+        &mut self,
+        start_idx: usize,
+    ) -> Option<(usize, &mut PendingPacketStatus)> {
         let now_ts = get_unix_ts();
         let current_inflight = cmp::min(self.max_inflight as usize, self.packets.len());
         let mut next_idx = None;
         for idx in start_idx..current_inflight {
             let packet_status = self.packets.get_mut(idx).expect("packet");
             match packet_status {
-                PendingPacketStatus::New { last_sent, .. } => {
+                PendingPacketStatus::New { last_sent, dup, .. } => {
                     if now_ts >= self.timeout + *last_sent {
                         *last_sent = now_ts;
                         next_idx = Some(idx);
@@ -121,7 +124,7 @@ impl PendingPackets {
                 PendingPacketStatus::Complete => {}
             }
         }
-        next_idx.map(|idx| (idx, self.packets.get(idx).expect("packet")))
+        next_idx.map(|idx| (idx, self.packets.get_mut(idx).expect("packet")))
     }
 }
 

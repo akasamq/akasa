@@ -175,6 +175,7 @@ async fn handle_packet(
                 );
                 rv_packet.set_dup(*dup);
                 rv_packet.set_retain(packet.retain);
+                *dup = true;
                 let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
                 rv_packet.encode(&mut buf)?;
                 {
