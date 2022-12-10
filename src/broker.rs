@@ -78,7 +78,7 @@ async fn broker(executor: Rc<ExecutorState>, global: Arc<GlobalState>) -> io::Re
             let global = Arc::clone(&global);
             async move {
                 match handle_connection(Some(conn), fd, &executor, &global).await {
-                    Ok(Some((mut session, receiver))) => {
+                    Ok(Some((session, receiver))) => {
                         log::info!(
                             "executor {:03}, #{} {} go to offline, total {} clients ({} online) ",
                             executor.id,
@@ -87,43 +87,7 @@ async fn broker(executor: Rc<ExecutorState>, global: Arc<GlobalState>) -> io::Re
                             global.clients_count(),
                             global.online_clients_count(),
                         );
-                        spawn_local(async move {
-                            loop {
-                                let (sender, msg) = match receiver.recv_async().await {
-                                    Ok((sender, msg)) => (sender, msg),
-                                    Err(err) => {
-                                        log::warn!(
-                                            "offline client receive internal message error: {:?}",
-                                            err
-                                        );
-                                        break;
-                                    }
-                                };
-                                match mqtt::handle_internal(
-                                    &mut session,
-                                    &receiver,
-                                    sender,
-                                    msg,
-                                    None,
-                                    &global,
-                                )
-                                .await
-                                {
-                                    Ok(true) => {
-                                        // Been occupied by newly connected client
-                                        break;
-                                    }
-                                    Ok(false) => {}
-                                    Err(err) => {
-                                        // An error in offline mode should immediately return it
-                                        log::error!("offline client error: {:?}", err);
-                                        break;
-                                    }
-                                }
-                            }
-                            log::debug!("offline client {:?} finished", session.client_id);
-                        })
-                        .detach();
+                        spawn_local(handle_offline(session, receiver, global)).detach();
                     }
                     Ok(None) => {
                         log::info!(
@@ -252,4 +216,33 @@ async fn handle_connection(
         }
     }
     Ok(None)
+}
+
+async fn handle_offline(
+    mut session: mqtt::Session,
+    receiver: Receiver<(ClientId, InternalMessage)>,
+    global: Arc<GlobalState>,
+) {
+    loop {
+        let (sender, msg) = match receiver.recv_async().await {
+            Ok((sender, msg)) => (sender, msg),
+            Err(err) => {
+                log::warn!("offline client receive internal message error: {:?}", err);
+                break;
+            }
+        };
+        match mqtt::handle_internal(&mut session, &receiver, sender, msg, None, &global).await {
+            Ok(true) => {
+                // Been occupied by newly connected client
+                break;
+            }
+            Ok(false) => {}
+            Err(err) => {
+                // An error in offline mode should immediately return it
+                log::error!("offline client error: {:?}", err);
+                break;
+            }
+        }
+    }
+    log::debug!("offline client finished: {:?}", session.client_id);
 }

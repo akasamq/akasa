@@ -656,7 +656,7 @@ pub async fn handle_internal(
         }
         InternalMessage::Kick { reason } => {
             log::info!(
-                "kick client {:?}, reason: {}, offline: {}, network: {}",
+                "kick {:?}, reason: {}, offline: {}, network: {}",
                 session.client_id,
                 reason,
                 session.disconnected,
