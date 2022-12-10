@@ -103,23 +103,14 @@ impl PendingPackets {
         for idx in start_idx..current_inflight {
             let packet_status = self.packets.get_mut(idx).expect("packet");
             match packet_status {
-                PendingPacketStatus::New {
-                    last_sent,
-                    packet_id,
-                    packet,
-                    ..
-                } => {
+                PendingPacketStatus::New { last_sent, .. } => {
                     if now_ts >= self.timeout + *last_sent {
                         *last_sent = now_ts;
                         next_idx = Some(idx);
                         break;
                     }
                 }
-                PendingPacketStatus::Pubrec {
-                    last_sent,
-                    packet_id,
-                    ..
-                } => {
+                PendingPacketStatus::Pubrec { last_sent, .. } => {
                     if now_ts >= self.timeout + *last_sent {
                         *last_sent = now_ts;
                         next_idx = Some(idx);

@@ -286,7 +286,6 @@ async fn handle_connect(
     let mut session_present = false;
     match global.add_client(session.client_identifier.as_str()).await {
         AddClientReceipt::Present(old_state) => {
-            // session.client_packet_id = old_state.client_packet_id;
             session.server_packet_id = old_state.server_packet_id;
             // FIXME: handle pending messages
             session.pending_packets = old_state.pending_packets;
@@ -577,7 +576,6 @@ pub async fn handle_internal(
             let mut pending_packets = PendingPackets::new(10, 1000, 15);
             mem::swap(&mut session.pending_packets, &mut pending_packets);
             let old_state = SessionState {
-                // client_packet_id: session.client_packet_id,
                 server_packet_id: session.server_packet_id,
                 pending_packets,
                 receiver: receiver.clone(),
@@ -716,7 +714,7 @@ async fn recv_publish(
         // The packet_id equals to: `self.server_packet_id % 65536`
         packet_id = session.incr_server_packet_id() as u16;
         session.pending_packets.clean_complete();
-        session.pending_packets.push_back(
+        if let Err(err) = session.pending_packets.push_back(
             packet_id,
             PubPacket {
                 topic_name: Arc::clone(topic_name),
@@ -726,7 +724,9 @@ async fn recv_publish(
                 subscribe_qos,
             },
             packet_sent,
-        );
+        ) {
+            // TODO:
+        };
     }
 
     if let Some(conn) = conn {
