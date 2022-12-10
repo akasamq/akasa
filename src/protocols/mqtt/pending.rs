@@ -44,6 +44,7 @@ impl PendingPackets {
             last_sent,
             packet_id,
             packet,
+            dup: !sent,
         });
         Ok(())
     }
@@ -130,6 +131,7 @@ pub enum PendingPacketStatus {
         last_sent: u64,
         packet_id: u16,
         packet: PubPacket,
+        dup: bool,
     },
     Pubrec {
         // Last sent this packet timestamp as seconds

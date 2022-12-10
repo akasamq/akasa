@@ -12,7 +12,7 @@ use glommio::{
     net::{Preallocated, TcpListener, TcpStream},
     spawn_local,
     timer::sleep,
-    CpuSet, Latency, LocalExecutor, LocalExecutorPoolBuilder, PoolPlacement, Shares,
+    CpuSet, Latency, LocalExecutorPoolBuilder, PoolPlacement, Shares,
 };
 
 use crate::config::Config;

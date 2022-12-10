@@ -158,7 +158,10 @@ async fn handle_packet(
         start_idx = idx + 1;
         match packet_status {
             PendingPacketStatus::New {
-                packet_id, packet, ..
+                dup,
+                packet_id,
+                packet,
+                ..
             } => {
                 let qos_with_id = match packet.qos {
                     QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
@@ -170,6 +173,7 @@ async fn handle_packet(
                     qos_with_id,
                     packet.payload.clone(),
                 );
+                rv_packet.set_dup(*dup);
                 rv_packet.set_retain(packet.retain);
                 let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
                 rv_packet.encode(&mut buf)?;
@@ -748,6 +752,7 @@ async fn recv_publish(
             qos_with_id,
             payload.to_vec(),
         );
+        rv_packet.set_dup(false);
         rv_packet.set_retain(retain);
         let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
         rv_packet.encode(&mut buf)?;
