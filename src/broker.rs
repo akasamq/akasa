@@ -7,6 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use flume::Receiver;
 use futures_lite::future::FutureExt;
 use glommio::{
     net::{Preallocated, TcpListener, TcpStream},
@@ -67,8 +68,8 @@ async fn broker(executor: Rc<ExecutorState>, global: Arc<GlobalState>) -> io::Re
         log::info!(
             "executor {:03}, #{} {} connected, total {} clients ({} online) ",
             executor.id,
-            peer_addr,
             fd,
+            peer_addr,
             global.clients_count(),
             global.online_clients_count(),
         );
@@ -76,17 +77,67 @@ async fn broker(executor: Rc<ExecutorState>, global: Arc<GlobalState>) -> io::Re
             let executor = Rc::clone(&executor);
             let global = Arc::clone(&global);
             async move {
-                if let Err(err) = handle_connection(Some(conn), fd, &executor, &global).await {
-                    log::error!("#{} connection loop error: {}", fd, err);
-                } else {
-                    log::info!(
-                        "executor {:03}, #{} {} connected, total {} clients ({} online) ",
-                        executor.id,
-                        peer_addr,
-                        fd,
-                        global.clients_count(),
-                        global.online_clients_count(),
-                    );
+                match handle_connection(Some(conn), fd, &executor, &global).await {
+                    Ok(Some((mut session, receiver))) => {
+                        log::info!(
+                            "executor {:03}, #{} {} go to offline, total {} clients ({} online) ",
+                            executor.id,
+                            fd,
+                            peer_addr,
+                            global.clients_count(),
+                            global.online_clients_count(),
+                        );
+                        spawn_local(async move {
+                            loop {
+                                let (sender, msg) = match receiver.recv_async().await {
+                                    Ok((sender, msg)) => (sender, msg),
+                                    Err(err) => {
+                                        log::warn!(
+                                            "offline client receive internal message error: {:?}",
+                                            err
+                                        );
+                                        break;
+                                    }
+                                };
+                                match mqtt::handle_internal(
+                                    &mut session,
+                                    &receiver,
+                                    sender,
+                                    msg,
+                                    None,
+                                    &global,
+                                )
+                                .await
+                                {
+                                    Ok(true) => {
+                                        // Been occupied by newly connected client
+                                        break;
+                                    }
+                                    Ok(false) => {}
+                                    Err(err) => {
+                                        // An error in offline mode should immediately return it
+                                        log::error!("offline client error: {:?}", err);
+                                        break;
+                                    }
+                                }
+                            }
+                            log::debug!("offline client {:?} finished", session.client_id);
+                        })
+                        .detach();
+                    }
+                    Ok(None) => {
+                        log::info!(
+                            "executor {:03}, #{} {} finished, total {} clients ({} online) ",
+                            executor.id,
+                            fd,
+                            peer_addr,
+                            global.clients_count(),
+                            global.online_clients_count(),
+                        );
+                    }
+                    Err(err) => {
+                        log::error!("#{} connection loop error: {}", fd, err);
+                    }
                 }
             }
         })
@@ -99,7 +150,7 @@ async fn handle_connection(
     current_fd: RawFd,
     executor: &Rc<ExecutorState>,
     global: &Arc<GlobalState>,
-) -> io::Result<()> {
+) -> io::Result<Option<(mqtt::Session, Receiver<(ClientId, InternalMessage)>)>> {
     enum Msg {
         Socket(()),
         Internal((ClientId, InternalMessage)),
@@ -163,6 +214,7 @@ async fn handle_connection(
             match recv_data.or(recv_msg).await {
                 Ok(Msg::Socket(())) => {}
                 Ok(Msg::Internal((sender, msg))) => {
+                    let is_kick = matches!(msg, InternalMessage::Kick { .. });
                     match mqtt::handle_internal(
                         &mut session,
                         &receiver,
@@ -174,7 +226,11 @@ async fn handle_connection(
                     .await
                     {
                         Ok(true) => {
-                            // Been occupied by newly connected client or kicked out
+                            if is_kick && !session.disconnected {
+                                // Offline client logic
+                                return Ok(Some((session, receiver)));
+                            }
+                            // Been occupied by newly connected client or kicked out after disconnected
                             break;
                         }
                         Ok(false) => {}
@@ -192,24 +248,8 @@ async fn handle_connection(
             }
         } else {
             // Offline client logic
-            let (sender, msg) = receiver
-                .recv_async()
-                .await
-                .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
-            match mqtt::handle_internal(&mut session, &receiver, sender, msg, conn.as_mut(), global)
-                .await
-            {
-                Ok(true) => {
-                    // Been occupied by newly connected client or kicked out
-                    break;
-                }
-                Ok(false) => {}
-                Err(err) => {
-                    // An error in offline mode should immediately return it
-                    return Err(err);
-                }
-            }
+            return Ok(Some((session, receiver)));
         }
     }
-    Ok(())
+    Ok(None)
 }

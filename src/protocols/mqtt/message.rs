@@ -209,7 +209,29 @@ async fn handle_connect(
     executor: &Rc<ExecutorState>,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!("#{} received a connect packet: {:#?}", current_fd, packet);
+    log::debug!(
+        r#"#{} received a connect packet:
+     protocol : {} {:?}
+    client_id : {}
+clean session : {}
+     username : {:?}
+     password : {:?}
+   keep-alive : {}s
+         will : {:?}, retain: {}, qos: {:?}
+     reserved : {}"#,
+        current_fd,
+        packet.protocol_name(),
+        packet.protocol_level(),
+        packet.client_identifier(),
+        packet.clean_session(),
+        packet.user_name(),
+        packet.password(),
+        packet.keep_alive(),
+        packet.will(),
+        packet.will_retain(),
+        packet.will_qos(),
+        packet.reserved_flag(),
+    );
     let mut return_code = ConnectReturnCode::ConnectionAccepted;
     for auth_type in &global.config.auth_types {
         match auth_type {
@@ -236,9 +258,11 @@ async fn handle_connect(
     session.username = packet.user_name().map(|name| name.to_string());
     session.keep_alive = packet.keep_alive();
 
+    // FIXME: if kee_alive is zero, set a default keep_alive value from config
     if session.keep_alive > 0 {
         let interval = Duration::from_millis(session.keep_alive as u64 * 500);
         let client_id = session.client_id;
+        log::debug!("{:?} keep alive: {:?}", client_id, interval * 2);
         let last_packet_time = Arc::clone(&session.last_packet_time);
         let global = Arc::clone(global);
         if let Err(err) = TimerActionRepeat::repeat_into(
@@ -292,6 +316,7 @@ async fn handle_connect(
     let mut session_present = false;
     match global.add_client(session.client_identifier.as_str()).await {
         AddClientReceipt::Present(old_state) => {
+            log::debug!("Got exists session for {:?}", old_state.client_id);
             session.server_packet_id = old_state.server_packet_id;
             // FIXME: handle pending messages
             session.pending_packets = old_state.pending_packets;
@@ -306,13 +331,14 @@ async fn handle_connect(
             client_id,
             receiver: new_receiver,
         } => {
+            log::debug!("Create new session for {:?}", client_id);
             session.client_id = client_id;
             *receiver = Some(new_receiver);
         }
     }
 
     log::debug!(
-        "socket fd#{} assgined to: {:?}",
+        "Socket fd#{} assgined to: {:?}",
         current_fd,
         session.client_id
     );
@@ -352,7 +378,18 @@ async fn handle_publish(
     current_fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!("#{} received a publish packet: {:#?}", current_fd, packet);
+    log::debug!(
+        r#"#{} received a publish packet:
+topic name : {}
+   payload : {:?}
+     flags : qos={:?}, retain={}, dup={}"#,
+        current_fd,
+        packet.topic_name(),
+        packet.payload(),
+        packet.qos(),
+        packet.retain(),
+        packet.dup(),
+    );
     if packet.topic_name().starts_with('$') {
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
@@ -397,7 +434,11 @@ async fn handle_puback(
     current_fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!("#{} received a puback packet: {:#?}", current_fd, packet);
+    log::debug!(
+        "#{} received a puback packet: id={}",
+        current_fd,
+        packet.packet_identifier()
+    );
     session.pending_packets.complete(packet.packet_identifier());
     Ok(())
 }
@@ -410,7 +451,11 @@ async fn handle_pubrec(
     current_fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!("#{} received a pubrec packet: {:#?}", current_fd, packet);
+    log::debug!(
+        "#{} received a pubrec  packet: id={}",
+        current_fd,
+        packet.packet_identifier()
+    );
     session.pending_packets.pubrec(packet.packet_identifier());
     let rv_packet = PubrelPacket::new(packet.packet_identifier());
     let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
@@ -430,7 +475,11 @@ async fn handle_pubrel(
     current_fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!("#{} received a pubrel packet: {:#?}", current_fd, packet);
+    log::debug!(
+        "#{} received a pubrel  packet: id={}",
+        current_fd,
+        packet.packet_identifier()
+    );
     let rv_packet = PubcompPacket::new(packet.packet_identifier());
     let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
     rv_packet.encode(&mut buf)?;
@@ -449,7 +498,11 @@ async fn handle_pubcomp(
     current_fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!("#{} received a pubcomp packet: {:#?}", current_fd, packet);
+    log::debug!(
+        "#{} received a pubcomp packet: id={}",
+        current_fd,
+        packet.packet_identifier()
+    );
     session.pending_packets.complete(packet.packet_identifier());
     Ok(())
 }
@@ -462,7 +515,14 @@ async fn handle_subscribe(
     current_fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!("#{} received a subscribe packet: {:#?}", current_fd, packet);
+    log::debug!(
+        r#"#{} received a subscribe packet:
+packet id : {}
+   topics : {:?}"#,
+        current_fd,
+        packet.packet_identifier(),
+        packet.subscribes(),
+    );
     if packet.subscribes().is_empty() {
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
@@ -509,9 +569,12 @@ async fn handle_unsubscribe(
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        "#{} received a unsubscribe packet: {:#?}",
+        r#"#{} received a unsubscribe packet:
+packet id : {}
+   topics : {:?}"#,
         current_fd,
-        packet
+        packet.packet_identifier(),
+        packet.subscribes(),
     );
     for filter in packet.subscribes() {
         global.route_table.unsubscribe(filter, session.client_id);
@@ -593,12 +656,13 @@ pub async fn handle_internal(
         }
         InternalMessage::Kick { reason } => {
             log::info!(
-                "kick client {:?}, reason: {}, offline: {}",
+                "kick client {:?}, reason: {}, offline: {}, network: {}",
                 session.client_id,
                 reason,
-                session.disconnected
+                session.disconnected,
+                conn.is_some(),
             );
-            Ok(!session.disconnected)
+            Ok(conn.is_some())
         }
         InternalMessage::Publish {
             ref topic_name,
@@ -642,10 +706,17 @@ async fn send_publish(
 ) {
     if retain {
         if payload.is_empty() {
-            if let Some(old_retain_content) = global.retain_table.remove(topic_name) {
+            if let Some(old_content) = global.retain_table.remove(topic_name) {
                 log::debug!(
-                    "retain message removed, old retain content: {:?}",
-                    old_retain_content
+                    r#"retain message removed, old retain content:
+ client id : {:?}
+topic name : {}
+   payload : {:?}
+       qos : {:?}"#,
+                    old_content.client_id,
+                    &old_content.topic_name.deref().deref(),
+                    old_content.payload.as_ref(),
+                    old_content.qos,
                 );
             }
         } else {
@@ -655,10 +726,17 @@ async fn send_publish(
                 Bytes::from(payload.to_vec()),
                 session.client_id,
             ));
-            if let Some(old_retain_content) = global.retain_table.insert(content) {
+            if let Some(old_content) = global.retain_table.insert(content) {
                 log::debug!(
-                    "retain message insert, old retain content: {:?}",
-                    old_retain_content
+                    r#"retain message removed, old retain content:
+ client id : {:?}
+topic name : {}
+   payload : {:?}
+       qos : {:?}"#,
+                    old_content.client_id,
+                    &old_content.topic_name.deref().deref(),
+                    old_content.payload.as_ref(),
+                    old_content.qos,
                 );
             }
         }
