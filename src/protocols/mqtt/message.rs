@@ -483,8 +483,7 @@ async fn handle_subscribe(
                 retain.qos,
                 true,
                 &retain.payload,
-                &subscribe_filter,
-                allowed_qos,
+                (&subscribe_filter, allowed_qos),
                 Some(conn),
             )
             .await?;
@@ -619,8 +618,7 @@ pub async fn handle_internal(
                 qos,
                 false,
                 payload,
-                subscribe_filter,
-                subscribe_qos,
+                (subscribe_filter, subscribe_qos),
                 conn,
             )
             .await?;
@@ -707,8 +705,7 @@ async fn recv_publish(
     qos: QualityOfService,
     retain: bool,
     payload: &Bytes,
-    subscribe_filter: &Arc<TopicFilter>,
-    subscribe_qos: QualityOfService,
+    (subscribe_filter, subscribe_qos): (&Arc<TopicFilter>, QualityOfService),
     conn: Option<&mut TcpStream<Preallocated>>,
 ) -> io::Result<()> {
     if !session.subscribes.contains_key(subscribe_filter.as_ref()) {
