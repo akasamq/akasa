@@ -21,7 +21,7 @@ pub struct Session {
     pub(crate) last_packet_time: Arc<RwLock<Instant>>,
     pub(crate) write_lock: Semaphore,
     // for record packet id send from client to server
-    pub(crate) client_packet_id: u16,
+    // pub(crate) client_packet_id: u16,
     // For record packet id send from server to client
     pub(crate) server_packet_id: u64,
     pub(crate) pending_packets: PendingPackets,
@@ -37,7 +37,7 @@ pub struct Session {
 
 pub struct SessionState {
     // for record packet id send from client to server
-    pub client_packet_id: u16,
+    // pub client_packet_id: u16,
     // For record packet id send from server to client
     pub server_packet_id: u64,
     pub pending_packets: PendingPackets,
@@ -55,10 +55,10 @@ impl Session {
             disconnected: false,
             last_packet_time: Arc::new(RwLock::new(Instant::now())),
             write_lock: Semaphore::new(1),
-            client_packet_id: 0,
+            // client_packet_id: 0,
             server_packet_id: 0,
             // FIXME: read max inflight and max packets from config
-            pending_packets: PendingPackets::new(10, 1000),
+            pending_packets: PendingPackets::new(10, 1000, 15),
 
             client_id: ClientId::default(),
             client_identifier: String::new(),
@@ -80,16 +80,24 @@ impl Session {
         self.client_id
     }
 
-    pub(crate) fn push_packet(&mut self, packet: PubPacket) {
+    pub(crate) fn push_packet(&mut self, packet: PubPacket, sent: bool) {
+        // The packet_id equals to: `self.server_packet_id % 65536`
         self.pending_packets
-            .push_back(self.server_packet_id, packet);
+            .push_back(self.server_packet_id as u16, packet, sent);
         self.server_packet_id += 1;
     }
-    pub(crate) fn incr_client_packet_id(&mut self) -> u16 {
-        let old_value = self.client_packet_id;
-        self.client_packet_id = self.client_packet_id.wrapping_add(1);
+
+    pub(crate) fn incr_server_packet_id(&mut self) -> u64 {
+        let old_value = self.server_packet_id;
+        self.server_packet_id += 1;
         old_value
     }
+
+    // pub(crate) fn incr_client_packet_id(&mut self) -> u16 {
+    //     let old_value = self.client_packet_id;
+    //     self.client_packet_id = self.client_packet_id.wrapping_add(1);
+    //     old_value
+    // }
 }
 
 #[derive(Debug, Clone)]

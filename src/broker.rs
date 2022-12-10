@@ -123,7 +123,7 @@ async fn handle_connection(
         if conn.is_some() {
             if session.disconnected() {
                 // become a offline client, but session keep updating
-                let _ = conn.take();
+                conn = None;
                 if session.clean_session() {
                     global.remove_client(session.client_id());
                     break;
@@ -136,7 +136,7 @@ async fn handle_connection(
                     mqtt::handle_will(&mut session, conn, current_fd, global).await?;
                 }
                 // become a offline client, but session keep updating
-                let _ = conn.take();
+                conn = None;
                 if session.clean_session() {
                     global.remove_client(session.client_id());
                     return Err(err);
@@ -147,7 +147,7 @@ async fn handle_connection(
         }
 
         if let Some(conn) = conn.as_mut() {
-            // online client logic
+            // Online client logic
             let recv_data = async {
                 mqtt::handle_connection(&mut session, &mut None, conn, current_fd, executor, global)
                     .await
@@ -174,21 +174,24 @@ async fn handle_connection(
                     .await
                     {
                         Ok(true) => {
-                            // been occupied by newly connected client or kicked out
+                            // Been occupied by newly connected client or kicked out
                             break;
                         }
                         Ok(false) => {}
+                        // Currently, this error can only happend when write data to connection
                         Err(err) => {
+                            // An error in online mode should also check clean_session value
                             session.io_error = Some(err);
                         }
                     }
                 }
                 Err(err) => {
+                    // An error in online mode should also check clean_session value
                     session.io_error = Some(err);
                 }
             }
         } else {
-            // offline client logic
+            // Offline client logic
             let (sender, msg) = receiver
                 .recv_async()
                 .await
@@ -197,11 +200,12 @@ async fn handle_connection(
                 .await
             {
                 Ok(true) => {
-                    // been occupied by newly connected client or kicked out
+                    // Been occupied by newly connected client or kicked out
                     break;
                 }
                 Ok(false) => {}
                 Err(err) => {
+                    // An error in offline mode should immediately return it
                     return Err(err);
                 }
             }

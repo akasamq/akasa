@@ -20,8 +20,9 @@ use mqtt::{
     },
     packet::{
         ConnackPacket, ConnectPacket, DisconnectPacket, PingreqPacket, PingrespPacket,
-        PubackPacket, PublishPacket, QoSWithPacketIdentifier, SubackPacket, SubscribePacket,
-        UnsubackPacket, UnsubscribePacket, VariablePacket,
+        PubackPacket, PubcompPacket, PublishPacket, PubrecPacket, PubrelPacket,
+        QoSWithPacketIdentifier, SubackPacket, SubscribePacket, UnsubackPacket, UnsubscribePacket,
+        VariablePacket,
     },
     qos::QualityOfService,
     Decodable, Encodable, TopicFilter, TopicName,
@@ -30,9 +31,9 @@ use mqtt::{
 use crate::config::AuthType;
 use crate::state::{AddClientReceipt, ClientId, ExecutorState, GlobalState, InternalMessage};
 
-use super::pending::PendingPackets;
-use super::retain::RetainContent;
-use super::session::{PubPacket, Session, SessionState, Will};
+use super::{
+    PendingPacketStatus, PendingPackets, PubPacket, RetainContent, Session, SessionState, Will,
+};
 
 pub async fn handle_connection(
     session: &mut Session,
@@ -124,6 +125,18 @@ async fn handle_packet(
         VariablePacket::PublishPacket(packet) => {
             handle_publish(session, packet, conn, current_fd, global).await?;
         }
+        VariablePacket::PubackPacket(packet) => {
+            handle_puback(session, packet, conn, current_fd, global).await?;
+        }
+        VariablePacket::PubrecPacket(packet) => {
+            handle_pubrec(session, packet, conn, current_fd, global).await?;
+        }
+        VariablePacket::PubrelPacket(packet) => {
+            handle_pubrel(session, packet, conn, current_fd, global).await?;
+        }
+        VariablePacket::PubcompPacket(packet) => {
+            handle_pubcomp(session, packet, conn, current_fd, global).await?;
+        }
         VariablePacket::SubscribePacket(packet) => {
             handle_subscribe(session, packet, conn, current_fd, global).await?;
         }
@@ -138,6 +151,45 @@ async fn handle_packet(
         }
     }
     *session.last_packet_time.write() = Instant::now();
+
+    session.pending_packets.clean_complete();
+    let mut start_idx = 0;
+    while let Some((idx, packet_status)) = session.pending_packets.get_ready_packet(start_idx) {
+        start_idx = idx + 1;
+        match packet_status {
+            PendingPacketStatus::New {
+                packet_id, packet, ..
+            } => {
+                let qos_with_id = match packet.qos {
+                    QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
+                    QualityOfService::Level1 => QoSWithPacketIdentifier::Level1(*packet_id),
+                    QualityOfService::Level2 => QoSWithPacketIdentifier::Level2(*packet_id),
+                };
+                let rv_packet = PublishPacket::new(
+                    TopicName::clone(&packet.topic_name),
+                    qos_with_id,
+                    packet.payload.clone(),
+                );
+                let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+                rv_packet.encode(&mut buf)?;
+                {
+                    let _permit = session.write_lock.acquire_permit(1).await.unwrap();
+                    conn.write_all(&buf).await?;
+                }
+            }
+            PendingPacketStatus::Pubrec { packet_id, .. } => {
+                let rv_packet = PubrelPacket::new(*packet_id);
+                let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+                rv_packet.encode(&mut buf)?;
+                {
+                    let _permit = session.write_lock.acquire_permit(1).await.unwrap();
+                    conn.write_all(&buf).await?;
+                }
+            }
+            PendingPacketStatus::Complete => unreachable!(),
+        }
+    }
+
     Ok(())
 }
 
@@ -234,13 +286,14 @@ async fn handle_connect(
     let mut session_present = false;
     match global.add_client(session.client_identifier.as_str()).await {
         AddClientReceipt::Present(old_state) => {
-            session.client_packet_id = old_state.client_packet_id;
+            // session.client_packet_id = old_state.client_packet_id;
             session.server_packet_id = old_state.server_packet_id;
             // FIXME: handle pending messages
             session.pending_packets = old_state.pending_packets;
             *receiver = Some(old_state.receiver);
 
             session.client_id = old_state.client_id;
+            session.subscribes = old_state.subscribes;
 
             session_present = true;
         }
@@ -248,8 +301,8 @@ async fn handle_connect(
             client_id,
             receiver: new_receiver,
         } => {
-            *receiver = Some(new_receiver);
             session.client_id = client_id;
+            *receiver = Some(new_receiver);
         }
     }
 
@@ -307,15 +360,92 @@ async fn handle_publish(
         global,
     )
     .await;
-    if let Some(pkid) = packet.qos().split().1 {
-        let rv_packet = PubackPacket::new(pkid);
-        let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-        rv_packet.encode(&mut buf)?;
-        {
-            let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-            conn.write_all(&buf).await?;
+    match packet.qos() {
+        QoSWithPacketIdentifier::Level0 => {}
+        QoSWithPacketIdentifier::Level1(pkid) => {
+            let rv_packet = PubackPacket::new(pkid);
+            let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+            rv_packet.encode(&mut buf)?;
+            {
+                let _permit = session.write_lock.acquire_permit(1).await.unwrap();
+                conn.write_all(&buf).await?;
+            }
+        }
+        QoSWithPacketIdentifier::Level2(pkid) => {
+            let rv_packet = PubrecPacket::new(pkid);
+            let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+            rv_packet.encode(&mut buf)?;
+            {
+                let _permit = session.write_lock.acquire_permit(1).await.unwrap();
+                conn.write_all(&buf).await?;
+            }
         }
     }
+    Ok(())
+}
+
+#[inline]
+async fn handle_puback(
+    session: &mut Session,
+    packet: PubackPacket,
+    conn: &mut TcpStream<Preallocated>,
+    current_fd: RawFd,
+    global: &Arc<GlobalState>,
+) -> io::Result<()> {
+    log::debug!("#{} received a puback packet: {:#?}", current_fd, packet);
+    session.pending_packets.complete(packet.packet_identifier());
+    Ok(())
+}
+
+#[inline]
+async fn handle_pubrec(
+    session: &mut Session,
+    packet: PubrecPacket,
+    conn: &mut TcpStream<Preallocated>,
+    current_fd: RawFd,
+    global: &Arc<GlobalState>,
+) -> io::Result<()> {
+    log::debug!("#{} received a pubrec packet: {:#?}", current_fd, packet);
+    session.pending_packets.pubrec(packet.packet_identifier());
+    let rv_packet = PubrelPacket::new(packet.packet_identifier());
+    let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+    rv_packet.encode(&mut buf)?;
+    {
+        let _permit = session.write_lock.acquire_permit(1).await.unwrap();
+        conn.write_all(&buf).await?;
+    }
+    Ok(())
+}
+
+#[inline]
+async fn handle_pubrel(
+    session: &mut Session,
+    packet: PubrelPacket,
+    conn: &mut TcpStream<Preallocated>,
+    current_fd: RawFd,
+    global: &Arc<GlobalState>,
+) -> io::Result<()> {
+    log::debug!("#{} received a pubrel packet: {:#?}", current_fd, packet);
+    let rv_packet = PubcompPacket::new(packet.packet_identifier());
+    let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
+    rv_packet.encode(&mut buf)?;
+    {
+        let _permit = session.write_lock.acquire_permit(1).await.unwrap();
+        conn.write_all(&buf).await?;
+    }
+    Ok(())
+}
+
+#[inline]
+async fn handle_pubcomp(
+    session: &mut Session,
+    packet: PubcompPacket,
+    conn: &mut TcpStream<Preallocated>,
+    current_fd: RawFd,
+    global: &Arc<GlobalState>,
+) -> io::Result<()> {
+    log::debug!("#{} received a pubcomp packet: {:#?}", current_fd, packet);
+    session.pending_packets.complete(packet.packet_identifier());
     Ok(())
 }
 
@@ -334,6 +464,11 @@ async fn handle_subscribe(
     let mut return_codes = Vec::with_capacity(packet.subscribes().len());
     for (filter, qos) in packet.subscribes() {
         let allowed_qos = cmp::min(*qos, global.config.max_allowed_qos());
+        session.subscribes.insert(filter.clone(), allowed_qos);
+        global
+            .route_table
+            .subscribe(filter, session.client_id, allowed_qos);
+
         for retain in global.retain_table.get_matches(filter) {
             let topic_name = Arc::new(retain.topic_name.clone());
             let subscribe_filter = Arc::new(filter.clone());
@@ -348,10 +483,6 @@ async fn handle_subscribe(
             )
             .await?;
         }
-        global
-            .route_table
-            .subscribe(filter, session.client_id, allowed_qos);
-        session.subscribes.insert(filter.clone(), allowed_qos);
         return_codes.push(allowed_qos.into());
     }
     let rv_packet = SubackPacket::new(packet.packet_identifier(), return_codes);
@@ -443,10 +574,10 @@ pub async fn handle_internal(
     match msg {
         InternalMessage::Online { sender } => {
             // FIXME: read max inflight and max packets from config
-            let mut pending_packets = PendingPackets::new(10, 1000);
+            let mut pending_packets = PendingPackets::new(10, 1000, 15);
             mem::swap(&mut session.pending_packets, &mut pending_packets);
             let old_state = SessionState {
-                client_packet_id: session.client_packet_id,
+                // client_packet_id: session.client_packet_id,
                 server_packet_id: session.server_packet_id,
                 pending_packets,
                 receiver: receiver.clone(),
@@ -579,17 +710,30 @@ async fn recv_publish(
         );
     }
     let final_qos = cmp::min(qos, subscribe_qos);
+    let packet_sent = conn.is_some();
+    let mut packet_id = 0;
+    if final_qos != QualityOfService::Level0 {
+        // The packet_id equals to: `self.server_packet_id % 65536`
+        packet_id = session.incr_server_packet_id() as u16;
+        session.pending_packets.clean_complete();
+        session.pending_packets.push_back(
+            packet_id,
+            PubPacket {
+                topic_name: Arc::clone(topic_name),
+                qos: final_qos,
+                payload: payload.clone(),
+                subscribe_filter: Arc::clone(subscribe_filter),
+                subscribe_qos,
+            },
+            packet_sent,
+        );
+    }
+
     if let Some(conn) = conn {
         let qos_with_id = match final_qos {
             QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
-            QualityOfService::Level1 => {
-                let packet_id = session.incr_client_packet_id();
-                QoSWithPacketIdentifier::Level1(packet_id)
-            }
-            QualityOfService::Level2 => {
-                let packet_id = session.incr_client_packet_id();
-                QoSWithPacketIdentifier::Level2(packet_id)
-            }
+            QualityOfService::Level1 => QoSWithPacketIdentifier::Level1(packet_id),
+            QualityOfService::Level2 => QoSWithPacketIdentifier::Level2(packet_id),
         };
         let rv_packet = PublishPacket::new(
             TopicName::new(topic_name.to_string()).unwrap(),
@@ -602,14 +746,7 @@ async fn recv_publish(
             let _permit = session.write_lock.acquire_permit(1).await.unwrap();
             conn.write_all(&buf).await?;
         }
-    } else if final_qos != QualityOfService::Level0 {
-        session.push_packet(PubPacket {
-            topic_name: Arc::clone(topic_name),
-            qos: final_qos,
-            payload: payload.clone(),
-            subscribe_filter: Arc::clone(subscribe_filter),
-            subscribe_qos,
-        });
     }
+
     Ok(())
 }
