@@ -137,16 +137,17 @@ impl RouteNode {
             let (filter_item, rest_items) = split_topic(filter_items);
             // bool variables are for resolve dead lock of access `self.nodes`
             let mut remove_node = false;
-            let mut remove_parent = false;
             if let Some(mut pair) = self.nodes.get_mut(filter_item) {
                 if pair.value_mut().remove(rest_items, id) {
                     remove_node = true;
-                    remove_parent = self.content.read().is_empty() && self.nodes.is_empty();
                 }
             }
-            if remove_node {
+            let remove_parent = if remove_node {
                 self.nodes.remove(filter_item);
-            }
+                self.content.read().is_empty() && self.nodes.is_empty()
+            } else {
+                false
+            };
             return remove_parent;
         } else {
             let mut content = self.content.write();
@@ -257,6 +258,7 @@ mod tests {
             Query("abc", vec![("abc", vec![3])]),
         ]);
 
+        run_actions(&[Sub("abc/#", 3), UnSub("abc/#", 3)]);
         run_actions(&[Sub("+", 3), Query("abc", vec![("+", vec![3])])]);
         run_actions(&[Sub("#", 3), Query("abc", vec![("#", vec![3])])]);
 
