@@ -165,11 +165,12 @@ async fn handle_packet(
                     QualityOfService::Level1 => QoSWithPacketIdentifier::Level1(*packet_id),
                     QualityOfService::Level2 => QoSWithPacketIdentifier::Level2(*packet_id),
                 };
-                let rv_packet = PublishPacket::new(
+                let mut rv_packet = PublishPacket::new(
                     TopicName::clone(&packet.topic_name),
                     qos_with_id,
                     packet.payload.clone(),
                 );
+                rv_packet.set_retain(packet.retain);
                 let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
                 rv_packet.encode(&mut buf)?;
                 {
@@ -475,6 +476,7 @@ async fn handle_subscribe(
                 session,
                 &topic_name,
                 retain.qos,
+                true,
                 &retain.payload,
                 &subscribe_filter,
                 allowed_qos,
@@ -610,6 +612,7 @@ pub async fn handle_internal(
                 session,
                 topic_name,
                 qos,
+                false,
                 payload,
                 subscribe_filter,
                 subscribe_qos,
@@ -624,6 +627,8 @@ pub async fn handle_internal(
 // ===========================
 // ==== Private Functions ====
 // ===========================
+
+// Received a publish message from client or will, then publish the message to matched clients
 async fn send_publish(
     session: &mut Session,
     topic_name: &str,
@@ -690,10 +695,12 @@ async fn send_publish(
     }
 }
 
+// Got a publish message from retain message or subscribed topic, then send the publish message to client.
 async fn recv_publish(
     session: &mut Session,
     topic_name: &Arc<TopicName>,
     qos: QualityOfService,
+    retain: bool,
     payload: &Bytes,
     subscribe_filter: &Arc<TopicFilter>,
     subscribe_qos: QualityOfService,
@@ -719,6 +726,7 @@ async fn recv_publish(
             PubPacket {
                 topic_name: Arc::clone(topic_name),
                 qos: final_qos,
+                retain,
                 payload: payload.clone(),
                 subscribe_filter: Arc::clone(subscribe_filter),
                 subscribe_qos,
@@ -735,11 +743,12 @@ async fn recv_publish(
             QualityOfService::Level1 => QoSWithPacketIdentifier::Level1(packet_id),
             QualityOfService::Level2 => QoSWithPacketIdentifier::Level2(packet_id),
         };
-        let rv_packet = PublishPacket::new(
+        let mut rv_packet = PublishPacket::new(
             TopicName::new(topic_name.to_string()).unwrap(),
             qos_with_id,
             payload.to_vec(),
         );
+        rv_packet.set_retain(retain);
         let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
         rv_packet.encode(&mut buf)?;
         {

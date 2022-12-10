@@ -86,6 +86,7 @@ impl Session {
 pub struct PubPacket {
     pub topic_name: Arc<TopicName>,
     pub qos: QualityOfService,
+    pub retain: bool,
     pub payload: Bytes,
     pub subscribe_filter: Arc<TopicFilter>,
     pub subscribe_qos: QualityOfService,
