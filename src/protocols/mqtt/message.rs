@@ -113,31 +113,31 @@ async fn handle_packet(
             handle_connect(session, receiver, packet, conn, fd, executor, global).await?;
         }
         VariablePacket::DisconnectPacket(packet) => {
-            handle_disconnect(session, packet, conn, fd, global).await?;
+            handle_disconnect(session, packet, conn, global).await?;
         }
         VariablePacket::PublishPacket(packet) => {
-            handle_publish(session, packet, conn, fd, global).await?;
+            handle_publish(session, packet, conn, global).await?;
         }
         VariablePacket::PubackPacket(packet) => {
-            handle_puback(session, packet, conn, fd, global).await?;
+            handle_puback(session, packet, conn, global).await?;
         }
         VariablePacket::PubrecPacket(packet) => {
-            handle_pubrec(session, packet, conn, fd, global).await?;
+            handle_pubrec(session, packet, conn, global).await?;
         }
         VariablePacket::PubrelPacket(packet) => {
-            handle_pubrel(session, packet, conn, fd, global).await?;
+            handle_pubrel(session, packet, conn, global).await?;
         }
         VariablePacket::PubcompPacket(packet) => {
-            handle_pubcomp(session, packet, conn, fd, global).await?;
+            handle_pubcomp(session, packet, conn, global).await?;
         }
         VariablePacket::SubscribePacket(packet) => {
-            handle_subscribe(session, packet, conn, fd, global).await?;
+            handle_subscribe(session, packet, conn, global).await?;
         }
         VariablePacket::UnsubscribePacket(packet) => {
-            handle_unsubscribe(session, packet, conn, fd, global).await?;
+            handle_unsubscribe(session, packet, conn, global).await?;
         }
         VariablePacket::PingreqPacket(packet) => {
-            handle_pingreq(session, packet, conn, fd, global).await?;
+            handle_pingreq(session, packet, conn, global).await?;
         }
         _ => {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
@@ -353,10 +353,13 @@ async fn handle_disconnect(
     session: &mut Session,
     packet: DisconnectPacket,
     conn: &mut TcpStream<Preallocated>,
-    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!("#{} received a disconnect packet: {:#?}", fd, packet);
+    log::debug!(
+        "{:?} received a disconnect packet: {:#?}",
+        session.client_id,
+        packet
+    );
     session.will = None;
     session.disconnected = true;
     Ok(())
@@ -367,15 +370,14 @@ async fn handle_publish(
     session: &mut Session,
     packet: PublishPacket,
     conn: &mut TcpStream<Preallocated>,
-    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        r#"#{} received a publish packet:
+        r#"{:?} received a publish packet:
 topic name : {}
    payload : {:?}
      flags : qos={:?}, retain={}, dup={}"#,
-        fd,
+        session.client_id,
         packet.topic_name(),
         packet.payload(),
         packet.qos(),
@@ -385,6 +387,7 @@ topic name : {}
     if packet.topic_name().starts_with('$') {
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
+    // FIXME: handle dup flag
     send_publish(
         session,
         packet.topic_name(),
@@ -397,12 +400,10 @@ topic name : {}
     match packet.qos() {
         QoSWithPacketIdentifier::Level0 => {}
         QoSWithPacketIdentifier::Level1(pkid) => {
-            let rv_packet = PubackPacket::new(pkid);
-            write_packet(session, conn, &rv_packet).await?;
+            write_packet(session, conn, &PubackPacket::new(pkid)).await?;
         }
         QoSWithPacketIdentifier::Level2(pkid) => {
-            let rv_packet = PubrecPacket::new(pkid);
-            write_packet(session, conn, &rv_packet).await?;
+            write_packet(session, conn, &PubrecPacket::new(pkid)).await?;
         }
     }
     Ok(())
@@ -413,12 +414,11 @@ async fn handle_puback(
     session: &mut Session,
     packet: PubackPacket,
     conn: &mut TcpStream<Preallocated>,
-    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        "#{} received a puback packet: id={}",
-        fd,
+        "{:?} received a puback packet: id={}",
+        session.client_id,
         packet.packet_identifier()
     );
     session.pending_packets.complete(packet.packet_identifier());
@@ -430,12 +430,11 @@ async fn handle_pubrec(
     session: &mut Session,
     packet: PubrecPacket,
     conn: &mut TcpStream<Preallocated>,
-    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        "#{} received a pubrec  packet: id={}",
-        fd,
+        "{:?} received a pubrec  packet: id={}",
+        session.client_id,
         packet.packet_identifier()
     );
     session.pending_packets.pubrec(packet.packet_identifier());
@@ -449,12 +448,11 @@ async fn handle_pubrel(
     session: &mut Session,
     packet: PubrelPacket,
     conn: &mut TcpStream<Preallocated>,
-    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        "#{} received a pubrel  packet: id={}",
-        fd,
+        "{:?} received a pubrel  packet: id={}",
+        session.client_id,
         packet.packet_identifier()
     );
     let rv_packet = PubcompPacket::new(packet.packet_identifier());
@@ -467,12 +465,11 @@ async fn handle_pubcomp(
     session: &mut Session,
     packet: PubcompPacket,
     conn: &mut TcpStream<Preallocated>,
-    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        "#{} received a pubcomp packet: id={}",
-        fd,
+        "{:?} received a pubcomp packet: id={}",
+        session.client_id,
         packet.packet_identifier()
     );
     session.pending_packets.complete(packet.packet_identifier());
@@ -484,14 +481,13 @@ async fn handle_subscribe(
     session: &mut Session,
     packet: SubscribePacket,
     conn: &mut TcpStream<Preallocated>,
-    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        r#"#{} received a subscribe packet:
+        r#"{:?} received a subscribe packet:
 packet id : {}
    topics : {:?}"#,
-        fd,
+        session.client_id,
         packet.packet_identifier(),
         packet.subscribes(),
     );
@@ -532,14 +528,13 @@ async fn handle_unsubscribe(
     session: &mut Session,
     packet: UnsubscribePacket,
     conn: &mut TcpStream<Preallocated>,
-    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        r#"#{} received a unsubscribe packet:
+        r#"{:?} received a unsubscribe packet:
 packet id : {}
    topics : {:?}"#,
-        fd,
+        session.client_id,
         packet.packet_identifier(),
         packet.subscribes(),
     );
@@ -557,10 +552,9 @@ async fn handle_pingreq(
     session: &mut Session,
     packet: PingreqPacket,
     conn: &mut TcpStream<Preallocated>,
-    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!("#{} received a ping packet", fd);
+    log::debug!("{:?} received a ping packet", session.client_id);
     let rv_packet = PingrespPacket::new();
     write_packet(session, conn, &rv_packet).await?;
     Ok(())
@@ -570,7 +564,6 @@ async fn handle_pingreq(
 pub async fn handle_will(
     session: &mut Session,
     conn: &mut TcpStream<Preallocated>,
-    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     if let Some(will) = session.will.take() {
@@ -662,20 +655,9 @@ async fn send_publish(
     global: &Arc<GlobalState>,
 ) {
     if retain {
-        if payload.is_empty() {
-            if let Some(old_content) = global.retain_table.remove(topic_name) {
-                log::debug!(
-                    r#"retain message removed, old retain content:
- client id : {:?}
-topic name : {}
-   payload : {:?}
-       qos : {:?}"#,
-                    old_content.client_id,
-                    &old_content.topic_name.deref().deref(),
-                    old_content.payload.as_ref(),
-                    old_content.qos,
-                );
-            }
+        if let Some(old_content) = if payload.is_empty() {
+            log::debug!("retain message removed");
+            global.retain_table.remove(topic_name)
         } else {
             let content = Arc::new(RetainContent::new(
                 TopicName::new(topic_name).unwrap(),
@@ -683,19 +665,20 @@ topic name : {}
                 Bytes::from(payload.to_vec()),
                 session.client_id,
             ));
-            if let Some(old_content) = global.retain_table.insert(content) {
-                log::debug!(
-                    r#"retain message removed, old retain content:
+            log::debug!("retain message inserted");
+            global.retain_table.insert(content)
+        } {
+            log::debug!(
+                r#"old retain content:
  client id : {:?}
 topic name : {}
    payload : {:?}
        qos : {:?}"#,
-                    old_content.client_id,
-                    &old_content.topic_name.deref().deref(),
-                    old_content.payload.as_ref(),
-                    old_content.qos,
-                );
-            }
+                old_content.client_id,
+                &old_content.topic_name.deref().deref(),
+                old_content.payload.as_ref(),
+                old_content.qos,
+            );
         }
     }
 

@@ -111,7 +111,7 @@ async fn broker(executor: Rc<ExecutorState>, global: Arc<GlobalState>) -> io::Re
 
 async fn handle_connection(
     mut conn: Option<TcpStream<Preallocated>>,
-    current_fd: RawFd,
+    fd: RawFd,
     executor: &Rc<ExecutorState>,
     global: &Arc<GlobalState>,
 ) -> io::Result<Option<(mqtt::Session, Receiver<(ClientId, InternalMessage)>)>> {
@@ -127,7 +127,7 @@ async fn handle_connection(
         &mut session,
         &mut receiver,
         conn.as_mut().unwrap(),
-        current_fd,
+        fd,
         executor,
         global,
     )
@@ -148,7 +148,7 @@ async fn handle_connection(
             }
             if let Some(err) = session.io_error.take() {
                 if let Some(conn) = conn.as_mut() {
-                    mqtt::handle_will(&mut session, conn, current_fd, global).await?;
+                    mqtt::handle_will(&mut session, conn, global).await?;
                 }
                 // become a offline client, but session keep updating
                 conn = None;
@@ -164,7 +164,7 @@ async fn handle_connection(
         if let Some(conn) = conn.as_mut() {
             // Online client logic
             let recv_data = async {
-                mqtt::handle_connection(&mut session, &mut None, conn, current_fd, executor, global)
+                mqtt::handle_connection(&mut session, &mut None, conn, fd, executor, global)
                     .await
                     .map(Msg::Socket)
             };
