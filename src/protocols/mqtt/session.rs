@@ -55,7 +55,7 @@ impl Session {
             // FIXME: read max inflight and max packets from config
             pending_packets: PendingPackets::new(10, 1000, 15),
 
-            client_id: ClientId::default(),
+            client_id: ClientId(u64::max_value()),
             client_identifier: String::new(),
             username: None,
             keep_alive: 0,

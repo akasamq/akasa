@@ -17,6 +17,7 @@ use glommio::{
 use mqtt::{
     control::{
         fixed_header::FixedHeader, packet_type::PacketType, variable_header::ConnectReturnCode,
+        ProtocolLevel,
     },
     packet::{
         ConnackPacket, ConnectPacket, DisconnectPacket, PingreqPacket, PingrespPacket,
@@ -225,8 +226,15 @@ clean session : {}
     if packet.reserved_flag() {
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
+    if packet.protocol_level() != ProtocolLevel::Version311 {
+        let rv_packet = ConnackPacket::new(false, ConnectReturnCode::UnacceptableProtocolVersion);
+        write_packet(session, conn, &rv_packet).await?;
+        session.disconnected = true;
+        return Ok(());
+    }
 
     let mut return_code = ConnectReturnCode::ConnectionAccepted;
+    // FIXME: auth by plugin
     for auth_type in &global.config.auth_types {
         match auth_type {
             AuthType::UsernamePassword => {
@@ -245,6 +253,12 @@ clean session : {}
             }
             _ => panic!("auth method not supported: {:?}", auth_type),
         }
+    }
+    if return_code != ConnectReturnCode::ConnectionAccepted {
+        let rv_packet = ConnackPacket::new(false, return_code);
+        write_packet(session, conn, &rv_packet).await?;
+        session.disconnected = true;
+        return Ok(());
     }
 
     session.clean_session = packet.clean_session();
