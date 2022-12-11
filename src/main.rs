@@ -7,6 +7,9 @@ mod script_engine;
 mod state;
 mod storage;
 
+#[cfg(test)]
+mod tests;
+
 use std::error::Error as StdErr;
 use std::net::SocketAddr;
 use std::path::PathBuf;
