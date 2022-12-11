@@ -92,8 +92,18 @@ impl PendingPackets {
     }
 
     pub fn clean_complete(&mut self) {
+        let mut changed = false;
         while let Some(PendingPacketStatus::Complete) = self.packets.front() {
             self.packets.pop_front();
+            changed = true;
+        }
+        // shrink the queue to save memory
+        if changed {
+            if self.packets.len() >= 16 && self.packets.capacity() >= (self.packets.len() << 2) {
+                self.packets.shrink_to(self.packets.len() << 1);
+            } else if self.packets.is_empty() {
+                self.packets.shrink_to(0);
+            }
         }
     }
 
