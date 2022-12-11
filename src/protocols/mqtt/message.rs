@@ -40,7 +40,7 @@ pub async fn handle_connection(
     session: &mut Session,
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     executor: &Rc<ExecutorState>,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
@@ -90,10 +90,7 @@ pub async fn handle_connection(
     conn.read_exact(&mut buffer).await?;
     let packet = VariablePacket::decode_with(&mut Cursor::new(buffer), Some(fixed_header))
         .map_err(|err| io::Error::from(io::ErrorKind::InvalidData))?;
-    handle_packet(
-        session, receiver, packet, conn, current_fd, executor, global,
-    )
-    .await?;
+    handle_packet(session, receiver, packet, conn, fd, executor, global).await?;
     Ok(())
 }
 
@@ -103,49 +100,44 @@ async fn handle_packet(
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     packet: VariablePacket,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     executor: &Rc<ExecutorState>,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     if !matches!(packet, VariablePacket::ConnectPacket(..)) && !session.connected {
-        log::info!("#{} not connected", current_fd);
+        log::info!("#{} not connected", fd);
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
     match packet {
         VariablePacket::ConnectPacket(packet) => {
-            handle_connect(
-                session, receiver, packet, conn, current_fd, executor, global,
-            )
-            .await?;
-            session.connected = true;
+            handle_connect(session, receiver, packet, conn, fd, executor, global).await?;
         }
         VariablePacket::DisconnectPacket(packet) => {
-            handle_disconnect(session, packet, conn, current_fd, global).await?;
-            session.disconnected = true;
+            handle_disconnect(session, packet, conn, fd, global).await?;
         }
         VariablePacket::PublishPacket(packet) => {
-            handle_publish(session, packet, conn, current_fd, global).await?;
+            handle_publish(session, packet, conn, fd, global).await?;
         }
         VariablePacket::PubackPacket(packet) => {
-            handle_puback(session, packet, conn, current_fd, global).await?;
+            handle_puback(session, packet, conn, fd, global).await?;
         }
         VariablePacket::PubrecPacket(packet) => {
-            handle_pubrec(session, packet, conn, current_fd, global).await?;
+            handle_pubrec(session, packet, conn, fd, global).await?;
         }
         VariablePacket::PubrelPacket(packet) => {
-            handle_pubrel(session, packet, conn, current_fd, global).await?;
+            handle_pubrel(session, packet, conn, fd, global).await?;
         }
         VariablePacket::PubcompPacket(packet) => {
-            handle_pubcomp(session, packet, conn, current_fd, global).await?;
+            handle_pubcomp(session, packet, conn, fd, global).await?;
         }
         VariablePacket::SubscribePacket(packet) => {
-            handle_subscribe(session, packet, conn, current_fd, global).await?;
+            handle_subscribe(session, packet, conn, fd, global).await?;
         }
         VariablePacket::UnsubscribePacket(packet) => {
-            handle_unsubscribe(session, packet, conn, current_fd, global).await?;
+            handle_unsubscribe(session, packet, conn, fd, global).await?;
         }
         VariablePacket::PingreqPacket(packet) => {
-            handle_pingreq(session, packet, conn, current_fd, global).await?;
+            handle_pingreq(session, packet, conn, fd, global).await?;
         }
         _ => {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
@@ -196,7 +188,7 @@ async fn handle_connect(
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     packet: ConnectPacket,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     executor: &Rc<ExecutorState>,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
@@ -210,7 +202,7 @@ clean session : {}
    keep-alive : {}s
          will : {:?}, retain: {}, qos: {:?}
      reserved : {}"#,
-        current_fd,
+        fd,
         packet.protocol_name(),
         packet.protocol_level(),
         packet.client_identifier(),
@@ -254,12 +246,15 @@ clean session : {}
             _ => panic!("auth method not supported: {:?}", auth_type),
         }
     }
+    // FIXME: permission check and return "not authorized"
     if return_code != ConnectReturnCode::ConnectionAccepted {
         let rv_packet = ConnackPacket::new(false, return_code);
         write_packet(session, conn, &rv_packet).await?;
         session.disconnected = true;
         return Ok(());
     }
+
+    // FIXME: if connection reach rate limit return "Server unavailable"
 
     session.clean_session = packet.clean_session();
     session.client_identifier = packet.client_identifier().to_string();
@@ -345,14 +340,11 @@ clean session : {}
         }
     }
 
-    log::debug!(
-        "Socket fd#{} assgined to: {:?}",
-        current_fd,
-        session.client_id
-    );
+    log::debug!("Socket fd#{} assgined to: {:?}", fd, session.client_id);
 
     let rv_packet = ConnackPacket::new(session_present, return_code);
     write_packet(session, conn, &rv_packet).await?;
+    session.connected = true;
     Ok(())
 }
 
@@ -361,15 +353,12 @@ async fn handle_disconnect(
     session: &mut Session,
     packet: DisconnectPacket,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!(
-        "#{} received a disconnect packet: {:#?}",
-        current_fd,
-        packet
-    );
+    log::debug!("#{} received a disconnect packet: {:#?}", fd, packet);
     session.will = None;
+    session.disconnected = true;
     Ok(())
 }
 
@@ -378,7 +367,7 @@ async fn handle_publish(
     session: &mut Session,
     packet: PublishPacket,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
@@ -386,7 +375,7 @@ async fn handle_publish(
 topic name : {}
    payload : {:?}
      flags : qos={:?}, retain={}, dup={}"#,
-        current_fd,
+        fd,
         packet.topic_name(),
         packet.payload(),
         packet.qos(),
@@ -424,12 +413,12 @@ async fn handle_puback(
     session: &mut Session,
     packet: PubackPacket,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "#{} received a puback packet: id={}",
-        current_fd,
+        fd,
         packet.packet_identifier()
     );
     session.pending_packets.complete(packet.packet_identifier());
@@ -441,12 +430,12 @@ async fn handle_pubrec(
     session: &mut Session,
     packet: PubrecPacket,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "#{} received a pubrec  packet: id={}",
-        current_fd,
+        fd,
         packet.packet_identifier()
     );
     session.pending_packets.pubrec(packet.packet_identifier());
@@ -460,12 +449,12 @@ async fn handle_pubrel(
     session: &mut Session,
     packet: PubrelPacket,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "#{} received a pubrel  packet: id={}",
-        current_fd,
+        fd,
         packet.packet_identifier()
     );
     let rv_packet = PubcompPacket::new(packet.packet_identifier());
@@ -478,12 +467,12 @@ async fn handle_pubcomp(
     session: &mut Session,
     packet: PubcompPacket,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "#{} received a pubcomp packet: id={}",
-        current_fd,
+        fd,
         packet.packet_identifier()
     );
     session.pending_packets.complete(packet.packet_identifier());
@@ -495,14 +484,14 @@ async fn handle_subscribe(
     session: &mut Session,
     packet: SubscribePacket,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         r#"#{} received a subscribe packet:
 packet id : {}
    topics : {:?}"#,
-        current_fd,
+        fd,
         packet.packet_identifier(),
         packet.subscribes(),
     );
@@ -543,14 +532,14 @@ async fn handle_unsubscribe(
     session: &mut Session,
     packet: UnsubscribePacket,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         r#"#{} received a unsubscribe packet:
 packet id : {}
    topics : {:?}"#,
-        current_fd,
+        fd,
         packet.packet_identifier(),
         packet.subscribes(),
     );
@@ -568,10 +557,10 @@ async fn handle_pingreq(
     session: &mut Session,
     packet: PingreqPacket,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!("#{} received a ping packet", current_fd);
+    log::debug!("#{} received a ping packet", fd);
     let rv_packet = PingrespPacket::new();
     write_packet(session, conn, &rv_packet).await?;
     Ok(())
@@ -581,7 +570,7 @@ async fn handle_pingreq(
 pub async fn handle_will(
     session: &mut Session,
     conn: &mut TcpStream<Preallocated>,
-    current_fd: RawFd,
+    fd: RawFd,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     if let Some(will) = session.will.take() {
