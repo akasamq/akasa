@@ -176,21 +176,11 @@ async fn handle_packet(
                 rv_packet.set_dup(*dup);
                 rv_packet.set_retain(packet.retain);
                 *dup = true;
-                let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-                rv_packet.encode(&mut buf)?;
-                {
-                    let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-                    conn.write_all(&buf).await?;
-                }
+                write_packet(session, conn, &rv_packet).await?;
             }
             PendingPacketStatus::Pubrec { packet_id, .. } => {
                 let rv_packet = PubrelPacket::new(*packet_id);
-                let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-                rv_packet.encode(&mut buf)?;
-                {
-                    let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-                    conn.write_all(&buf).await?;
-                }
+                write_packet(session, conn, &rv_packet).await?;
             }
             PendingPacketStatus::Complete => unreachable!(),
         }
@@ -232,6 +222,10 @@ clean session : {}
         packet.will_qos(),
         packet.reserved_flag(),
     );
+    if packet.reserved_flag() {
+        return Err(io::Error::from(io::ErrorKind::InvalidData));
+    }
+
     let mut return_code = ConnectReturnCode::ConnectionAccepted;
     for auth_type in &global.config.auth_types {
         match auth_type {
@@ -344,12 +338,7 @@ clean session : {}
     );
 
     let rv_packet = ConnackPacket::new(session_present, return_code);
-    let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-    rv_packet.encode(&mut buf)?;
-    {
-        let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-        conn.write_all(&buf).await?;
-    }
+    write_packet(session, conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -406,21 +395,11 @@ topic name : {}
         QoSWithPacketIdentifier::Level0 => {}
         QoSWithPacketIdentifier::Level1(pkid) => {
             let rv_packet = PubackPacket::new(pkid);
-            let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-            rv_packet.encode(&mut buf)?;
-            {
-                let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-                conn.write_all(&buf).await?;
-            }
+            write_packet(session, conn, &rv_packet).await?;
         }
         QoSWithPacketIdentifier::Level2(pkid) => {
             let rv_packet = PubrecPacket::new(pkid);
-            let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-            rv_packet.encode(&mut buf)?;
-            {
-                let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-                conn.write_all(&buf).await?;
-            }
+            write_packet(session, conn, &rv_packet).await?;
         }
     }
     Ok(())
@@ -458,12 +437,7 @@ async fn handle_pubrec(
     );
     session.pending_packets.pubrec(packet.packet_identifier());
     let rv_packet = PubrelPacket::new(packet.packet_identifier());
-    let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-    rv_packet.encode(&mut buf)?;
-    {
-        let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-        conn.write_all(&buf).await?;
-    }
+    write_packet(session, conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -481,12 +455,7 @@ async fn handle_pubrel(
         packet.packet_identifier()
     );
     let rv_packet = PubcompPacket::new(packet.packet_identifier());
-    let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-    rv_packet.encode(&mut buf)?;
-    {
-        let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-        conn.write_all(&buf).await?;
-    }
+    write_packet(session, conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -551,12 +520,7 @@ packet id : {}
         return_codes.push(allowed_qos.into());
     }
     let rv_packet = SubackPacket::new(packet.packet_identifier(), return_codes);
-    let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-    rv_packet.encode(&mut buf)?;
-    {
-        let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-        conn.write_all(&buf).await?;
-    }
+    write_packet(session, conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -581,12 +545,7 @@ packet id : {}
         session.subscribes.remove(filter);
     }
     let rv_packet = UnsubackPacket::new(packet.packet_identifier());
-    let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-    rv_packet.encode(&mut buf)?;
-    {
-        let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-        conn.write_all(&buf).await?;
-    }
+    write_packet(session, conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -600,12 +559,7 @@ async fn handle_pingreq(
 ) -> io::Result<()> {
     log::debug!("#{} received a ping packet", current_fd);
     let rv_packet = PingrespPacket::new();
-    let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-    rv_packet.encode(&mut buf)?;
-    {
-        let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-        conn.write_all(&buf).await?;
-    }
+    write_packet(session, conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -830,13 +784,23 @@ async fn recv_publish(
         );
         rv_packet.set_dup(false);
         rv_packet.set_retain(retain);
-        let mut buf = Vec::with_capacity(rv_packet.encoded_length() as usize);
-        rv_packet.encode(&mut buf)?;
-        {
-            let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-            conn.write_all(&buf).await?;
-        }
+        write_packet(session, conn, &rv_packet).await?;
     }
 
+    Ok(())
+}
+
+#[inline]
+async fn write_packet<P: Encodable>(
+    session: &Session,
+    conn: &mut TcpStream<Preallocated>,
+    packet: &P,
+) -> io::Result<()> {
+    let mut buf = Vec::with_capacity(packet.encoded_length() as usize);
+    packet.encode(&mut buf)?;
+    {
+        let _permit = session.write_lock.acquire_permit(1).await.unwrap();
+        conn.write_all(&buf).await?;
+    }
     Ok(())
 }

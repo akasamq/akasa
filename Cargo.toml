@@ -21,5 +21,7 @@ mqtt-protocol = { version = "0.11.2" }
 num_cpus = "1.14.0"
 parking_lot = "0.12.1"
 # rhai = { version = "1.11.0", features = ["decimal"] }
+# jsonwebtoken = "8.2.0"
+# jwt-simple = "0.11.2"
 serde = { version = "1.0.147", features = ["derive"] }
 thiserror = "1.0.37"
