@@ -1,10 +1,13 @@
+use std::future::Future;
+use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
 use dashmap::DashMap;
 use flume::{bounded, Receiver, Sender};
-use glommio::TaskQueueHandle;
+use glommio::{timer::TimerActionRepeat, TaskQueueHandle};
 use mqtt::{QualityOfService, TopicFilter, TopicName};
 use parking_lot::Mutex;
 
@@ -138,14 +141,41 @@ impl GlobalState {
     }
 }
 
-pub struct ExecutorState {
+pub trait Executor {
+    fn id(&self) -> usize {
+        0
+    }
+
+    fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
+    where
+        G: Fn() -> F + 'static,
+        F: Future<Output = Option<Duration>> + 'static;
+}
+
+pub struct GlommioExecutor {
     pub id: usize,
     pub gc_queue: TaskQueueHandle,
 }
 
-impl ExecutorState {
-    pub fn new(id: usize, gc_queue: TaskQueueHandle) -> ExecutorState {
-        ExecutorState { id, gc_queue }
+impl GlommioExecutor {
+    pub fn new(id: usize, gc_queue: TaskQueueHandle) -> GlommioExecutor {
+        GlommioExecutor { id, gc_queue }
+    }
+}
+
+impl Executor for GlommioExecutor {
+    fn id(&self) -> usize {
+        self.id
+    }
+
+    fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
+    where
+        G: Fn() -> F + 'static,
+        F: Future<Output = Option<Duration>> + 'static,
+    {
+        TimerActionRepeat::repeat_into(action_gen, self.gc_queue)
+            .map(|_| ())
+            .map_err(|_err| io::Error::from(io::ErrorKind::Other))
     }
 }
 

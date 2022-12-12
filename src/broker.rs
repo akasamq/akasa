@@ -19,7 +19,7 @@ use glommio::{
 
 use crate::config::Config;
 use crate::protocols::mqtt;
-use crate::state::{ClientId, ExecutorState, GlobalState, InternalMessage};
+use crate::state::{ClientId, Executor, GlobalState, GlommioExecutor, InternalMessage};
 
 pub fn start(bind: SocketAddr, config: PathBuf) -> io::Result<()> {
     let config: Config = {
@@ -44,7 +44,7 @@ pub fn start(bind: SocketAddr, config: PathBuf) -> io::Result<()> {
                 Latency::Matters(Duration::from_secs(15)),
                 "gc",
             );
-            let executor = Rc::new(ExecutorState::new(id, gc_queue));
+            let executor = Rc::new(GlommioExecutor::new(id, gc_queue));
             loop {
                 log::info!("Starting executor {}", id);
                 if let Err(err) = broker(Rc::clone(&executor), Arc::clone(&global)).await {
@@ -60,7 +60,7 @@ pub fn start(bind: SocketAddr, config: PathBuf) -> io::Result<()> {
     Ok(())
 }
 
-async fn broker(executor: Rc<ExecutorState>, global: Arc<GlobalState>) -> io::Result<()> {
+async fn broker(executor: Rc<GlommioExecutor>, global: Arc<GlobalState>) -> io::Result<()> {
     let listener = TcpListener::bind(global.bind)?;
     loop {
         let conn = listener.accept().await?.buffered();
@@ -110,10 +110,10 @@ async fn broker(executor: Rc<ExecutorState>, global: Arc<GlobalState>) -> io::Re
     }
 }
 
-async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin>(
+async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     mut conn: Option<T>,
     fd: RawFd,
-    executor: &Rc<ExecutorState>,
+    executor: &Rc<E>,
     global: &Arc<GlobalState>,
 ) -> io::Result<Option<(mqtt::Session, Receiver<(ClientId, InternalMessage)>)>> {
     enum Msg {

@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use flume::Receiver;
 use futures_lite::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use glommio::timer::TimerActionRepeat;
 use mqtt::{
     control::{
         fixed_header::FixedHeader, packet_type::PacketType, variable_header::ConnectReturnCode,
@@ -27,18 +26,18 @@ use mqtt::{
 };
 
 use crate::config::AuthType;
-use crate::state::{AddClientReceipt, ClientId, ExecutorState, GlobalState, InternalMessage};
+use crate::state::{AddClientReceipt, ClientId, Executor, GlobalState, InternalMessage};
 
 use super::{
     PendingPacketStatus, PendingPackets, PubPacket, RetainContent, Session, SessionState, Will,
 };
 
-pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin>(
+pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     session: &mut Session,
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     conn: &mut T,
     fd: RawFd,
-    executor: &Rc<ExecutorState>,
+    executor: &Rc<E>,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     let mut buf = [0u8; 1];
@@ -92,13 +91,13 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 #[inline]
-async fn handle_packet<T: AsyncWrite + Unpin>(
+async fn handle_packet<T: AsyncWrite + Unpin, E: Executor>(
     session: &mut Session,
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     packet: VariablePacket,
     conn: &mut T,
     fd: RawFd,
-    executor: &Rc<ExecutorState>,
+    executor: &Rc<E>,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     if !matches!(packet, VariablePacket::ConnectPacket(..)) && !session.connected {
@@ -180,13 +179,13 @@ async fn handle_packet<T: AsyncWrite + Unpin>(
 }
 
 #[inline]
-async fn handle_connect<T: AsyncWrite + Unpin>(
+async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     session: &mut Session,
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     packet: ConnectPacket,
     conn: &mut T,
     fd: RawFd,
-    executor: &Rc<ExecutorState>,
+    executor: &Rc<E>,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
@@ -265,38 +264,35 @@ clean session : {}
         log::debug!("{:?} keep alive: {:?}", client_id, interval * 2);
         let last_packet_time = Arc::clone(&session.last_packet_time);
         let global = Arc::clone(global);
-        if let Err(err) = TimerActionRepeat::repeat_into(
-            move || {
-                // Need clone twice: https://stackoverflow.com/a/68462908/1274372
-                let last_packet_time = Arc::clone(&last_packet_time);
-                let global = Arc::clone(&global);
-                async move {
-                    {
-                        let last_packet_time = last_packet_time.read();
-                        if last_packet_time.elapsed() <= interval * 2 {
-                            return Some(interval);
-                        }
+        if let Err(err) = executor.spawn_timer(move || {
+            // Need clone twice: https://stackoverflow.com/a/68462908/1274372
+            let last_packet_time = Arc::clone(&last_packet_time);
+            let global = Arc::clone(&global);
+            async move {
+                {
+                    let last_packet_time = last_packet_time.read();
+                    if last_packet_time.elapsed() <= interval * 2 {
+                        return Some(interval);
                     }
-                    // timeout, kick it out
-                    if let Some(sender) = global.get_client_sender(&client_id) {
-                        let msg = InternalMessage::Kick {
-                            reason: "timeout".to_owned(),
-                        };
-                        if let Err(err) = sender.send_async((client_id, msg)).await {
-                            log::warn!(
-                                "send timeout kick message to {:?} error: {:?}",
-                                client_id,
-                                err
-                            );
-                        }
-                    }
-                    None
                 }
-            },
-            executor.gc_queue,
-        ) {
+                // timeout, kick it out
+                if let Some(sender) = global.get_client_sender(&client_id) {
+                    let msg = InternalMessage::Kick {
+                        reason: "timeout".to_owned(),
+                    };
+                    if let Err(err) = sender.send_async((client_id, msg)).await {
+                        log::warn!(
+                            "send timeout kick message to {:?} error: {:?}",
+                            client_id,
+                            err
+                        );
+                    }
+                }
+                None
+            }
+        }) {
             log::warn!("spawn executor timer failed: {:?}", err);
-            return Err(io::Error::from(io::ErrorKind::Other));
+            return Err(err);
         }
     }
 
