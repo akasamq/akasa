@@ -8,12 +8,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use flume::Receiver;
-use futures_lite::future::FutureExt;
+use futures_lite::{
+    future::FutureExt,
+    io::{AsyncRead, AsyncWrite},
+};
 use glommio::{
-    net::{Preallocated, TcpListener, TcpStream},
-    spawn_local,
-    timer::sleep,
-    CpuSet, Latency, LocalExecutorPoolBuilder, PoolPlacement, Shares,
+    net::TcpListener, spawn_local, timer::sleep, CpuSet, Latency, LocalExecutorPoolBuilder,
+    PoolPlacement, Shares,
 };
 
 use crate::config::Config;
@@ -23,7 +24,7 @@ use crate::state::{ClientId, ExecutorState, GlobalState, InternalMessage};
 pub fn start(bind: SocketAddr, config: PathBuf) -> io::Result<()> {
     let config: Config = {
         let content = fs::read_to_string(&config)?;
-        json5::from_str(&content).map_err(|err| io::Error::from(io::ErrorKind::InvalidInput))?
+        json5::from_str(&content).map_err(|_err| io::Error::from(io::ErrorKind::InvalidInput))?
     };
     log::debug!("config: {:#?}", config);
     if !config.is_valid() {
@@ -109,8 +110,8 @@ async fn broker(executor: Rc<ExecutorState>, global: Arc<GlobalState>) -> io::Re
     }
 }
 
-async fn handle_connection(
-    mut conn: Option<TcpStream<Preallocated>>,
+async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin>(
+    mut conn: Option<T>,
     fd: RawFd,
     executor: &Rc<ExecutorState>,
     global: &Arc<GlobalState>,
@@ -230,6 +231,7 @@ async fn handle_offline(
     receiver: Receiver<(ClientId, InternalMessage)>,
     global: Arc<GlobalState>,
 ) {
+    let mut conn: Option<Vec<u8>> = None;
     loop {
         let (sender, msg) = match receiver.recv_async().await {
             Ok((sender, msg)) => (sender, msg),
@@ -238,7 +240,9 @@ async fn handle_offline(
                 break;
             }
         };
-        match mqtt::handle_internal(&mut session, &receiver, sender, msg, None, &global).await {
+        match mqtt::handle_internal(&mut session, &receiver, sender, msg, conn.as_mut(), &global)
+            .await
+        {
             Ok(true) => {
                 // Been occupied by newly connected client
                 break;

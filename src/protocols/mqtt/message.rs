@@ -9,11 +9,8 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use flume::Receiver;
-use futures_lite::io::{AsyncReadExt, AsyncWriteExt};
-use glommio::{
-    net::{Preallocated, TcpStream},
-    timer::TimerActionRepeat,
-};
+use futures_lite::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use glommio::timer::TimerActionRepeat;
 use mqtt::{
     control::{
         fixed_header::FixedHeader, packet_type::PacketType, variable_header::ConnectReturnCode,
@@ -36,10 +33,10 @@ use super::{
     PendingPacketStatus, PendingPackets, PubPacket, RetainContent, Session, SessionState, Will,
 };
 
-pub async fn handle_connection(
+pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin>(
     session: &mut Session,
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
-    conn: &mut TcpStream<Preallocated>,
+    conn: &mut T,
     fd: RawFd,
     executor: &Rc<ExecutorState>,
     global: &Arc<GlobalState>,
@@ -80,7 +77,7 @@ pub async fn handle_connection(
     }
     let fixed_header = match PacketType::from_u8(type_val) {
         Ok(packet_type) => FixedHeader::new(packet_type, remaining_len),
-        Err(err) => {
+        Err(_err) => {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
     };
@@ -89,17 +86,17 @@ pub async fn handle_connection(
     let mut buffer = vec![0u8; fixed_header.remaining_length as usize];
     conn.read_exact(&mut buffer).await?;
     let packet = VariablePacket::decode_with(&mut Cursor::new(buffer), Some(fixed_header))
-        .map_err(|err| io::Error::from(io::ErrorKind::InvalidData))?;
+        .map_err(|_err| io::Error::from(io::ErrorKind::InvalidData))?;
     handle_packet(session, receiver, packet, conn, fd, executor, global).await?;
     Ok(())
 }
 
 #[inline]
-async fn handle_packet(
+async fn handle_packet<T: AsyncWrite + Unpin>(
     session: &mut Session,
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     packet: VariablePacket,
-    conn: &mut TcpStream<Preallocated>,
+    conn: &mut T,
     fd: RawFd,
     executor: &Rc<ExecutorState>,
     global: &Arc<GlobalState>,
@@ -183,11 +180,11 @@ async fn handle_packet(
 }
 
 #[inline]
-async fn handle_connect(
+async fn handle_connect<T: AsyncWrite + Unpin>(
     session: &mut Session,
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     packet: ConnectPacket,
-    conn: &mut TcpStream<Preallocated>,
+    conn: &mut T,
     fd: RawFd,
     executor: &Rc<ExecutorState>,
     global: &Arc<GlobalState>,
@@ -355,11 +352,11 @@ clean session : {}
 }
 
 #[inline]
-async fn handle_disconnect(
+async fn handle_disconnect<T: AsyncWrite + Unpin>(
     session: &mut Session,
     packet: DisconnectPacket,
-    _conn: &mut TcpStream<Preallocated>,
-    global: &Arc<GlobalState>,
+    _conn: &mut T,
+    _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "{:?} received a disconnect packet: {:#?}",
@@ -372,10 +369,10 @@ async fn handle_disconnect(
 }
 
 #[inline]
-async fn handle_publish(
+async fn handle_publish<T: AsyncWrite + Unpin>(
     session: &mut Session,
     packet: PublishPacket,
-    conn: &mut TcpStream<Preallocated>,
+    conn: &mut T,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
@@ -416,10 +413,10 @@ topic name : {}
 }
 
 #[inline]
-async fn handle_puback(
+async fn handle_puback<T: AsyncWrite + Unpin>(
     session: &mut Session,
     packet: PubackPacket,
-    _conn: &mut TcpStream<Preallocated>,
+    _conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
@@ -432,10 +429,10 @@ async fn handle_puback(
 }
 
 #[inline]
-async fn handle_pubrec(
+async fn handle_pubrec<T: AsyncWrite + Unpin>(
     session: &mut Session,
     packet: PubrecPacket,
-    conn: &mut TcpStream<Preallocated>,
+    conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
@@ -450,10 +447,10 @@ async fn handle_pubrec(
 }
 
 #[inline]
-async fn handle_pubrel(
+async fn handle_pubrel<T: AsyncWrite + Unpin>(
     session: &mut Session,
     packet: PubrelPacket,
-    conn: &mut TcpStream<Preallocated>,
+    conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
@@ -467,10 +464,10 @@ async fn handle_pubrel(
 }
 
 #[inline]
-async fn handle_pubcomp(
+async fn handle_pubcomp<T: AsyncWrite + Unpin>(
     session: &mut Session,
     packet: PubcompPacket,
-    _conn: &mut TcpStream<Preallocated>,
+    _conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
@@ -483,10 +480,10 @@ async fn handle_pubcomp(
 }
 
 #[inline]
-async fn handle_subscribe(
+async fn handle_subscribe<T: AsyncWrite + Unpin>(
     session: &mut Session,
     packet: SubscribePacket,
-    conn: &mut TcpStream<Preallocated>,
+    conn: &mut T,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
@@ -530,10 +527,10 @@ packet id : {}
 }
 
 #[inline]
-async fn handle_unsubscribe(
+async fn handle_unsubscribe<T: AsyncWrite + Unpin>(
     session: &mut Session,
     packet: UnsubscribePacket,
-    conn: &mut TcpStream<Preallocated>,
+    conn: &mut T,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
@@ -554,10 +551,10 @@ packet id : {}
 }
 
 #[inline]
-async fn handle_pingreq(
+async fn handle_pingreq<T: AsyncWrite + Unpin>(
     session: &mut Session,
     _packet: PingreqPacket,
-    conn: &mut TcpStream<Preallocated>,
+    conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!("{:?} received a ping packet", session.client_id);
@@ -567,9 +564,9 @@ async fn handle_pingreq(
 }
 
 #[inline]
-pub async fn handle_will(
+pub async fn handle_will<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    _conn: &mut TcpStream<Preallocated>,
+    _conn: &mut T,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     if let Some(will) = session.will.take() {
@@ -587,12 +584,12 @@ pub async fn handle_will(
 }
 
 #[inline]
-pub async fn handle_internal(
+pub async fn handle_internal<T: AsyncWrite + Unpin>(
     session: &mut Session,
     receiver: &Receiver<(ClientId, InternalMessage)>,
     sender: ClientId,
     msg: InternalMessage,
-    conn: Option<&mut TcpStream<Preallocated>>,
+    conn: Option<&mut T>,
     _global: &Arc<GlobalState>,
 ) -> io::Result<bool> {
     match msg {
@@ -723,14 +720,14 @@ topic name : {}
 }
 
 // Got a publish message from retain message or subscribed topic, then send the publish message to client.
-async fn recv_publish(
+async fn recv_publish<T: AsyncWrite + Unpin>(
     session: &mut Session,
     topic_name: &Arc<TopicName>,
     qos: QualityOfService,
     retain: bool,
     payload: &Bytes,
     (subscribe_filter, subscribe_qos): (&Arc<TopicFilter>, QualityOfService),
-    conn: Option<&mut TcpStream<Preallocated>>,
+    conn: Option<&mut T>,
 ) -> io::Result<()> {
     if !session.subscribes.contains_key(subscribe_filter.as_ref()) {
         let filter_str: &str = subscribe_filter.as_ref().deref();
@@ -759,7 +756,8 @@ async fn recv_publish(
             },
             packet_sent,
         ) {
-            // TODO:
+            // TODO: proper handle this error
+            log::warn!("push pending packets error: {}", err);
         };
     }
 
@@ -783,9 +781,9 @@ async fn recv_publish(
 }
 
 #[inline]
-async fn write_packet<P: Encodable>(
+async fn write_packet<P: Encodable, T: AsyncWrite + Unpin>(
     session: &Session,
-    conn: &mut TcpStream<Preallocated>,
+    conn: &mut T,
     packet: &P,
 ) -> io::Result<()> {
     let mut buf = Vec::with_capacity(packet.encoded_length() as usize);
