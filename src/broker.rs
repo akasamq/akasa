@@ -142,6 +142,9 @@ async fn handle_connection(
                 conn = None;
                 if session.clean_session() {
                     global.remove_client(session.client_id());
+                    for filter in session.subscribes().keys() {
+                        global.route_table.unsubscribe(filter, session.client_id());
+                    }
                     break;
                 } else {
                     global.offline_client(session.client_id());
@@ -155,6 +158,9 @@ async fn handle_connection(
                 conn = None;
                 if session.clean_session() {
                     global.remove_client(session.client_id());
+                    for filter in session.subscribes().keys() {
+                        global.route_table.unsubscribe(filter, session.client_id());
+                    }
                     return Err(err);
                 } else {
                     global.offline_client(session.client_id());

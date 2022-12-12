@@ -71,6 +71,9 @@ impl Session {
     pub fn client_id(&self) -> ClientId {
         self.client_id
     }
+    pub fn subscribes(&self) -> &HashMap<TopicFilter, QualityOfService> {
+        &self.subscribes
+    }
 
     pub(crate) fn incr_server_packet_id(&mut self) -> u64 {
         let old_value = self.server_packet_id;

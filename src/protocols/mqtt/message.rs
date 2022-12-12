@@ -359,7 +359,7 @@ async fn handle_disconnect(
     session: &mut Session,
     packet: DisconnectPacket,
     _conn: &mut TcpStream<Preallocated>,
-    _global: &Arc<GlobalState>,
+    global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "{:?} received a disconnect packet: {:#?}",
