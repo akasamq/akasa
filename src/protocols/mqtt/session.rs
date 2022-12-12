@@ -1,4 +1,3 @@
-use std::io;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -14,23 +13,22 @@ use crate::state::{ClientId, InternalMessage};
 use super::pending::PendingPackets;
 
 pub struct Session {
-    pub io_error: Option<io::Error>,
-    pub(crate) connected: bool,
-    pub(crate) disconnected: bool,
+    pub(super) connected: bool,
+    pub(super) disconnected: bool,
     // last package timestamp
-    pub(crate) last_packet_time: Arc<RwLock<Instant>>,
-    pub(crate) write_lock: Semaphore,
+    pub(super) last_packet_time: Arc<RwLock<Instant>>,
+    pub(super) write_lock: Semaphore,
     // For record packet id send from server to client
-    pub(crate) server_packet_id: u64,
-    pub(crate) pending_packets: PendingPackets,
+    pub(super) server_packet_id: u64,
+    pub(super) pending_packets: PendingPackets,
 
-    pub(crate) client_id: ClientId,
-    pub(crate) client_identifier: String,
-    pub(crate) username: Option<String>,
-    pub(crate) keep_alive: u16,
-    pub(crate) clean_session: bool,
-    pub(crate) will: Option<Will>,
-    pub(crate) subscribes: HashMap<TopicFilter, QualityOfService>,
+    pub(super) client_id: ClientId,
+    pub(super) client_identifier: String,
+    pub(super) username: Option<String>,
+    pub(super) keep_alive: u16,
+    pub(super) clean_session: bool,
+    pub(super) will: Option<Will>,
+    pub(super) subscribes: HashMap<TopicFilter, QualityOfService>,
 }
 
 pub struct SessionState {
@@ -46,7 +44,6 @@ pub struct SessionState {
 impl Session {
     pub fn new() -> Session {
         Session {
-            io_error: None,
             connected: false,
             disconnected: false,
             last_packet_time: Arc::new(RwLock::new(Instant::now())),

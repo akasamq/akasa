@@ -122,6 +122,7 @@ async fn handle_connection(
 
     let mut session = mqtt::Session::new();
     let mut receiver = None;
+    let mut io_error = None;
     // handle first connect packet
     mqtt::handle_connection(
         &mut session,
@@ -146,7 +147,7 @@ async fn handle_connection(
                     global.offline_client(session.client_id());
                 }
             }
-            if let Some(err) = session.io_error.take() {
+            if let Some(err) = io_error.take() {
                 if let Some(conn) = conn.as_mut() {
                     mqtt::handle_will(&mut session, conn, global).await?;
                 }
@@ -190,7 +191,7 @@ async fn handle_connection(
                     .await
                     {
                         Ok(true) => {
-                            if is_kick && !session.disconnected {
+                            if is_kick && !session.disconnected() {
                                 // Offline client logic
                                 return Ok(Some((session, receiver)));
                             }
@@ -201,13 +202,13 @@ async fn handle_connection(
                         // Currently, this error can only happend when write data to connection
                         Err(err) => {
                             // An error in online mode should also check clean_session value
-                            session.io_error = Some(err);
+                            io_error = Some(err);
                         }
                     }
                 }
                 Err(err) => {
                     // An error in online mode should also check clean_session value
-                    session.io_error = Some(err);
+                    io_error = Some(err);
                 }
             }
         } else {
@@ -244,5 +245,5 @@ async fn handle_offline(
             }
         }
     }
-    log::debug!("offline client finished: {:?}", session.client_id);
+    log::debug!("offline client finished: {:?}", session.client_id());
 }

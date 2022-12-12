@@ -48,7 +48,7 @@ pub async fn handle_connection(
     let n = conn.read(&mut buf).await?;
     if n == 0 {
         if !session.disconnected {
-            session.io_error = Some(io::Error::from(io::ErrorKind::UnexpectedEof));
+            return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
         }
         return Ok(());
     }
@@ -60,7 +60,7 @@ pub async fn handle_connection(
         let n = conn.read(&mut buf).await?;
         if n == 0 {
             if !session.disconnected {
-                session.io_error = Some(io::Error::from(io::ErrorKind::UnexpectedEof));
+                return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
             }
             return Ok(());
         }
@@ -285,7 +285,13 @@ clean session : {}
                         let msg = InternalMessage::Kick {
                             reason: "timeout".to_owned(),
                         };
-                        sender.send_async((client_id, msg)).await;
+                        if let Err(err) = sender.send_async((client_id, msg)).await {
+                            log::warn!(
+                                "send timeout kick message to {:?} error: {:?}",
+                                client_id,
+                                err
+                            );
+                        }
                     }
                     None
                 }
@@ -352,8 +358,8 @@ clean session : {}
 async fn handle_disconnect(
     session: &mut Session,
     packet: DisconnectPacket,
-    conn: &mut TcpStream<Preallocated>,
-    global: &Arc<GlobalState>,
+    _conn: &mut TcpStream<Preallocated>,
+    _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "{:?} received a disconnect packet: {:#?}",
@@ -413,8 +419,8 @@ topic name : {}
 async fn handle_puback(
     session: &mut Session,
     packet: PubackPacket,
-    conn: &mut TcpStream<Preallocated>,
-    global: &Arc<GlobalState>,
+    _conn: &mut TcpStream<Preallocated>,
+    _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "{:?} received a puback packet: id={}",
@@ -430,7 +436,7 @@ async fn handle_pubrec(
     session: &mut Session,
     packet: PubrecPacket,
     conn: &mut TcpStream<Preallocated>,
-    global: &Arc<GlobalState>,
+    _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "{:?} received a pubrec  packet: id={}",
@@ -448,7 +454,7 @@ async fn handle_pubrel(
     session: &mut Session,
     packet: PubrelPacket,
     conn: &mut TcpStream<Preallocated>,
-    global: &Arc<GlobalState>,
+    _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "{:?} received a pubrel  packet: id={}",
@@ -464,8 +470,8 @@ async fn handle_pubrel(
 async fn handle_pubcomp(
     session: &mut Session,
     packet: PubcompPacket,
-    conn: &mut TcpStream<Preallocated>,
-    global: &Arc<GlobalState>,
+    _conn: &mut TcpStream<Preallocated>,
+    _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "{:?} received a pubcomp packet: id={}",
@@ -550,9 +556,9 @@ packet id : {}
 #[inline]
 async fn handle_pingreq(
     session: &mut Session,
-    packet: PingreqPacket,
+    _packet: PingreqPacket,
     conn: &mut TcpStream<Preallocated>,
-    global: &Arc<GlobalState>,
+    _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!("{:?} received a ping packet", session.client_id);
     let rv_packet = PingrespPacket::new();
@@ -563,7 +569,7 @@ async fn handle_pingreq(
 #[inline]
 pub async fn handle_will(
     session: &mut Session,
-    conn: &mut TcpStream<Preallocated>,
+    _conn: &mut TcpStream<Preallocated>,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     if let Some(will) = session.will.take() {
@@ -587,7 +593,7 @@ pub async fn handle_internal(
     sender: ClientId,
     msg: InternalMessage,
     conn: Option<&mut TcpStream<Preallocated>>,
-    global: &Arc<GlobalState>,
+    _global: &Arc<GlobalState>,
 ) -> io::Result<bool> {
     match msg {
         InternalMessage::Online { sender } => {
