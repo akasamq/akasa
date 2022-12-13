@@ -16,7 +16,7 @@ futures-io = "0.3.25"
 futures-lite = "1.12.0"
 glommio = "0.7.0"
 hashbrown = "0.13.1"
-json5 = "0.4.1"
+serde_yaml = "0.9.14"
 log = "0.4.17"
 mqtt-protocol = { version = "0.11.2" }
 num_cpus = "1.14.0"

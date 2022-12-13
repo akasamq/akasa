@@ -24,7 +24,7 @@ use crate::state::{ClientId, Executor, GlobalState, GlommioExecutor, InternalMes
 pub fn start(bind: SocketAddr, config: PathBuf) -> io::Result<()> {
     let config: Config = {
         let content = fs::read_to_string(&config)?;
-        json5::from_str(&content).map_err(|_err| io::Error::from(io::ErrorKind::InvalidInput))?
+        serde_yaml::from_str(&content).map_err(|_err| io::Error::from(io::ErrorKind::InvalidInput))?
     };
     log::debug!("config: {:#?}", config);
     if !config.is_valid() {
