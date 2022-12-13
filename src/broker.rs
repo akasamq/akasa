@@ -1,7 +1,7 @@
 use std::fs;
 use std::io;
 use std::net::SocketAddr;
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -24,16 +24,18 @@ use crate::state::{ClientId, Executor, GlobalState, GlommioExecutor, InternalMes
 pub fn start(bind: SocketAddr, config: PathBuf) -> io::Result<()> {
     let config: Config = {
         let content = fs::read_to_string(&config)?;
-        serde_yaml::from_str(&content).map_err(|_err| io::Error::from(io::ErrorKind::InvalidInput))?
+        serde_yaml::from_str(&content)
+            .map_err(|_err| io::Error::from(io::ErrorKind::InvalidInput))?
     };
     log::debug!("config: {:#?}", config);
     if !config.is_valid() {
         return Err(io::Error::from(io::ErrorKind::InvalidInput));
     }
     log::info!("Listen on {}", bind);
+    let global: Arc<GlobalState> = Arc::new(GlobalState::new(bind, config));
+
     let cpu_set = CpuSet::online().expect("online cpus");
     let placement = PoolPlacement::MaxSpread(num_cpus::get(), Some(cpu_set));
-    let global: Arc<GlobalState> = Arc::new(GlobalState::new(bind, config));
     LocalExecutorPoolBuilder::new(placement)
         .on_all_shards(move || async move {
             let id = glommio::executor().id();
@@ -68,7 +70,7 @@ async fn broker(executor: Rc<GlommioExecutor>, global: Arc<GlobalState>) -> io::
         let peer_addr = conn.peer_addr()?;
         log::info!(
             "executor {:03}, #{} {} connected, total {} clients ({} online) ",
-            executor.id,
+            executor.id(),
             fd,
             peer_addr,
             global.clients_count(),
@@ -77,43 +79,48 @@ async fn broker(executor: Rc<GlommioExecutor>, global: Arc<GlobalState>) -> io::
         spawn_local({
             let executor = Rc::clone(&executor);
             let global = Arc::clone(&global);
-            async move {
-                match handle_connection(Some(conn), fd, &executor, &global).await {
-                    Ok(Some((session, receiver))) => {
-                        log::info!(
-                            "executor {:03}, #{} {} go to offline, total {} clients ({} online) ",
-                            executor.id,
-                            fd,
-                            peer_addr,
-                            global.clients_count(),
-                            global.online_clients_count(),
-                        );
-                        spawn_local(handle_offline(session, receiver, global)).detach();
-                    }
-                    Ok(None) => {
-                        log::info!(
-                            "executor {:03}, #{} {} finished, total {} clients ({} online) ",
-                            executor.id,
-                            fd,
-                            peer_addr,
-                            global.clients_count(),
-                            global.online_clients_count(),
-                        );
-                    }
-                    Err(err) => {
-                        log::error!("#{} connection loop error: {}", fd, err);
-                    }
-                }
-            }
+            handle_accept(conn, peer_addr, executor, global)
         })
         .detach();
     }
 }
 
-async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
-    mut conn: Option<T>,
-    fd: RawFd,
-    executor: &Rc<E>,
+pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
+    conn: T,
+    peer: SocketAddr,
+    executor: E,
+    global: Arc<GlobalState>,
+) {
+    match handle_connection(conn, peer, &executor, &global).await {
+        Ok(Some((session, receiver))) => {
+            log::info!(
+                "executor {:03}, {} go to offline, total {} clients ({} online) ",
+                executor.id(),
+                peer,
+                global.clients_count(),
+                global.online_clients_count(),
+            );
+            spawn_local(handle_offline(session, receiver, global)).detach();
+        }
+        Ok(None) => {
+            log::info!(
+                "executor {:03}, {} finished, total {} clients ({} online) ",
+                executor.id(),
+                peer,
+                global.clients_count(),
+                global.online_clients_count(),
+            );
+        }
+        Err(err) => {
+            log::error!("{} connection loop error: {}", peer, err);
+        }
+    }
+}
+
+pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
+    mut conn: T,
+    peer: SocketAddr,
+    executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<Option<(mqtt::Session, Receiver<(ClientId, InternalMessage)>)>> {
     enum Msg {
@@ -128,105 +135,88 @@ async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     mqtt::handle_connection(
         &mut session,
         &mut receiver,
-        conn.as_mut().unwrap(),
-        fd,
+        &mut conn,
+        &peer,
         executor,
         global,
     )
     .await?;
     let receiver = receiver.unwrap();
 
-    loop {
-        if conn.is_some() {
-            if session.disconnected() {
-                // become a offline client, but session keep updating
-                conn = None;
-                if session.clean_session() {
-                    global.remove_client(session.client_id());
-                    for filter in session.subscribes().keys() {
-                        global.route_table.unsubscribe(filter, session.client_id());
-                    }
-                    break;
-                } else {
-                    global.offline_client(session.client_id());
-                }
-            }
-            if let Some(err) = io_error.take() {
-                if let Some(conn) = conn.as_mut() {
-                    mqtt::handle_will(&mut session, conn, global).await?;
-                }
-                // become a offline client, but session keep updating
-                conn = None;
-                if session.clean_session() {
-                    global.remove_client(session.client_id());
-                    for filter in session.subscribes().keys() {
-                        global.route_table.unsubscribe(filter, session.client_id());
-                    }
-                    return Err(err);
-                } else {
-                    global.offline_client(session.client_id());
-                }
-            }
-        }
-
-        if let Some(conn) = conn.as_mut() {
-            // Online client logic
-            let recv_data = async {
-                mqtt::handle_connection(&mut session, &mut None, conn, fd, executor, global)
-                    .await
-                    .map(Msg::Socket)
-            };
-            let recv_msg = async {
-                receiver
-                    .recv_async()
-                    .await
-                    .map(Msg::Internal)
-                    .map_err(|_| io::ErrorKind::BrokenPipe.into())
-            };
-            match recv_data.or(recv_msg).await {
-                Ok(Msg::Socket(())) => {}
-                Ok(Msg::Internal((sender, msg))) => {
-                    let is_kick = matches!(msg, InternalMessage::Kick { .. });
-                    match mqtt::handle_internal(
-                        &mut session,
-                        &receiver,
-                        sender,
-                        msg,
-                        Some(conn),
-                        global,
-                    )
-                    .await
-                    {
-                        Ok(true) => {
-                            if is_kick && !session.disconnected() {
-                                // Offline client logic
-                                return Ok(Some((session, receiver)));
-                            }
-                            // Been occupied by newly connected client or kicked out after disconnected
-                            break;
+    while !session.disconnected() {
+        // Online client logic
+        let recv_data = async {
+            mqtt::handle_connection(&mut session, &mut None, &mut conn, &peer, executor, global)
+                .await
+                .map(Msg::Socket)
+        };
+        let recv_msg = async {
+            receiver
+                .recv_async()
+                .await
+                .map(Msg::Internal)
+                .map_err(|_| io::ErrorKind::BrokenPipe.into())
+        };
+        match recv_data.or(recv_msg).await {
+            Ok(Msg::Socket(())) => {}
+            Ok(Msg::Internal((sender, msg))) => {
+                let is_kick = matches!(msg, InternalMessage::Kick { .. });
+                match mqtt::handle_internal(
+                    &mut session,
+                    &receiver,
+                    sender,
+                    msg,
+                    Some(&mut conn),
+                    global,
+                )
+                .await
+                {
+                    Ok(true) => {
+                        if is_kick && !session.disconnected() {
+                            // Offline client logic
+                            io_error = Some(io::Error::from(io::ErrorKind::BrokenPipe));
                         }
-                        Ok(false) => {}
-                        // Currently, this error can only happend when write data to connection
-                        Err(err) => {
-                            // An error in online mode should also check clean_session value
-                            io_error = Some(err);
-                        }
+                        // Been occupied by newly connected client or kicked out after disconnected
+                        break;
+                    }
+                    Ok(false) => {}
+                    // Currently, this error can only happend when write data to connection
+                    Err(err) => {
+                        // An error in online mode should also check clean_session value
+                        io_error = Some(err);
+                        break;
                     }
                 }
-                Err(err) => {
-                    // An error in online mode should also check clean_session value
-                    io_error = Some(err);
-                }
             }
-        } else {
-            // Offline client logic
-            return Ok(Some((session, receiver)));
+            Err(err) => {
+                // An error in online mode should also check clean_session value
+                io_error = Some(err);
+                break;
+            }
         }
     }
+
+    if !session.disconnected() {
+        mqtt::handle_will(&mut session, &mut conn, global).await?;
+    }
+    if session.clean_session() {
+        global.remove_client(session.client_id());
+        for filter in session.subscribes().keys() {
+            global.route_table.unsubscribe(filter, session.client_id());
+        }
+        if let Some(err) = io_error {
+            return Err(err);
+        }
+    } else {
+        // become a offline client, but session keep updating
+        global.offline_client(session.client_id());
+        return Ok(Some((session, receiver)));
+    }
+
     Ok(None)
 }
 
-async fn handle_offline(
+pub async fn handle_offline(
     mut session: mqtt::Session,
     receiver: Receiver<(ClientId, InternalMessage)>,
     global: Arc<GlobalState>,

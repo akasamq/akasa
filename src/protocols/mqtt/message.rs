@@ -1,9 +1,8 @@
 use std::cmp;
 use std::io::{self, Cursor};
 use std::mem;
+use std::net::SocketAddr;
 use std::ops::Deref;
-use std::os::unix::io::RawFd;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -36,8 +35,8 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     session: &mut Session,
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     conn: &mut T,
-    fd: RawFd,
-    executor: &Rc<E>,
+    peer: &SocketAddr,
+    executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     let mut buf = [0u8; 1];
@@ -84,7 +83,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     conn.read_exact(&mut buffer).await?;
     let packet = VariablePacket::decode_with(&mut Cursor::new(buffer), Some(fixed_header))
         .map_err(|_err| io::Error::from(io::ErrorKind::InvalidData))?;
-    handle_packet(session, receiver, packet, conn, fd, executor, global).await?;
+    handle_packet(session, receiver, packet, conn, peer, executor, global).await?;
     Ok(())
 }
 
@@ -94,17 +93,17 @@ async fn handle_packet<T: AsyncWrite + Unpin, E: Executor>(
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     packet: VariablePacket,
     conn: &mut T,
-    fd: RawFd,
-    executor: &Rc<E>,
+    peer: &SocketAddr,
+    executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     if !matches!(packet, VariablePacket::ConnectPacket(..)) && !session.connected {
-        log::info!("#{} not connected", fd);
+        log::info!("{} not connected", peer);
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
     match packet {
         VariablePacket::ConnectPacket(packet) => {
-            handle_connect(session, receiver, packet, conn, fd, executor, global).await?;
+            handle_connect(session, receiver, packet, conn, peer, executor, global).await?;
         }
         VariablePacket::DisconnectPacket(packet) => {
             handle_disconnect(session, packet, conn, global).await?;
@@ -182,12 +181,12 @@ async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
     packet: ConnectPacket,
     conn: &mut T,
-    fd: RawFd,
-    executor: &Rc<E>,
+    peer: &SocketAddr,
+    executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        r#"#{} received a connect packet:
+        r#"{} received a connect packet:
      protocol : {} {:?}
     client_id : {}
 clean session : {}
@@ -196,7 +195,7 @@ clean session : {}
    keep-alive : {}s
          will : {:?}, retain: {}, qos: {:?}
      reserved : {}"#,
-        fd,
+        peer,
         packet.protocol_name(),
         packet.protocol_level(),
         packet.client_identifier(),
@@ -337,7 +336,7 @@ clean session : {}
         }
     }
 
-    log::debug!("Socket fd#{} assgined to: {:?}", fd, session.client_id);
+    log::debug!("Socket {} assgined to: {:?}", peer, session.client_id);
 
     let rv_packet = ConnackPacket::new(session_present, return_code);
     write_packet(session, conn, &rv_packet).await?;

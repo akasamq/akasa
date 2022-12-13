@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -148,8 +149,35 @@ pub trait Executor {
 
     fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
     where
-        G: Fn() -> F + 'static,
-        F: Future<Output = Option<Duration>> + 'static;
+        G: (Fn() -> F) + Send + Sync + 'static,
+        F: Future<Output = Option<Duration>> + Send + 'static;
+}
+
+impl<T: Executor> Executor for Rc<T> {
+    fn id(&self) -> usize {
+        self.as_ref().id()
+    }
+
+    fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
+    where
+        G: (Fn() -> F) + Send + Sync + 'static,
+        F: Future<Output = Option<Duration>> + Send + 'static,
+    {
+        self.as_ref().spawn_timer(action_gen)
+    }
+}
+impl<T: Executor> Executor for Arc<T> {
+    fn id(&self) -> usize {
+        self.as_ref().id()
+    }
+
+    fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
+    where
+        G: (Fn() -> F) + Send + Sync + 'static,
+        F: Future<Output = Option<Duration>> + Send + 'static,
+    {
+        self.as_ref().spawn_timer(action_gen)
+    }
 }
 
 pub struct GlommioExecutor {
@@ -170,8 +198,8 @@ impl Executor for GlommioExecutor {
 
     fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
     where
-        G: Fn() -> F + 'static,
-        F: Future<Output = Option<Duration>> + 'static,
+        G: (Fn() -> F) + Send + Sync + 'static,
+        F: Future<Output = Option<Duration>> + Send + 'static,
     {
         TimerActionRepeat::repeat_into(action_gen, self.gc_queue)
             .map(|_| ())
