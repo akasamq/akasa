@@ -1,11 +1,9 @@
 use std::cmp;
-use std::future::Future;
 use std::io::{self, Cursor, IoSlice};
 use std::mem;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::Duration;
 
 use futures_lite::{
     io::{AsyncRead, AsyncWrite},
@@ -13,8 +11,6 @@ use futures_lite::{
 };
 use mqtt::{packet::VariablePacket, Decodable, Encodable};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-
-use crate::state::Executor;
 
 pub struct MockConnControl {
     chan_in: Sender<Vec<u8>>,
@@ -130,31 +126,5 @@ impl AsyncWrite for MockConn {
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         self.poll_flush(cx)
-    }
-}
-
-#[derive(Default)]
-pub struct DummyExecutor {}
-
-impl Executor for DummyExecutor {
-    fn spawn_local<F>(&self, future: F)
-    where
-        F: Future + 'static,
-        F::Output: 'static,
-    {
-        tokio::task::spawn_local(future);
-    }
-
-    fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
-    where
-        G: (Fn() -> F) + Send + Sync + 'static,
-        F: Future<Output = Option<Duration>> + Send + 'static,
-    {
-        tokio::spawn(async move {
-            while let Some(duration) = action_gen().await {
-                tokio::time::sleep(duration).await;
-            }
-        });
-        Ok(())
     }
 }

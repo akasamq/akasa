@@ -8,10 +8,10 @@ use mqtt::{
 };
 use ConnectReturnCode::*;
 
-use crate::broker::handle_accept;
+use crate::broker::{handle_accept, rt_tokio::TokioExecutor};
 use crate::config::{AuthType, Config};
 use crate::state::GlobalState;
-use crate::tests::utils::{DummyExecutor, MockConn};
+use crate::tests::utils::MockConn;
 
 #[tokio::test]
 async fn test_01_connect_allow_anonymous() {
@@ -69,7 +69,7 @@ async fn do_test(config: Config, connect: ConnectPacket, connack: ConnackPacket)
     let mut control = {
         let (conn, control) = MockConn::new(3333);
         let global = Arc::new(GlobalState::new(conn.bind, config));
-        let executor = DummyExecutor::default();
+        let executor = TokioExecutor {};
 
         let peer = conn.peer;
         tokio::spawn(handle_accept(conn, peer, executor, global));

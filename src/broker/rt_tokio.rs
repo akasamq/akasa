@@ -67,7 +67,7 @@ impl AsyncWrite for ConnWrapper {
     }
 }
 
-struct TokioExecutor {}
+pub struct TokioExecutor {}
 
 impl Executor for TokioExecutor {
     fn spawn_local<F>(&self, future: F)
