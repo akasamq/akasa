@@ -41,8 +41,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     let mut buf = [0u8; 1];
-    let n = conn.read(&mut buf).await?;
-    if n == 0 {
+    if conn.read(&mut buf).await? == 0 {
         if !session.disconnected {
             return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
         }
@@ -53,8 +52,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     let mut remaining_len = 0;
     let mut i = 0;
     loop {
-        let n = conn.read(&mut buf).await?;
-        if n == 0 {
+        if conn.read(&mut buf).await? == 0 {
             if !session.disconnected {
                 return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
             }
