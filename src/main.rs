@@ -41,7 +41,7 @@ enum Commands {
         #[clap(long, value_name = "FILE")]
         config: PathBuf,
 
-        /// Runtime (glommio or tokio)
+        /// Async runtime
         #[clap(long, default_value_t = Runtime::Glommio, value_enum)]
         runtime: Runtime,
     },
