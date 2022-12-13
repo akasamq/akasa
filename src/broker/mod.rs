@@ -1,89 +1,18 @@
-use std::fs;
+pub mod rt_glommio;
+pub mod rt_tokio;
+
 use std::io;
 use std::net::SocketAddr;
-use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
 
 use flume::Receiver;
 use futures_lite::{
     future::FutureExt,
     io::{AsyncRead, AsyncWrite},
 };
-use glommio::{
-    net::TcpListener, spawn_local, timer::sleep, CpuSet, Latency, LocalExecutorPoolBuilder,
-    PoolPlacement, Shares,
-};
 
-use crate::config::Config;
 use crate::protocols::mqtt;
-use crate::state::{ClientId, Executor, GlobalState, GlommioExecutor, InternalMessage};
-
-pub fn start(bind: SocketAddr, config: PathBuf) -> io::Result<()> {
-    let config: Config = {
-        let content = fs::read_to_string(&config)?;
-        serde_yaml::from_str(&content)
-            .map_err(|_err| io::Error::from(io::ErrorKind::InvalidInput))?
-    };
-    log::debug!("config: {:#?}", config);
-    if !config.is_valid() {
-        return Err(io::Error::from(io::ErrorKind::InvalidInput));
-    }
-    log::info!("Listen on {}", bind);
-    let global: Arc<GlobalState> = Arc::new(GlobalState::new(bind, config));
-
-    let cpu_set = CpuSet::online().expect("online cpus");
-    let placement = PoolPlacement::MaxSpread(num_cpus::get(), Some(cpu_set));
-    LocalExecutorPoolBuilder::new(placement)
-        .on_all_shards(move || async move {
-            let id = glommio::executor().id();
-            // Do clean up tasks, such as:
-            //   * kick out keep alive timeout connections
-            let gc_queue = glommio::executor().create_task_queue(
-                Shares::default(),
-                Latency::Matters(Duration::from_secs(15)),
-                "gc",
-            );
-            let executor = Rc::new(GlommioExecutor::new(id, gc_queue));
-            loop {
-                log::info!("Starting executor {}", id);
-                if let Err(err) = broker(Rc::clone(&executor), Arc::clone(&global)).await {
-                    log::error!("Executor {} stopped with error: {}", id, err);
-                    sleep(Duration::from_secs(1)).await;
-                } else {
-                    log::info!("Executor {} stopped successfully!", id);
-                }
-            }
-        })
-        .expect("executor pool")
-        .join_all();
-    Ok(())
-}
-
-async fn broker(executor: Rc<GlommioExecutor>, global: Arc<GlobalState>) -> io::Result<()> {
-    let listener = TcpListener::bind(global.bind)?;
-    loop {
-        let conn = listener.accept().await?.buffered();
-        let fd = conn.as_raw_fd();
-        let peer_addr = conn.peer_addr()?;
-        log::info!(
-            "executor {:03}, #{} {} connected, total {} clients ({} online) ",
-            executor.id(),
-            fd,
-            peer_addr,
-            global.clients_count(),
-            global.online_clients_count(),
-        );
-        spawn_local({
-            let executor = Rc::clone(&executor);
-            let global = Arc::clone(&global);
-            handle_accept(conn, peer_addr, executor, global)
-        })
-        .detach();
-    }
-}
+use crate::state::{ClientId, Executor, GlobalState, InternalMessage};
 
 pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     conn: T,
@@ -100,7 +29,7 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
                 global.clients_count(),
                 global.online_clients_count(),
             );
-            spawn_local(handle_offline(session, receiver, global)).detach();
+            executor.spawn_local(handle_offline(session, receiver, global));
         }
         Ok(None) => {
             log::info!(

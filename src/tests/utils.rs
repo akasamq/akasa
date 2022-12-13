@@ -137,6 +137,14 @@ impl AsyncWrite for MockConn {
 pub struct DummyExecutor {}
 
 impl Executor for DummyExecutor {
+    fn spawn_local<F>(&self, future: F)
+    where
+        F: Future + 'static,
+        F::Output: 'static,
+    {
+        tokio::task::spawn_local(future);
+    }
+
     fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
     where
         G: (Fn() -> F) + Send + Sync + 'static,

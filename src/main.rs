@@ -10,11 +10,16 @@ mod storage;
 #[cfg(test)]
 mod tests;
 
-use std::error::Error as StdErr;
+use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use clap::{Parser, Subcommand};
+use anyhow::{anyhow, bail};
+use clap::{Parser, Subcommand, ValueEnum};
+
+use crate::config::Config;
+use crate::state::GlobalState;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -35,17 +40,47 @@ enum Commands {
         /// The config file path
         #[clap(long, value_name = "FILE")]
         config: PathBuf,
+
+        /// Runtime (glommio or tokio)
+        #[clap(long, default_value_t = Runtime::Glommio, value_enum)]
+        runtime: Runtime,
     },
 }
 
-fn main() -> Result<(), Box<dyn StdErr>> {
+#[derive(ValueEnum, Clone, Debug)]
+enum Runtime {
+    Glommio,
+    Tokio,
+}
+
+fn main() -> anyhow::Result<()> {
     logger::init();
 
     let cli = Cli::parse();
-    log::debug!("{:?}", cli);
+    log::debug!("{:#?}", cli);
 
     match cli.command {
-        Commands::Start { bind, config } => broker::start(bind, config)?,
+        Commands::Start {
+            bind,
+            config,
+            runtime,
+        } => {
+            let config: Config = {
+                let content = fs::read_to_string(&config)?;
+                serde_yaml::from_str(&content)
+                    .map_err(|err| anyhow!("invalid config format {}", err))?
+            };
+            log::debug!("config: {:#?}", config);
+            if !config.is_valid() {
+                bail!("invalid config");
+            }
+            log::info!("Listen on {}", bind);
+            let global = Arc::new(GlobalState::new(bind, config));
+            match runtime {
+                Runtime::Glommio => broker::rt_glommio::start(global)?,
+                Runtime::Tokio => broker::rt_tokio::start(global)?,
+            }
+        }
     }
     Ok(())
 }

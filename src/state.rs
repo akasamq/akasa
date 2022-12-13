@@ -8,7 +8,6 @@ use std::time::Duration;
 use bytes::Bytes;
 use dashmap::DashMap;
 use flume::{bounded, Receiver, Sender};
-use glommio::{timer::TimerActionRepeat, TaskQueueHandle};
 use mqtt::{QualityOfService, TopicFilter, TopicName};
 use parking_lot::Mutex;
 
@@ -146,6 +145,10 @@ pub trait Executor {
     fn id(&self) -> usize {
         0
     }
+    fn spawn_local<F>(&self, future: F)
+    where
+        F: Future + 'static,
+        F::Output: 'static;
 
     fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
     where
@@ -156,6 +159,13 @@ pub trait Executor {
 impl<T: Executor> Executor for Rc<T> {
     fn id(&self) -> usize {
         self.as_ref().id()
+    }
+    fn spawn_local<F>(&self, future: F)
+    where
+        F: Future + 'static,
+        F::Output: 'static,
+    {
+        self.as_ref().spawn_local(future);
     }
 
     fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
@@ -171,29 +181,12 @@ impl<T: Executor> Executor for Arc<T> {
         self.as_ref().id()
     }
 
-    fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
+    fn spawn_local<F>(&self, future: F)
     where
-        G: (Fn() -> F) + Send + Sync + 'static,
-        F: Future<Output = Option<Duration>> + Send + 'static,
+        F: Future + 'static,
+        F::Output: 'static,
     {
-        self.as_ref().spawn_timer(action_gen)
-    }
-}
-
-pub struct GlommioExecutor {
-    pub id: usize,
-    pub gc_queue: TaskQueueHandle,
-}
-
-impl GlommioExecutor {
-    pub fn new(id: usize, gc_queue: TaskQueueHandle) -> GlommioExecutor {
-        GlommioExecutor { id, gc_queue }
-    }
-}
-
-impl Executor for GlommioExecutor {
-    fn id(&self) -> usize {
-        self.id
+        self.as_ref().spawn_local(future);
     }
 
     fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
@@ -201,9 +194,7 @@ impl Executor for GlommioExecutor {
         G: (Fn() -> F) + Send + Sync + 'static,
         F: Future<Output = Option<Duration>> + Send + 'static,
     {
-        TimerActionRepeat::repeat_into(action_gen, self.gc_queue)
-            .map(|_| ())
-            .map_err(|_err| io::Error::from(io::ErrorKind::Other))
+        self.as_ref().spawn_timer(action_gen)
     }
 }
 
