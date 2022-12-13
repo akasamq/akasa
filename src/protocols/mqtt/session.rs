@@ -3,7 +3,6 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use flume::Receiver;
-use glommio::sync::Semaphore;
 use hashbrown::HashMap;
 use mqtt::{qos::QualityOfService, TopicFilter, TopicName};
 use parking_lot::RwLock;
@@ -17,7 +16,6 @@ pub struct Session {
     pub(super) disconnected: bool,
     // last package timestamp
     pub(super) last_packet_time: Arc<RwLock<Instant>>,
-    pub(super) write_lock: Semaphore,
     // For record packet id send from server to client
     pub(super) server_packet_id: u64,
     pub(super) pending_packets: PendingPackets,
@@ -47,7 +45,6 @@ impl Session {
             connected: false,
             disconnected: false,
             last_packet_time: Arc::new(RwLock::new(Instant::now())),
-            write_lock: Semaphore::new(1),
             server_packet_id: 0,
             // FIXME: read max inflight and max packets from config
             pending_packets: PendingPackets::new(10, 1000, 15),

@@ -30,8 +30,8 @@ pub enum AuthType {
 impl Default for Config {
     fn default() -> Config {
         Config {
-            auth_types: vec![AuthType::UsernamePassword],
-            users: HashMap::from([("user".to_string(), "pass".to_string())]),
+            auth_types: Vec::new(),
+            users: HashMap::new(),
             max_allowed_qos: 2,
             max_in_mem_pending_messages: 256,
             max_in_db_pending_messages: 65536,

@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 mod test_01_connect_575314;
 mod test_01_connect_allow_anonymous;
 mod test_01_connect_disconnect_v5;

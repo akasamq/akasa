@@ -162,11 +162,11 @@ async fn handle_packet<T: AsyncWrite + Unpin, E: Executor>(
                 rv_packet.set_dup(*dup);
                 rv_packet.set_retain(packet.retain);
                 *dup = true;
-                write_packet(session, conn, &rv_packet).await?;
+                write_packet(conn, &rv_packet).await?;
             }
             PendingPacketStatus::Pubrec { packet_id, .. } => {
                 let rv_packet = PubrelPacket::new(*packet_id);
-                write_packet(session, conn, &rv_packet).await?;
+                write_packet(conn, &rv_packet).await?;
             }
             PendingPacketStatus::Complete => unreachable!(),
         }
@@ -213,7 +213,7 @@ clean session : {}
     }
     if packet.protocol_level() != ProtocolLevel::Version311 {
         let rv_packet = ConnackPacket::new(false, ConnectReturnCode::UnacceptableProtocolVersion);
-        write_packet(session, conn, &rv_packet).await?;
+        write_packet(conn, &rv_packet).await?;
         session.disconnected = true;
         return Ok(());
     }
@@ -242,7 +242,7 @@ clean session : {}
     // FIXME: permission check and return "not authorized"
     if return_code != ConnectReturnCode::ConnectionAccepted {
         let rv_packet = ConnackPacket::new(false, return_code);
-        write_packet(session, conn, &rv_packet).await?;
+        write_packet(conn, &rv_packet).await?;
         session.disconnected = true;
         return Ok(());
     }
@@ -339,7 +339,7 @@ clean session : {}
     log::debug!("Socket {} assgined to: {:?}", peer, session.client_id);
 
     let rv_packet = ConnackPacket::new(session_present, return_code);
-    write_packet(session, conn, &rv_packet).await?;
+    write_packet(conn, &rv_packet).await?;
     session.connected = true;
     Ok(())
 }
@@ -396,10 +396,10 @@ topic name : {}
     match packet.qos() {
         QoSWithPacketIdentifier::Level0 => {}
         QoSWithPacketIdentifier::Level1(pkid) => {
-            write_packet(session, conn, &PubackPacket::new(pkid)).await?;
+            write_packet(conn, &PubackPacket::new(pkid)).await?;
         }
         QoSWithPacketIdentifier::Level2(pkid) => {
-            write_packet(session, conn, &PubrecPacket::new(pkid)).await?;
+            write_packet(conn, &PubrecPacket::new(pkid)).await?;
         }
     }
     Ok(())
@@ -435,7 +435,7 @@ async fn handle_pubrec<T: AsyncWrite + Unpin>(
     );
     session.pending_packets.pubrec(packet.packet_identifier());
     let rv_packet = PubrelPacket::new(packet.packet_identifier());
-    write_packet(session, conn, &rv_packet).await?;
+    write_packet(conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -452,7 +452,7 @@ async fn handle_pubrel<T: AsyncWrite + Unpin>(
         packet.packet_identifier()
     );
     let rv_packet = PubcompPacket::new(packet.packet_identifier());
-    write_packet(session, conn, &rv_packet).await?;
+    write_packet(conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -515,7 +515,7 @@ packet id : {}
         return_codes.push(allowed_qos.into());
     }
     let rv_packet = SubackPacket::new(packet.packet_identifier(), return_codes);
-    write_packet(session, conn, &rv_packet).await?;
+    write_packet(conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -539,7 +539,7 @@ packet id : {}
         session.subscribes.remove(filter);
     }
     let rv_packet = UnsubackPacket::new(packet.packet_identifier());
-    write_packet(session, conn, &rv_packet).await?;
+    write_packet(conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -552,7 +552,7 @@ async fn handle_pingreq<T: AsyncWrite + Unpin>(
 ) -> io::Result<()> {
     log::debug!("{:?} received a ping packet", session.client_id);
     let rv_packet = PingrespPacket::new();
-    write_packet(session, conn, &rv_packet).await?;
+    write_packet(conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -767,7 +767,7 @@ async fn recv_publish<T: AsyncWrite + Unpin>(
         );
         rv_packet.set_dup(false);
         rv_packet.set_retain(retain);
-        write_packet(session, conn, &rv_packet).await?;
+        write_packet(conn, &rv_packet).await?;
     }
 
     Ok(())
@@ -775,15 +775,11 @@ async fn recv_publish<T: AsyncWrite + Unpin>(
 
 #[inline]
 async fn write_packet<P: Encodable, T: AsyncWrite + Unpin>(
-    session: &Session,
     conn: &mut T,
     packet: &P,
 ) -> io::Result<()> {
     let mut buf = Vec::with_capacity(packet.encoded_length() as usize);
     packet.encode(&mut buf)?;
-    {
-        let _permit = session.write_lock.acquire_permit(1).await.unwrap();
-        conn.write_all(&buf).await?;
-    }
+    conn.write_all(&buf).await?;
     Ok(())
 }
