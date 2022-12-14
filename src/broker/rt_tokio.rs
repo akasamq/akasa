@@ -72,10 +72,10 @@ pub struct TokioExecutor {}
 impl Executor for TokioExecutor {
     fn spawn_local<F>(&self, future: F)
     where
-        F: Future + 'static,
-        F::Output: 'static,
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
     {
-        tokio::task::spawn_local(future);
+        tokio::spawn(future);
     }
 
     fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>

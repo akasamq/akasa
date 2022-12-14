@@ -147,8 +147,8 @@ pub trait Executor {
     }
     fn spawn_local<F>(&self, future: F)
     where
-        F: Future + 'static,
-        F::Output: 'static;
+        F: Future + Send + 'static,
+        F::Output: Send + 'static;
 
     fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
     where
@@ -162,8 +162,8 @@ impl<T: Executor> Executor for Rc<T> {
     }
     fn spawn_local<F>(&self, future: F)
     where
-        F: Future + 'static,
-        F::Output: 'static,
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
     {
         self.as_ref().spawn_local(future);
     }
@@ -183,8 +183,8 @@ impl<T: Executor> Executor for Arc<T> {
 
     fn spawn_local<F>(&self, future: F)
     where
-        F: Future + 'static,
-        F::Output: 'static,
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
     {
         self.as_ref().spawn_local(future);
     }

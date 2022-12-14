@@ -85,8 +85,8 @@ impl Executor for GlommioExecutor {
 
     fn spawn_local<F>(&self, future: F)
     where
-        F: Future + 'static,
-        F::Output: 'static,
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
     {
         spawn_local(future).detach();
     }

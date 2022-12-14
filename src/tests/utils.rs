@@ -16,6 +16,7 @@ pub struct MockConnControl {
     chan_in: Sender<Vec<u8>>,
     chan_out: Receiver<Vec<u8>>,
 }
+
 pub struct MockConn {
     pub bind: SocketAddr,
     pub peer: SocketAddr,
@@ -42,6 +43,7 @@ impl MockConn {
         (conn, control)
     }
 }
+
 impl MockConnControl {
     pub async fn read_packet(&mut self) -> VariablePacket {
         let mut data = Cursor::new(self.chan_out.recv().await.unwrap());
