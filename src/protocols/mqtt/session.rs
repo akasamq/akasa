@@ -4,7 +4,7 @@ use std::time::Instant;
 use bytes::Bytes;
 use flume::Receiver;
 use hashbrown::HashMap;
-use mqtt::{qos::QualityOfService, TopicFilter, TopicName};
+use mqtt::{control::ProtocolLevel, qos::QualityOfService, TopicFilter, TopicName};
 use parking_lot::RwLock;
 
 use crate::state::{ClientId, InternalMessage};
@@ -14,6 +14,7 @@ use super::pending::PendingPackets;
 pub struct Session {
     pub(super) connected: bool,
     pub(super) disconnected: bool,
+    pub(super) protocol_level: ProtocolLevel,
     // last package timestamp
     pub(super) last_packet_time: Arc<RwLock<Instant>>,
     // For record packet id send from server to client
@@ -30,6 +31,7 @@ pub struct Session {
 }
 
 pub struct SessionState {
+    pub protocol_level: ProtocolLevel,
     // For record packet id send from server to client
     pub server_packet_id: u64,
     pub pending_packets: PendingPackets,
@@ -44,6 +46,7 @@ impl Session {
         Session {
             connected: false,
             disconnected: false,
+            protocol_level: ProtocolLevel::Version311,
             last_packet_time: Arc::new(RwLock::new(Instant::now())),
             server_packet_id: 0,
             // FIXME: read max inflight and max packets from config

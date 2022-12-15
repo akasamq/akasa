@@ -1,4 +1,5 @@
 use std::cmp;
+use std::fmt::Debug;
 use std::io::{self, Cursor};
 use std::mem;
 use std::net::SocketAddr;
@@ -162,11 +163,11 @@ async fn handle_packet<T: AsyncWrite + Unpin, E: Executor>(
                 rv_packet.set_dup(*dup);
                 rv_packet.set_retain(packet.retain);
                 *dup = true;
-                write_packet(conn, &rv_packet).await?;
+                write_packet(session.client_id, conn, &rv_packet).await?;
             }
             PendingPacketStatus::Pubrec { packet_id, .. } => {
                 let rv_packet = PubrelPacket::new(*packet_id);
-                write_packet(conn, &rv_packet).await?;
+                write_packet(session.client_id, conn, &rv_packet).await?;
             }
             PendingPacketStatus::Complete => unreachable!(),
         }
@@ -211,9 +212,26 @@ clean session : {}
     if packet.reserved_flag() {
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
-    if packet.protocol_level() != ProtocolLevel::Version311 {
-        let rv_packet = ConnackPacket::new(false, ConnectReturnCode::UnacceptableProtocolVersion);
-        write_packet(conn, &rv_packet).await?;
+    let protocol_level = packet.protocol_level();
+    let client_identifier = packet.client_identifier();
+    match (packet.protocol_name(), protocol_level) {
+        ("MQIsdp", ProtocolLevel::Version310) => {}
+        ("MQTT", ProtocolLevel::Version311) => {}
+        _ => {
+            let rv_packet =
+                ConnackPacket::new(false, ConnectReturnCode::UnacceptableProtocolVersion);
+            write_packet(session.client_id, conn, &rv_packet).await?;
+            session.disconnected = true;
+            return Ok(());
+        }
+    }
+
+    if (protocol_level == ProtocolLevel::Version310
+        && (client_identifier.is_empty() || client_identifier.len() > 23))
+        || (protocol_level == ProtocolLevel::Version311 && client_identifier.len() > 65535)
+    {
+        let rv_packet = ConnackPacket::new(false, ConnectReturnCode::IdentifierRejected);
+        write_packet(session.client_id, conn, &rv_packet).await?;
         session.disconnected = true;
         return Ok(());
     }
@@ -231,7 +249,7 @@ clean session : {}
                 } else {
                     log::debug!(
                         "username password not set for client: {}",
-                        packet.client_identifier()
+                        client_identifier
                     );
                     return_code = ConnectReturnCode::BadUserNameOrPassword;
                 }
@@ -242,15 +260,20 @@ clean session : {}
     // FIXME: permission check and return "not authorized"
     if return_code != ConnectReturnCode::ConnectionAccepted {
         let rv_packet = ConnackPacket::new(false, return_code);
-        write_packet(conn, &rv_packet).await?;
+        write_packet(session.client_id, conn, &rv_packet).await?;
         session.disconnected = true;
         return Ok(());
     }
 
     // FIXME: if connection reach rate limit return "Server unavailable"
 
+    session.protocol_level = packet.protocol_level();
     session.clean_session = packet.clean_session();
-    session.client_identifier = packet.client_identifier().to_string();
+    session.client_identifier = if client_identifier.is_empty() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        client_identifier.to_string()
+    };
     session.username = packet.user_name().map(|name| name.to_string());
     session.keep_alive = packet.keep_alive();
 
@@ -317,8 +340,17 @@ clean session : {}
         AddClientReceipt::Present(old_state) => {
             log::debug!("Got exists session for {:?}", old_state.client_id);
             session.server_packet_id = old_state.server_packet_id;
-            // FIXME: handle pending messages
-            session.pending_packets = old_state.pending_packets;
+            // TODO: if protocol level is compatiable, should copy the pending packets
+            if session.protocol_level == old_state.protocol_level {
+                session.pending_packets = old_state.pending_packets;
+            } else {
+                log::info!(
+                    "all {} pending packets removed due to reconnect with a different protocol level, new level: {:?}, old level: {:?}",
+                    old_state.pending_packets.len(),
+                    session.protocol_level,
+                    old_state.protocol_level,
+                );
+            }
             *receiver = Some(old_state.receiver);
 
             session.client_id = old_state.client_id;
@@ -339,7 +371,7 @@ clean session : {}
     log::debug!("Socket {} assgined to: {:?}", peer, session.client_id);
 
     let rv_packet = ConnackPacket::new(session_present, return_code);
-    write_packet(conn, &rv_packet).await?;
+    write_packet(session.client_id, conn, &rv_packet).await?;
     session.connected = true;
     Ok(())
 }
@@ -396,10 +428,10 @@ topic name : {}
     match packet.qos() {
         QoSWithPacketIdentifier::Level0 => {}
         QoSWithPacketIdentifier::Level1(pkid) => {
-            write_packet(conn, &PubackPacket::new(pkid)).await?;
+            write_packet(session.client_id, conn, &PubackPacket::new(pkid)).await?;
         }
         QoSWithPacketIdentifier::Level2(pkid) => {
-            write_packet(conn, &PubrecPacket::new(pkid)).await?;
+            write_packet(session.client_id, conn, &PubrecPacket::new(pkid)).await?;
         }
     }
     Ok(())
@@ -435,7 +467,7 @@ async fn handle_pubrec<T: AsyncWrite + Unpin>(
     );
     session.pending_packets.pubrec(packet.packet_identifier());
     let rv_packet = PubrelPacket::new(packet.packet_identifier());
-    write_packet(conn, &rv_packet).await?;
+    write_packet(session.client_id, conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -452,7 +484,7 @@ async fn handle_pubrel<T: AsyncWrite + Unpin>(
         packet.packet_identifier()
     );
     let rv_packet = PubcompPacket::new(packet.packet_identifier());
-    write_packet(conn, &rv_packet).await?;
+    write_packet(session.client_id, conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -515,7 +547,7 @@ packet id : {}
         return_codes.push(allowed_qos.into());
     }
     let rv_packet = SubackPacket::new(packet.packet_identifier(), return_codes);
-    write_packet(conn, &rv_packet).await?;
+    write_packet(session.client_id, conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -539,7 +571,7 @@ packet id : {}
         session.subscribes.remove(filter);
     }
     let rv_packet = UnsubackPacket::new(packet.packet_identifier());
-    write_packet(conn, &rv_packet).await?;
+    write_packet(session.client_id, conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -552,7 +584,7 @@ async fn handle_pingreq<T: AsyncWrite + Unpin>(
 ) -> io::Result<()> {
     log::debug!("{:?} received a ping packet", session.client_id);
     let rv_packet = PingrespPacket::new();
-    write_packet(conn, &rv_packet).await?;
+    write_packet(session.client_id, conn, &rv_packet).await?;
     Ok(())
 }
 
@@ -576,6 +608,7 @@ pub async fn handle_will<T: AsyncWrite + Unpin>(
     Ok(())
 }
 
+/// return if the offline client loop should stop
 #[inline]
 pub async fn handle_internal<T: AsyncWrite + Unpin>(
     session: &mut Session,
@@ -591,6 +624,7 @@ pub async fn handle_internal<T: AsyncWrite + Unpin>(
             let mut pending_packets = PendingPackets::new(10, 1000, 15);
             mem::swap(&mut session.pending_packets, &mut pending_packets);
             let old_state = SessionState {
+                protocol_level: session.protocol_level,
                 server_packet_id: session.server_packet_id,
                 pending_packets,
                 receiver: receiver.clone(),
@@ -767,17 +801,19 @@ async fn recv_publish<T: AsyncWrite + Unpin>(
         );
         rv_packet.set_dup(false);
         rv_packet.set_retain(retain);
-        write_packet(conn, &rv_packet).await?;
+        write_packet(session.client_id, conn, &rv_packet).await?;
     }
 
     Ok(())
 }
 
 #[inline]
-async fn write_packet<P: Encodable, T: AsyncWrite + Unpin>(
+async fn write_packet<P: Encodable + Debug, T: AsyncWrite + Unpin>(
+    client_id: ClientId,
     conn: &mut T,
     packet: &P,
 ) -> io::Result<()> {
+    log::debug!("write to {:?} with packet: {:?}", client_id, packet);
     let mut buf = Vec::with_capacity(packet.encoded_length() as usize);
     packet.encode(&mut buf)?;
     conn.write_all(&buf).await?;

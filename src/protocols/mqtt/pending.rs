@@ -136,6 +136,10 @@ impl PendingPackets {
         }
         next_idx.map(|idx| (idx, self.packets.get_mut(idx).expect("packet")))
     }
+
+    pub fn len(&self) -> usize {
+        self.packets.len()
+    }
 }
 
 pub enum PendingPacketStatus {
