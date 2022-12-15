@@ -60,14 +60,13 @@ async fn test_connect() {
 }
 
 async fn do_test(config: Config, connect: ConnectPacket, connack: ConnackPacket) {
-    let mut control = {
-        let (conn, control) = MockConn::new(3333, config);
-        control.start(conn);
-        control
-    };
+    let (conn, mut control) = MockConn::new(3333, config);
+    let join = control.start(conn);
 
+    let finished = connack.connect_return_code() != ConnectionAccepted;
     control.write_packet(connect.into()).await;
     let packet = control.read_packet().await;
     let expected_packet = VariablePacket::ConnackPacket(connack);
     assert_eq!(packet, expected_packet);
+    assert_eq!(join.is_finished(), finished);
 }

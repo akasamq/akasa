@@ -69,13 +69,13 @@ impl MockConnControl {
         VariablePacket::decode(&mut data).unwrap()
     }
 
-    pub async fn write_packet(&mut self, packet: VariablePacket) {
+    pub async fn write_packet(&self, packet: VariablePacket) {
         let mut buf = Vec::new();
         packet.encode(&mut buf).unwrap();
         self.write_data(buf).await;
     }
 
-    pub async fn write_data(&mut self, data: Vec<u8>) {
+    pub async fn write_data(&self, data: Vec<u8>) {
         self.chan_in.send(data).await.unwrap();
     }
 }
