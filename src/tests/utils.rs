@@ -3,6 +3,7 @@ use std::io::{self, Cursor, IoSlice};
 use std::mem;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures_lite::{
@@ -10,11 +11,19 @@ use futures_lite::{
     FutureExt,
 };
 use mqtt::{packet::VariablePacket, Decodable, Encodable};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::{
+    sync::mpsc::{channel, Receiver, Sender},
+    task::JoinHandle,
+};
+
+use crate::config::Config;
+use crate::server::{handle_accept, rt_tokio::TokioExecutor};
+use crate::state::GlobalState;
 
 pub struct MockConnControl {
     chan_in: Sender<Vec<u8>>,
     chan_out: Receiver<Vec<u8>>,
+    pub global: Arc<GlobalState>,
 }
 
 pub struct MockConn {
@@ -26,7 +35,7 @@ pub struct MockConn {
 }
 
 impl MockConn {
-    pub fn new(port: u16) -> (MockConn, MockConnControl) {
+    pub fn new(port: u16, config: Config) -> (MockConn, MockConnControl) {
         let (in_tx, in_rx) = channel(32);
         let (out_tx, out_rx) = channel(32);
         let conn = MockConn {
@@ -36,15 +45,25 @@ impl MockConn {
             chan_in: in_rx,
             chan_out: out_tx,
         };
+
+        let global = Arc::new(GlobalState::new(conn.bind, config));
         let control = MockConnControl {
             chan_in: in_tx,
             chan_out: out_rx,
+            global,
         };
         (conn, control)
     }
 }
 
 impl MockConnControl {
+    pub fn start(&self, conn: MockConn) -> JoinHandle<io::Result<()>> {
+        let peer = conn.peer;
+        let executor = TokioExecutor {};
+        let global = Arc::clone(&self.global);
+        tokio::spawn(handle_accept(conn, peer, executor, global))
+    }
+
     pub async fn read_packet(&mut self) -> VariablePacket {
         let mut data = Cursor::new(self.chan_out.recv().await.unwrap());
         VariablePacket::decode(&mut data).unwrap()

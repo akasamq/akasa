@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 // mod test_01_connect_575314;
-mod test_01_connect_allow_anonymous;
+// mod test_01_connect_allow_anonymous;
 // mod test_01_connect_disconnect_v5;
 // mod test_01_connect_max_connections;
 // mod test_01_connect_max_keepalive;

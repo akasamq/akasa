@@ -32,7 +32,11 @@ pub fn start(global: Arc<GlobalState>) -> io::Result<()> {
             let conn_wrapper = ConnWrapper(conn);
             let executor = Arc::clone(&executor);
             let global = Arc::clone(&global);
-            tokio::spawn(handle_accept(conn_wrapper, peer, executor, global));
+            tokio::spawn(async move {
+                if let Err(err) = handle_accept(conn_wrapper, peer, executor, global).await {
+                    log::error!("{} connection loop error: {}", peer, err);
+                }
+            });
         }
     });
     Ok(())

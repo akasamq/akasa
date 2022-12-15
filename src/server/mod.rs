@@ -19,31 +19,26 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     peer: SocketAddr,
     executor: E,
     global: Arc<GlobalState>,
-) {
-    match handle_connection(conn, peer, &executor, &global).await {
-        Ok(Some((session, receiver))) => {
-            log::info!(
-                "executor {:03}, {} go to offline, total {} clients ({} online) ",
-                executor.id(),
-                peer,
-                global.clients_count(),
-                global.online_clients_count(),
-            );
-            executor.spawn_local(handle_offline(session, receiver, global));
-        }
-        Ok(None) => {
-            log::info!(
-                "executor {:03}, {} finished, total {} clients ({} online) ",
-                executor.id(),
-                peer,
-                global.clients_count(),
-                global.online_clients_count(),
-            );
-        }
-        Err(err) => {
-            log::error!("{} connection loop error: {}", peer, err);
-        }
+) -> io::Result<()> {
+    if let Some((session, receiver)) = handle_connection(conn, peer, &executor, &global).await? {
+        log::info!(
+            "executor {:03}, {} go to offline, total {} clients ({} online) ",
+            executor.id(),
+            peer,
+            global.clients_count(),
+            global.online_clients_count(),
+        );
+        executor.spawn_local(handle_offline(session, receiver, global));
+    } else {
+        log::info!(
+            "executor {:03}, {} finished, total {} clients ({} online) ",
+            executor.id(),
+            peer,
+            global.clients_count(),
+            global.online_clients_count(),
+        );
     }
+    Ok(())
 }
 
 pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
