@@ -1,9 +1,9 @@
-mod broker;
 mod config;
 mod logger;
 mod monitor;
 mod protocols;
 mod script_engine;
+mod server;
 mod state;
 mod storage;
 
@@ -23,7 +23,7 @@ use crate::state::GlobalState;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
-/// Akasa MQTT broker
+/// Akasa MQTT server
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
@@ -31,7 +31,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Start the broker
+    /// Start the server
     Start {
         /// The socket address to bind
         #[clap(long, value_name = "IP:PORT", default_value = "127.0.0.1:1883")]
@@ -77,8 +77,8 @@ fn main() -> anyhow::Result<()> {
             log::info!("Listen on {}", bind);
             let global = Arc::new(GlobalState::new(bind, config));
             match runtime {
-                Runtime::Glommio => broker::rt_glommio::start(global)?,
-                Runtime::Tokio => broker::rt_tokio::start(global)?,
+                Runtime::Glommio => server::rt_glommio::start(global)?,
+                Runtime::Tokio => server::rt_tokio::start(global)?,
             }
         }
     }

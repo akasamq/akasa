@@ -31,7 +31,7 @@ pub fn start(global: Arc<GlobalState>) -> anyhow::Result<()> {
             let executor = Rc::new(GlommioExecutor::new(id, gc_queue));
             loop {
                 log::info!("Starting executor {}", id);
-                if let Err(err) = broker(Rc::clone(&executor), Arc::clone(&global)).await {
+                if let Err(err) = server(Rc::clone(&executor), Arc::clone(&global)).await {
                     log::error!("Executor {} stopped with error: {}", id, err);
                     sleep(Duration::from_secs(1)).await;
                 } else {
@@ -44,7 +44,7 @@ pub fn start(global: Arc<GlobalState>) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn broker(executor: Rc<GlommioExecutor>, global: Arc<GlobalState>) -> io::Result<()> {
+async fn server(executor: Rc<GlommioExecutor>, global: Arc<GlobalState>) -> io::Result<()> {
     let listener = TcpListener::bind(global.bind)?;
     loop {
         let conn = listener.accept().await?.buffered();

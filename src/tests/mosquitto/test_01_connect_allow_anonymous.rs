@@ -8,7 +8,7 @@ use mqtt::{
 };
 use ConnectReturnCode::*;
 
-use crate::broker::{handle_accept, rt_tokio::TokioExecutor};
+use crate::server::{handle_accept, rt_tokio::TokioExecutor};
 use crate::config::{AuthType, Config};
 use crate::state::GlobalState;
 use crate::tests::utils::MockConn;
