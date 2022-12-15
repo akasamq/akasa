@@ -71,7 +71,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     )
     .await?;
     if !session.connected() {
-        return Ok(None);
+        return Err(io::ErrorKind::InvalidData.into());
     }
     let receiver = receiver.unwrap();
 
