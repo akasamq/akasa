@@ -62,6 +62,9 @@ impl Session {
     pub fn clean_session(&self) -> bool {
         self.clean_session
     }
+    pub fn connected(&self) -> bool {
+        self.connected
+    }
     pub fn disconnected(&self) -> bool {
         self.disconnected
     }

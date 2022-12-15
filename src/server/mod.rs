@@ -70,6 +70,9 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         global,
     )
     .await?;
+    if !session.connected() {
+        return Ok(None);
+    }
     let receiver = receiver.unwrap();
 
     while !session.disconnected() {
