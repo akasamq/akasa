@@ -64,6 +64,16 @@ impl MockConnControl {
         tokio::spawn(handle_accept(conn, peer, executor, global))
     }
 
+    pub fn try_read_packet(&mut self) -> Result<VariablePacket, String> {
+        self.chan_out
+            .try_recv()
+            .map(|data| {
+                let mut data = Cursor::new(data);
+                VariablePacket::decode(&mut data).unwrap()
+            })
+            .map_err(|err| err.to_string())
+    }
+
     pub async fn read_packet(&mut self) -> VariablePacket {
         let mut data = Cursor::new(self.chan_out.recv().await.unwrap());
         VariablePacket::decode(&mut data).unwrap()
