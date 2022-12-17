@@ -35,24 +35,28 @@ pub struct MockConn {
 }
 
 impl MockConn {
-    pub fn new(port: u16, config: Config) -> (MockConn, MockConnControl) {
+    pub fn new_with_global(port: u16, global: Arc<GlobalState>) -> (MockConn, MockConnControl) {
         let (in_tx, in_rx) = channel(32);
         let (out_tx, out_rx) = channel(32);
         let conn = MockConn {
-            bind: "127.0.0.1:1883".parse().unwrap(),
+            bind: global.bind,
             peer: format!("127.0.0.1:{}", port).parse().unwrap(),
             data_in: Vec::new(),
             chan_in: in_rx,
             chan_out: out_tx,
         };
-
-        let global = Arc::new(GlobalState::new(conn.bind, config));
         let control = MockConnControl {
             chan_in: in_tx,
             chan_out: out_rx,
             global,
         };
         (conn, control)
+    }
+
+    pub fn new(port: u16, config: Config) -> (MockConn, MockConnControl) {
+        let bind = "127.0.0.1:1883".parse().unwrap();
+        let global = Arc::new(GlobalState::new(bind, config));
+        Self::new_with_global(port, global)
     }
 }
 
