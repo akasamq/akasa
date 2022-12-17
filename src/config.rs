@@ -11,10 +11,14 @@ pub struct Config {
     /// max allowed qos, allowed values: [0, 1, 2], default: 2
     pub max_allowed_qos: u8,
 
+    /// Timeout seconds to resend inflight pending messages
+    pub inflight_timeout: u64,
+    /// max inflight pending messages
+    pub max_inflight: usize,
     /// max allowed pending messages in memory, default: 256
-    pub max_in_mem_pending_messages: u32,
+    pub max_in_mem_pending_messages: usize,
     /// max allowed pending messages in database, default: 65536
-    pub max_in_db_pending_messages: u32,
+    pub max_in_db_pending_messages: usize,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
@@ -33,6 +37,8 @@ impl Default for Config {
             auth_types: Vec::new(),
             users: HashMap::new(),
             max_allowed_qos: 2,
+            inflight_timeout: 15,
+            max_inflight: 10,
             max_in_mem_pending_messages: 256,
             max_in_db_pending_messages: 65536,
         }

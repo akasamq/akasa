@@ -28,7 +28,7 @@ impl PendingPackets {
         }
     }
 
-    pub fn push_back(&mut self, packet_id: u16, packet: PubPacket, sent: bool) -> io::Result<()> {
+    pub fn push_back(&mut self, packet_id: u16, packet: PubPacket) -> io::Result<()> {
         assert!(packet.qos != QualityOfService::Level0);
         if self.packets.len() >= self.max_packets {
             log::error!(
@@ -39,12 +39,11 @@ impl PendingPackets {
             // FIXME: use proper error type
             return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
-        let last_sent = if sent { get_unix_ts() } else { 0 };
         self.packets.push_back(PendingPacketStatus::New {
-            last_sent,
+            last_sent: 0,
             packet_id,
             packet,
-            dup: sent,
+            dup: false,
         });
         Ok(())
     }

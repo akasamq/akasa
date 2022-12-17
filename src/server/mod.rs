@@ -52,7 +52,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         Internal((ClientId, InternalMessage)),
     }
 
-    let mut session = mqtt::Session::new();
+    let mut session = mqtt::Session::new(&global.config);
     let mut receiver = None;
     let mut io_error = None;
     // handle first connect packet

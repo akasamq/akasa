@@ -7,6 +7,7 @@ use hashbrown::HashMap;
 use mqtt::{control::ProtocolLevel, qos::QualityOfService, TopicFilter, TopicName};
 use parking_lot::RwLock;
 
+use crate::config::Config;
 use crate::state::{ClientId, InternalMessage};
 
 use super::pending::PendingPackets;
@@ -42,15 +43,18 @@ pub struct SessionState {
 }
 
 impl Session {
-    pub fn new() -> Session {
+    pub fn new(config: &Config) -> Session {
         Session {
             connected: false,
             disconnected: false,
             protocol_level: ProtocolLevel::Version311,
             last_packet_time: Arc::new(RwLock::new(Instant::now())),
             server_packet_id: 0,
-            // FIXME: read max inflight and max packets from config
-            pending_packets: PendingPackets::new(10, 1000, 15),
+            pending_packets: PendingPackets::new(
+                config.max_inflight,
+                config.max_in_mem_pending_messages,
+                config.inflight_timeout,
+            ),
 
             client_id: ClientId(u64::max_value()),
             client_identifier: String::new(),

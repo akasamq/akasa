@@ -139,40 +139,7 @@ async fn handle_packet<T: AsyncWrite + Unpin, E: Executor>(
     }
     *session.last_packet_time.write() = Instant::now();
 
-    session.pending_packets.clean_complete();
-    let mut start_idx = 0;
-    while let Some((idx, packet_status)) = session.pending_packets.get_ready_packet(start_idx) {
-        start_idx = idx + 1;
-        match packet_status {
-            PendingPacketStatus::New {
-                dup,
-                packet_id,
-                packet,
-                ..
-            } => {
-                let qos_with_id = match packet.qos {
-                    QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
-                    QualityOfService::Level1 => QoSWithPacketIdentifier::Level1(*packet_id),
-                    QualityOfService::Level2 => QoSWithPacketIdentifier::Level2(*packet_id),
-                };
-                let mut rv_packet = PublishPacket::new(
-                    TopicName::clone(&packet.topic_name),
-                    qos_with_id,
-                    packet.payload.clone(),
-                );
-                rv_packet.set_dup(*dup);
-                rv_packet.set_retain(packet.retain);
-                *dup = true;
-                write_packet(session.client_id, conn, &rv_packet).await?;
-            }
-            PendingPacketStatus::Pubrec { packet_id, .. } => {
-                let rv_packet = PubrelPacket::new(*packet_id);
-                write_packet(session.client_id, conn, &rv_packet).await?;
-            }
-            PendingPacketStatus::Complete => unreachable!(),
-        }
-    }
-
+    handle_pendings(session, conn).await?;
     Ok(())
 }
 
@@ -620,8 +587,7 @@ pub async fn handle_internal<T: AsyncWrite + Unpin>(
 ) -> io::Result<bool> {
     match msg {
         InternalMessage::Online { sender } => {
-            // FIXME: read max inflight and max packets from config
-            let mut pending_packets = PendingPackets::new(10, 1000, 15);
+            let mut pending_packets = PendingPackets::new(0, 0, 0);
             mem::swap(&mut session.pending_packets, &mut pending_packets);
             let old_state = SessionState {
                 protocol_level: session.protocol_level,
@@ -765,11 +731,9 @@ async fn recv_publish<T: AsyncWrite + Unpin>(
         );
     }
     let final_qos = cmp::min(qos, subscribe_qos);
-    let packet_sent = conn.is_some();
-    let mut packet_id = 0;
     if final_qos != QualityOfService::Level0 {
         // The packet_id equals to: `self.server_packet_id % 65536`
-        packet_id = session.incr_server_packet_id() as u16;
+        let packet_id = session.incr_server_packet_id() as u16;
         session.pending_packets.clean_complete();
         if let Err(err) = session.pending_packets.push_back(
             packet_id,
@@ -781,22 +745,17 @@ async fn recv_publish<T: AsyncWrite + Unpin>(
                 subscribe_filter: Arc::clone(subscribe_filter),
                 subscribe_qos,
             },
-            packet_sent,
         ) {
             // TODO: proper handle this error
             log::warn!("push pending packets error: {}", err);
-        };
-    }
-
-    if let Some(conn) = conn {
-        let qos_with_id = match final_qos {
-            QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
-            QualityOfService::Level1 => QoSWithPacketIdentifier::Level1(packet_id),
-            QualityOfService::Level2 => QoSWithPacketIdentifier::Level2(packet_id),
-        };
+        }
+        if let Some(conn) = conn {
+            handle_pendings(session, conn).await?;
+        }
+    } else if let Some(conn) = conn {
         let mut rv_packet = PublishPacket::new(
             TopicName::new(topic_name.to_string()).unwrap(),
-            qos_with_id,
+            QoSWithPacketIdentifier::Level0,
             payload.to_vec(),
         );
         rv_packet.set_dup(false);
@@ -804,6 +763,47 @@ async fn recv_publish<T: AsyncWrite + Unpin>(
         write_packet(session.client_id, conn, &rv_packet).await?;
     }
 
+    Ok(())
+}
+
+#[inline]
+async fn handle_pendings<T: AsyncWrite + Unpin>(
+    session: &mut Session,
+    conn: &mut T,
+) -> io::Result<()> {
+    session.pending_packets.clean_complete();
+    let mut start_idx = 0;
+    while let Some((idx, packet_status)) = session.pending_packets.get_ready_packet(start_idx) {
+        start_idx = idx + 1;
+        match packet_status {
+            PendingPacketStatus::New {
+                dup,
+                packet_id,
+                packet,
+                ..
+            } => {
+                let qos_with_id = match packet.qos {
+                    QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
+                    QualityOfService::Level1 => QoSWithPacketIdentifier::Level1(*packet_id),
+                    QualityOfService::Level2 => QoSWithPacketIdentifier::Level2(*packet_id),
+                };
+                let mut rv_packet = PublishPacket::new(
+                    TopicName::clone(&packet.topic_name),
+                    qos_with_id,
+                    packet.payload.clone(),
+                );
+                rv_packet.set_dup(*dup);
+                rv_packet.set_retain(packet.retain);
+                *dup = true;
+                write_packet(session.client_id, conn, &rv_packet).await?;
+            }
+            PendingPacketStatus::Pubrec { packet_id, .. } => {
+                let rv_packet = PubrelPacket::new(*packet_id);
+                write_packet(session.client_id, conn, &rv_packet).await?;
+            }
+            PendingPacketStatus::Complete => unreachable!(),
+        }
+    }
     Ok(())
 }
 
