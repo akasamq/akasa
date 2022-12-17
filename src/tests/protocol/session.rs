@@ -74,25 +74,25 @@ async fn test_clean_session(clean_session: bool, reconnect_clean_session: bool) 
     // connect.set_clean_session(clean_session);
     connect.set_clean_session(reconnect_clean_session);
 
-    let connack = ConnackPacket::new(
-        !(clean_session || reconnect_clean_session),
-        ConnectionAccepted,
-    );
+    let session_present = !(clean_session || reconnect_clean_session);
+    let connack = ConnackPacket::new(session_present, ConnectionAccepted);
     control.write_packet(connect.into()).await;
     let packet = control.read_packet().await;
     let expected_packet = VariablePacket::ConnackPacket(connack);
     assert_eq!(packet, expected_packet);
     {
-        let sub_pk_id: u16 = 11;
-        let subscribe = SubscribePacket::new(
-            sub_pk_id,
-            vec![(TopicFilter::new("abc/1").unwrap(), QualityOfService::Level1)],
-        );
-        let suback = SubackPacket::new(sub_pk_id, vec![SubscribeReturnCode::MaximumQoSLevel1]);
-        control.write_packet(subscribe.into()).await;
-        let packet = control.read_packet().await;
-        let expected_packet = VariablePacket::SubackPacket(suback);
-        assert_eq!(packet, expected_packet);
+        if !session_present {
+            let sub_pk_id: u16 = 11;
+            let subscribe = SubscribePacket::new(
+                sub_pk_id,
+                vec![(TopicFilter::new("abc/1").unwrap(), QualityOfService::Level1)],
+            );
+            let suback = SubackPacket::new(sub_pk_id, vec![SubscribeReturnCode::MaximumQoSLevel1]);
+            control.write_packet(subscribe.into()).await;
+            let packet = control.read_packet().await;
+            let expected_packet = VariablePacket::SubackPacket(suback);
+            assert_eq!(packet, expected_packet);
+        }
 
         let pub_pk_id: u16 = 12;
         let publish = PublishPacket::new(
@@ -206,17 +206,6 @@ async fn test_session_take_over() {
         control2.write_packet(connect.into()).await;
         let packet = control2.read_packet().await;
         let expected_packet = VariablePacket::ConnackPacket(connack);
-        assert_eq!(packet, expected_packet);
-
-        let sub_pk_id: u16 = 11;
-        let subscribe = SubscribePacket::new(
-            sub_pk_id,
-            vec![(TopicFilter::new("abc/1").unwrap(), QualityOfService::Level1)],
-        );
-        let suback = SubackPacket::new(sub_pk_id, vec![SubscribeReturnCode::MaximumQoSLevel1]);
-        control2.write_packet(subscribe.into()).await;
-        let packet = control2.read_packet().await;
-        let expected_packet = VariablePacket::SubackPacket(suback);
         assert_eq!(packet, expected_packet);
 
         let pub_pk_id: u16 = 12;
