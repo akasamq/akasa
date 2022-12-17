@@ -2,8 +2,7 @@ use std::io;
 use std::time::Duration;
 
 use mqtt::{
-    control::variable_header::ConnectReturnCode,
-    packet::{ConnackPacket, ConnectPacket, VariablePacket},
+    control::variable_header::ConnectReturnCode, packet::*, qos::QualityOfService, TopicFilter,
     TopicName,
 };
 use tokio::{task::JoinHandle, time::sleep};
@@ -41,6 +40,45 @@ async fn test_connect_malformed_packet() {
     assert!(control.try_read_packet().is_err());
     assert!(task.is_finished());
     assert!(task.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn test_connect_invalid_first_packet() {
+    // subscribe
+    {
+        let (conn, mut control) = MockConn::new(3333, Config::default());
+        let task = control.start(conn);
+
+        let sub_pk_id: u16 = 23;
+        let subscribe = SubscribePacket::new(
+            sub_pk_id,
+            vec![(TopicFilter::new("abc/0").unwrap(), QualityOfService::Level0)],
+        );
+        control.write_packet(subscribe.into()).await;
+
+        sleep(Duration::from_millis(10)).await;
+        assert!(control.try_read_packet().is_err());
+        assert!(task.is_finished());
+        assert!(task.await.unwrap().is_err());
+    }
+    // publish
+    {
+        let (conn, mut control) = MockConn::new(3333, Config::default());
+        let task = control.start(conn);
+
+        let mut publish = PublishPacket::new(
+            TopicName::new("xyz/1").unwrap(),
+            QoSWithPacketIdentifier::Level0,
+            vec![3, 5, 55],
+        );
+        publish.set_retain(true);
+        control.write_packet(publish.into()).await;
+
+        sleep(Duration::from_millis(10)).await;
+        assert!(control.try_read_packet().is_err());
+        assert!(task.is_finished());
+        assert!(task.await.unwrap().is_err());
+    }
 }
 
 #[tokio::test]
