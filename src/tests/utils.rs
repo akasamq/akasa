@@ -12,7 +12,7 @@ use futures_lite::{
 };
 use mqtt::{packet::VariablePacket, Decodable, Encodable};
 use tokio::{
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::mpsc::{channel, error::TryRecvError, Receiver, Sender},
     task::JoinHandle,
 };
 
@@ -67,6 +67,13 @@ impl MockConnControl {
         let global = Arc::clone(&self.global);
         tokio::spawn(handle_accept(conn, peer, executor, global))
     }
+
+    pub fn try_read_packet_is_empty(&mut self) -> bool {
+        self.chan_out.try_recv() == Err(TryRecvError::Empty)
+    }
+    // pub fn try_read_packet_is_closed(&mut self) -> bool {
+    //     self.chan_out.try_recv() == Err(TryRecvError::Disconnected)
+    // }
 
     pub fn try_read_packet(&mut self) -> Result<VariablePacket, String> {
         self.chan_out
