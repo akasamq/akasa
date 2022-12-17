@@ -339,24 +339,24 @@ clean session : {}
     match global.add_client(session.client_identifier.as_str()).await {
         AddClientReceipt::Present(old_state) => {
             log::debug!("Got exists session for {:?}", old_state.client_id);
-            session.server_packet_id = old_state.server_packet_id;
-            // TODO: if protocol level is compatiable, should copy the pending packets
-            if session.protocol_level == old_state.protocol_level {
+            *receiver = Some(old_state.receiver);
+            // TODO: if protocol level is compatiable, copy the session state?
+            if !session.clean_session && session.protocol_level == old_state.protocol_level {
+                session.server_packet_id = old_state.server_packet_id;
                 session.pending_packets = old_state.pending_packets;
+                session.client_id = old_state.client_id;
+                session.subscribes = old_state.subscribes;
+                session_present = true;
             } else {
                 log::info!(
-                    "all {} pending packets removed due to reconnect with a different protocol level, new level: {:?}, old level: {:?}",
+                    "all {} session state removed due to reconnect with a different protocol level, new level: {:?}, old level: {:?}, or clean session: {}",
                     old_state.pending_packets.len(),
                     session.protocol_level,
                     old_state.protocol_level,
+                    session.clean_session,
                 );
+                session_present = false;
             }
-            *receiver = Some(old_state.receiver);
-
-            session.client_id = old_state.client_id;
-            session.subscribes = old_state.subscribes;
-
-            session_present = true;
         }
         AddClientReceipt::New {
             client_id,
