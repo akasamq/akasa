@@ -20,23 +20,37 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     executor: E,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
-    if let Some((session, receiver)) = handle_connection(conn, peer, &executor, &global).await? {
-        log::info!(
-            "executor {:03}, {} go to offline, total {} clients ({} online) ",
-            executor.id(),
-            peer,
-            global.clients_count(),
-            global.online_clients_count(),
-        );
-        executor.spawn_local(handle_offline(session, receiver, global));
-    } else {
-        log::info!(
-            "executor {:03}, {} finished, total {} clients ({} online) ",
-            executor.id(),
-            peer,
-            global.clients_count(),
-            global.online_clients_count(),
-        );
+    match handle_connection(conn, peer, &executor, &global).await {
+        Ok(Some((session, receiver))) => {
+            log::info!(
+                "executor {:03}, {} go to offline, total {} clients ({} online)",
+                executor.id(),
+                peer,
+                global.clients_count(),
+                global.online_clients_count(),
+            );
+            executor.spawn_local(handle_offline(session, receiver, global));
+        }
+        Ok(None) => {
+            log::info!(
+                "executor {:03}, {} finished, total {} clients ({} online)",
+                executor.id(),
+                peer,
+                global.clients_count(),
+                global.online_clients_count(),
+            );
+        }
+        Err(err) => {
+            log::info!(
+                "executor {:03}, {} error: {}, total {} clients ({} online)",
+                executor.id(),
+                peer,
+                err,
+                global.clients_count(),
+                global.online_clients_count(),
+            );
+            return Err(err);
+        }
     }
     Ok(())
 }
@@ -69,6 +83,13 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         return Err(io::ErrorKind::InvalidData.into());
     }
     let receiver = receiver.unwrap();
+    log::info!(
+        "executor {:03}, {} connected, total {} clients ({} online) ",
+        executor.id(),
+        peer,
+        global.clients_count(),
+        global.online_clients_count(),
+    );
 
     while !session.disconnected() {
         // Online client logic

@@ -23,19 +23,12 @@ pub fn start(global: Arc<GlobalState>) -> io::Result<()> {
         log::info!("Listen success!");
         loop {
             let (conn, peer) = listener.accept().await.unwrap();
-            log::info!(
-                "{} connected, total {} clients ({} online) ",
-                peer,
-                global.clients_count(),
-                global.online_clients_count(),
-            );
+            log::debug!("{} connected", peer,);
             let conn_wrapper = ConnWrapper(conn);
             let executor = Arc::clone(&executor);
             let global = Arc::clone(&global);
             tokio::spawn(async move {
-                if let Err(err) = handle_accept(conn_wrapper, peer, executor, global).await {
-                    log::error!("{} connection loop error: {}", peer, err);
-                }
+                let _ = handle_accept(conn_wrapper, peer, executor, Arc::clone(&global)).await;
             });
         }
     });

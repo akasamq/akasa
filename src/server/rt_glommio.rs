@@ -50,21 +50,12 @@ async fn server(executor: Rc<GlommioExecutor>, global: Arc<GlobalState>) -> io::
         let conn = listener.accept().await?.buffered();
         let fd = conn.as_raw_fd();
         let peer = conn.peer_addr()?;
-        log::info!(
-            "executor {:03}, #{} {} connected, total {} clients ({} online) ",
-            executor.id(),
-            fd,
-            peer,
-            global.clients_count(),
-            global.online_clients_count(),
-        );
+        log::debug!("executor {:03}, #{} {} connected", executor.id(), fd, peer);
         spawn_local({
             let executor = Rc::clone(&executor);
             let global = Arc::clone(&global);
             async move {
-                if let Err(err) = handle_accept(conn, peer, executor, global).await {
-                    log::error!("{} connection loop error: {}", peer, err);
-                }
+                let _ = handle_accept(conn, peer, executor, Arc::clone(&global)).await;
             }
         })
         .detach();
