@@ -346,15 +346,11 @@ clean session : {}
 #[inline]
 async fn handle_disconnect<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    packet: DisconnectPacket,
+    _packet: DisconnectPacket,
     _conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!(
-        "{:?} received a disconnect packet: {:#?}",
-        session.client_id,
-        packet
-    );
+    log::debug!("{:?} received a disconnect packet", session.client_id,);
     session.will = None;
     session.disconnected = true;
     Ok(())
