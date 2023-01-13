@@ -70,6 +70,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     let mut receiver = None;
     let mut io_error = None;
     // handle first connect packet
+    // FIXME: if client not send any data for a long time, disconnect it.
     mqtt::handle_connection(
         &mut session,
         &mut receiver,

@@ -376,6 +376,11 @@ topic name : {}
         packet.dup(),
     );
     if packet.topic_name().starts_with('$') {
+        log::debug!("invalid topic name: {}", packet.topic_name());
+        return Err(io::Error::from(io::ErrorKind::InvalidData));
+    }
+    if packet.qos() == QoSWithPacketIdentifier::Level0 && packet.dup() {
+        log::debug!("invalid dup flag");
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
     // FIXME: handle dup flag
