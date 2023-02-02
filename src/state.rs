@@ -13,7 +13,7 @@ use mqtt::{QualityOfService, TopicFilter, TopicName};
 use parking_lot::Mutex;
 
 use crate::config::Config;
-use crate::protocols::mqtt::{RetainTable, RouteTable, SessionState};
+use crate::protocols::mqtt::{v3::SessionState, RetainTable, RouteTable};
 
 pub struct GlobalState {
     // The next client internal id

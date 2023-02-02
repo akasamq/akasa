@@ -60,18 +60,18 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     peer: SocketAddr,
     executor: &E,
     global: &Arc<GlobalState>,
-) -> io::Result<Option<(mqtt::Session, Receiver<(ClientId, InternalMessage)>)>> {
+) -> io::Result<Option<(mqtt::v3::Session, Receiver<(ClientId, InternalMessage)>)>> {
     enum Msg {
         Socket(()),
         Internal((ClientId, InternalMessage)),
     }
 
-    let mut session = mqtt::Session::new(&global.config);
+    let mut session = mqtt::v3::Session::new(&global.config);
     let mut receiver = None;
     let mut io_error = None;
     // handle first connect packet
     // FIXME: if client not send any data for a long time, disconnect it.
-    mqtt::handle_connection(
+    mqtt::v3::handle_connection(
         &mut session,
         &mut receiver,
         &mut conn,
@@ -95,7 +95,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     while !session.disconnected() {
         // Online client logic
         let recv_data = async {
-            mqtt::handle_connection(&mut session, &mut None, &mut conn, &peer, executor, global)
+            mqtt::v3::handle_connection(&mut session, &mut None, &mut conn, &peer, executor, global)
                 .await
                 .map(Msg::Socket)
         };
@@ -110,7 +110,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
             Ok(Msg::Socket(())) => {}
             Ok(Msg::Internal((sender, msg))) => {
                 let is_kick = matches!(msg, InternalMessage::Kick { .. });
-                match mqtt::handle_internal(
+                match mqtt::v3::handle_internal(
                     &mut session,
                     &receiver,
                     sender,
@@ -146,7 +146,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     }
 
     if !session.disconnected() {
-        mqtt::handle_will(&mut session, &mut conn, global).await?;
+        mqtt::v3::handle_will(&mut session, &mut conn, global).await?;
     }
     if session.clean_session() {
         global.remove_client(session.client_id());
@@ -166,7 +166,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 }
 
 pub async fn handle_offline(
-    mut session: mqtt::Session,
+    mut session: mqtt::v3::Session,
     receiver: Receiver<(ClientId, InternalMessage)>,
     global: Arc<GlobalState>,
 ) {
@@ -179,8 +179,15 @@ pub async fn handle_offline(
                 break;
             }
         };
-        match mqtt::handle_internal(&mut session, &receiver, sender, msg, conn.as_mut(), &global)
-            .await
+        match mqtt::v3::handle_internal(
+            &mut session,
+            &receiver,
+            sender,
+            msg,
+            conn.as_mut(),
+            &global,
+        )
+        .await
         {
             Ok(true) => {
                 // Been occupied by newly connected client
