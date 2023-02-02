@@ -127,6 +127,7 @@ impl GlobalState {
         };
 
         let (sender, receiver) = bounded(1);
+        // FIXME: will panic here, handle the error
         internal_sender
             .send_async((old_id, InternalMessage::Online { sender }))
             .await

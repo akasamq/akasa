@@ -598,6 +598,7 @@ pub async fn handle_internal<T: AsyncWrite + Unpin>(
                 client_id: session.client_id,
                 subscribes: session.subscribes.clone(),
             };
+            // FIXME: will panic here, handle the error
             sender.send_async(old_state).await.unwrap();
             Ok(true)
         }
