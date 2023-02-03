@@ -1,6 +1,5 @@
 use std::cmp;
-use std::fmt::Debug;
-use std::io::{self, Cursor};
+use std::io;
 use std::mem;
 use std::net::SocketAddr;
 use std::ops::Deref;
@@ -9,20 +8,10 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use flume::Receiver;
-use futures_lite::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use mqtt::{
-    control::{
-        fixed_header::FixedHeader, packet_type::PacketType, variable_header::ConnectReturnCode,
-        ProtocolLevel,
-    },
-    packet::{
-        ConnackPacket, ConnectPacket, DisconnectPacket, PingreqPacket, PingrespPacket,
-        PubackPacket, PubcompPacket, PublishPacket, PubrecPacket, PubrelPacket,
-        QoSWithPacketIdentifier, SubackPacket, SubscribePacket, UnsubackPacket, UnsubscribePacket,
-        VariablePacket,
-    },
-    qos::QualityOfService,
-    Decodable, Encodable, TopicFilter, TopicName,
+use futures_lite::io::{AsyncRead, AsyncWrite};
+use mqtt_proto::{
+    v3::{Connack, Connect, ConnectReturnCode, Packet, Publish, Suback, Subscribe, Unsubscribe},
+    Pid, Protocol, QoS, QosPid, TopicFilter, TopicName,
 };
 
 use crate::config::AuthType;
@@ -39,102 +28,38 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    let mut buf = [0u8; 1];
-    if conn.read(&mut buf).await? == 0 {
-        if !session.disconnected {
-            return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
-        }
-        return Ok(());
-    }
-    let type_val = buf[0];
-
-    let mut remaining_len = 0;
-    let mut i = 0;
-    loop {
-        if conn.read(&mut buf).await? == 0 {
-            if !session.disconnected {
-                return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+    let packet = match Packet::decode_async(conn).await {
+        Ok(packet) => packet,
+        Err(err) => {
+            if err.is_eof() {
+                if !session.disconnected {
+                    return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+                } else {
+                    return Ok(());
+                }
+            } else {
+                return Err(io::Error::from(io::ErrorKind::InvalidData));
             }
-            return Ok(());
-        }
-
-        remaining_len |= (u32::from(buf[0]) & 0x7F) << (7 * i);
-
-        if i >= 4 {
-            // FIXME: return Err(FixedHeaderError::MalformedRemainingLength);
-            return Err(io::Error::from(io::ErrorKind::InvalidData));
-        }
-
-        if buf[0] & 0x80 == 0 {
-            break;
-        } else {
-            i += 1;
-        }
-    }
-    let fixed_header = match PacketType::from_u8(type_val) {
-        Ok(packet_type) => FixedHeader::new(packet_type, remaining_len),
-        Err(_err) => {
-            return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
     };
-
-    // FIXME: rewrite with better performance
-    let mut buffer = vec![0u8; fixed_header.remaining_length as usize];
-    conn.read_exact(&mut buffer).await?;
-    let packet = VariablePacket::decode_with(&mut Cursor::new(buffer), Some(fixed_header))
-        .map_err(|_err| io::Error::from(io::ErrorKind::InvalidData))?;
-    handle_packet(session, receiver, packet, conn, peer, executor, global).await?;
-    Ok(())
-}
-
-#[inline]
-async fn handle_packet<T: AsyncWrite + Unpin, E: Executor>(
-    session: &mut Session,
-    receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
-    packet: VariablePacket,
-    conn: &mut T,
-    peer: &SocketAddr,
-    executor: &E,
-    global: &Arc<GlobalState>,
-) -> io::Result<()> {
-    if !matches!(packet, VariablePacket::ConnectPacket(..)) && !session.connected {
+    if !matches!(packet, Packet::Connect(..)) && !session.connected {
         log::info!("{} not connected", peer);
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
     match packet {
-        VariablePacket::ConnectPacket(packet) => {
-            handle_connect(session, receiver, packet, conn, peer, executor, global).await?;
+        Packet::Connect(pkt) => {
+            handle_connect(session, receiver, pkt, conn, peer, executor, global).await?;
         }
-        VariablePacket::DisconnectPacket(packet) => {
-            handle_disconnect(session, packet, conn, global).await?;
-        }
-        VariablePacket::PublishPacket(packet) => {
-            handle_publish(session, packet, conn, global).await?;
-        }
-        VariablePacket::PubackPacket(packet) => {
-            handle_puback(session, packet, conn, global).await?;
-        }
-        VariablePacket::PubrecPacket(packet) => {
-            handle_pubrec(session, packet, conn, global).await?;
-        }
-        VariablePacket::PubrelPacket(packet) => {
-            handle_pubrel(session, packet, conn, global).await?;
-        }
-        VariablePacket::PubcompPacket(packet) => {
-            handle_pubcomp(session, packet, conn, global).await?;
-        }
-        VariablePacket::SubscribePacket(packet) => {
-            handle_subscribe(session, packet, conn, global).await?;
-        }
-        VariablePacket::UnsubscribePacket(packet) => {
-            handle_unsubscribe(session, packet, conn, global).await?;
-        }
-        VariablePacket::PingreqPacket(packet) => {
-            handle_pingreq(session, packet, conn, global).await?;
-        }
-        _ => {
-            return Err(io::Error::from(io::ErrorKind::InvalidData));
-        }
+        Packet::Disconnect => handle_disconnect(session, conn, global).await?,
+        Packet::Publish(pkt) => handle_publish(session, pkt, conn, global).await?,
+        Packet::Puback(pid) => handle_puback(session, pid, conn, global).await?,
+        Packet::Pubrec(pid) => handle_pubrec(session, pid, conn, global).await?,
+        Packet::Pubrel(pid) => handle_pubrel(session, pid, conn, global).await?,
+        Packet::Pubcomp(pid) => handle_pubcomp(session, pid, conn, global).await?,
+        Packet::Subscribe(pkt) => handle_subscribe(session, pkt, conn, global).await?,
+        Packet::Unsubscribe(packet) => handle_unsubscribe(session, packet, conn, global).await?,
+        Packet::Pingreq => handle_pingreq(session, conn, global).await?,
+        _ => return Err(io::Error::from(io::ErrorKind::InvalidData)),
     }
     *session.last_packet_time.write() = Instant::now();
 
@@ -146,7 +71,7 @@ async fn handle_packet<T: AsyncWrite + Unpin, E: Executor>(
 async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     session: &mut Session,
     receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
-    packet: ConnectPacket,
+    packet: Connect,
     conn: &mut T,
     peer: &SocketAddr,
     executor: &E,
@@ -154,100 +79,87 @@ async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
 ) -> io::Result<()> {
     log::debug!(
         r#"{} received a connect packet:
-     protocol : {} {:?}
+     protocol : {}
     client_id : {}
 clean session : {}
      username : {:?}
      password : {:?}
    keep-alive : {}s
-         will : {:?}, retain: {}, qos: {:?}
-     reserved : {}"#,
+         will : {:?}"#,
         peer,
-        packet.protocol_name(),
-        packet.protocol_level(),
-        packet.client_identifier(),
-        packet.clean_session(),
-        packet.user_name(),
-        packet.password(),
-        packet.keep_alive(),
-        packet.will(),
-        packet.will_retain(),
-        packet.will_qos(),
-        packet.reserved_flag(),
+        packet.protocol,
+        packet.client_id,
+        packet.clean_session,
+        packet.username,
+        packet.password,
+        packet.keep_alive,
+        packet.last_will,
     );
-    if packet.reserved_flag() {
-        return Err(io::Error::from(io::ErrorKind::InvalidData));
-    }
-    let protocol_level = packet.protocol_level();
-    let client_identifier = packet.client_identifier();
-    match (packet.protocol_name(), protocol_level) {
-        ("MQIsdp", ProtocolLevel::Version310) => {}
-        ("MQTT", ProtocolLevel::Version311) => {}
-        _ => {
-            let rv_packet =
-                ConnackPacket::new(false, ConnectReturnCode::UnacceptableProtocolVersion);
-            write_packet(session.client_id, conn, &rv_packet).await?;
-            session.disconnected = true;
-            return Ok(());
-        }
-    }
-
-    if (protocol_level == ProtocolLevel::Version310
-        && (client_identifier.is_empty() || client_identifier.len() > 23))
-        || (protocol_level == ProtocolLevel::Version311 && client_identifier.len() > 65535)
-    {
-        let rv_packet = ConnackPacket::new(false, ConnectReturnCode::IdentifierRejected);
-        write_packet(session.client_id, conn, &rv_packet).await?;
+    if packet.protocol != Protocol::V310 && packet.protocol != Protocol::V311 {
+        let rv_packet = Connack::new(false, ConnectReturnCode::UnacceptableProtocolVersion);
+        write_packet(session.client_id, conn, &rv_packet.into()).await?;
         session.disconnected = true;
         return Ok(());
     }
 
-    let mut return_code = ConnectReturnCode::ConnectionAccepted;
+    if packet.protocol == Protocol::V310
+        && (packet.client_id.is_empty() || packet.client_id.len() > 23)
+    {
+        let rv_packet = Connack::new(false, ConnectReturnCode::IdentifierRejected);
+        write_packet(session.client_id, conn, &rv_packet.into()).await?;
+        session.disconnected = true;
+        return Ok(());
+    }
+
+    let mut return_code = ConnectReturnCode::Accepted;
     // FIXME: auth by plugin
     for auth_type in &global.config.auth_types {
         match auth_type {
             AuthType::UsernamePassword => {
-                if let Some(username) = packet.user_name() {
-                    if global.config.users.get(username).map(|s| s.as_str()) != packet.password() {
+                if let Some(username) = packet.username.as_ref() {
+                    if global
+                        .config
+                        .users
+                        .get(username.as_str())
+                        .map(|s| s.as_bytes())
+                        != packet.password.as_ref().map(|s| s.as_ref())
+                    {
                         log::debug!("incorrect password for user: {}", username);
-                        return_code = ConnectReturnCode::BadUserNameOrPassword;
+                        return_code = ConnectReturnCode::BadUsernameOrPassword;
                     }
                 } else {
-                    log::debug!(
-                        "username password not set for client: {}",
-                        client_identifier
-                    );
-                    return_code = ConnectReturnCode::BadUserNameOrPassword;
+                    log::debug!("username password not set for client: {}", packet.client_id);
+                    return_code = ConnectReturnCode::BadUsernameOrPassword;
                 }
             }
             _ => panic!("auth method not supported: {:?}", auth_type),
         }
     }
     // FIXME: permission check and return "not authorized"
-    if return_code != ConnectReturnCode::ConnectionAccepted {
-        let rv_packet = ConnackPacket::new(false, return_code);
-        write_packet(session.client_id, conn, &rv_packet).await?;
+    if return_code != ConnectReturnCode::Accepted {
+        let rv_packet = Connack::new(false, return_code);
+        write_packet(session.client_id, conn, &rv_packet.into()).await?;
         session.disconnected = true;
         return Ok(());
     }
 
     // FIXME: if connection reach rate limit return "Server unavailable"
 
-    session.protocol_level = packet.protocol_level();
-    session.clean_session = packet.clean_session();
-    session.client_identifier = if client_identifier.is_empty() {
-        uuid::Uuid::new_v4().to_string()
+    session.protocol = packet.protocol;
+    session.clean_session = packet.clean_session;
+    session.client_identifier = if packet.client_id.is_empty() {
+        Arc::new(uuid::Uuid::new_v4().to_string())
     } else {
-        client_identifier.to_string()
+        Arc::clone(&packet.client_id)
     };
-    session.username = packet.user_name().map(|name| name.to_string());
-    session.keep_alive = packet.keep_alive();
+    session.username = packet.username.map(|name| Arc::clone(&name));
+    session.keep_alive = packet.keep_alive;
 
     // FIXME: if kee_alive is zero, set a default keep_alive value from config
     if session.keep_alive > 0 {
         let interval = Duration::from_millis(session.keep_alive as u64 * 500);
         let client_id = session.client_id;
-        log::debug!("{:?} keep alive: {:?}", client_id, interval * 2);
+        log::debug!("{} keep alive: {:?}", client_id, interval * 2);
         let last_packet_time = Arc::clone(&session.last_packet_time);
         let global = Arc::clone(global);
         if let Err(err) = executor.spawn_timer(move || {
@@ -282,21 +194,15 @@ clean session : {}
         }
     }
 
-    if let Some((topic, message)) = packet.will() {
-        let will_qos = match packet.will_qos() {
-            0 => QualityOfService::Level0,
-            1 => QualityOfService::Level1,
-            2 => QualityOfService::Level2,
-            _ => unreachable!(),
-        };
-        if topic.starts_with('$') {
+    if let Some(last_will) = packet.last_will {
+        if last_will.topic_name.starts_with('$') {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
         let will = Will {
-            retain: packet.will_retain(),
-            qos: will_qos,
-            topic: TopicName::new(topic).expect("topic name"),
-            message: message.to_vec(),
+            retain: last_will.retain,
+            qos: last_will.qos,
+            topic: last_will.topic_name.clone(),
+            message: last_will.message,
         };
         session.will = Some(will);
     }
@@ -304,21 +210,21 @@ clean session : {}
     let mut session_present = false;
     match global.add_client(session.client_identifier.as_str()).await {
         AddClientReceipt::Present(old_state) => {
-            log::debug!("Got exists session for {:?}", old_state.client_id);
+            log::debug!("Got exists session for {}", old_state.client_id);
             session.client_id = old_state.client_id;
             *receiver = Some(old_state.receiver);
             // TODO: if protocol level is compatiable, copy the session state?
-            if !session.clean_session && session.protocol_level == old_state.protocol_level {
+            if !session.clean_session && session.protocol == old_state.protocol {
                 session.server_packet_id = old_state.server_packet_id;
                 session.pending_packets = old_state.pending_packets;
                 session.subscribes = old_state.subscribes;
                 session_present = true;
             } else {
                 log::info!(
-                    "all {} session state removed due to reconnect with a different protocol level, new level: {:?}, old level: {:?}, or clean session: {}",
+                    "{} session state removed due to reconnect with a different protocol version, new: {}, old: {}, or clean session: {}",
                     old_state.pending_packets.len(),
-                    session.protocol_level,
-                    old_state.protocol_level,
+                    session.protocol,
+                    old_state.protocol,
                     session.clean_session,
                 );
                 session_present = false;
@@ -328,16 +234,16 @@ clean session : {}
             client_id,
             receiver: new_receiver,
         } => {
-            log::debug!("Create new session for {:?}", client_id);
+            log::debug!("Create new session for {}", client_id);
             session.client_id = client_id;
             *receiver = Some(new_receiver);
         }
     }
 
-    log::debug!("Socket {} assgined to: {:?}", peer, session.client_id);
+    log::debug!("Socket {} assgined to: {}", peer, session.client_id);
 
-    let rv_packet = ConnackPacket::new(session_present, return_code);
-    write_packet(session.client_id, conn, &rv_packet).await?;
+    let rv_packet = Connack::new(session_present, return_code);
+    write_packet(session.client_id, conn, &rv_packet.into()).await?;
     session.connected = true;
     Ok(())
 }
@@ -345,11 +251,10 @@ clean session : {}
 #[inline]
 async fn handle_disconnect<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    _packet: DisconnectPacket,
     _conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!("{:?} received a disconnect packet", session.client_id,);
+    log::debug!("{} received a disconnect packet", session.client_id);
     session.will = None;
     session.disconnected = true;
     Ok(())
@@ -358,48 +263,44 @@ async fn handle_disconnect<T: AsyncWrite + Unpin>(
 #[inline]
 async fn handle_publish<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    packet: PublishPacket,
+    packet: Publish,
     conn: &mut T,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        r#"{:?} received a publish packet:
+        r#"{} received a publish packet:
 topic name : {}
    payload : {:?}
      flags : qos={:?}, retain={}, dup={}"#,
         session.client_id,
-        packet.topic_name(),
-        packet.payload(),
-        packet.qos(),
-        packet.retain(),
-        packet.dup(),
+        packet.topic_name,
+        packet.payload,
+        packet.qos_pid,
+        packet.retain,
+        packet.dup,
     );
-    if packet.topic_name().starts_with('$') {
-        log::debug!("invalid topic name: {}", packet.topic_name());
+    if packet.topic_name.starts_with('$') {
+        log::debug!("invalid topic name: {}", packet.topic_name);
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
-    if packet.qos() == QoSWithPacketIdentifier::Level0 && packet.dup() {
+    if packet.qos_pid == QosPid::Level0 && packet.dup {
         log::debug!("invalid dup flag");
         return Err(io::Error::from(io::ErrorKind::InvalidData));
     }
     // FIXME: handle dup flag
     send_publish(
         session,
-        packet.topic_name(),
-        packet.retain(),
-        packet.qos().split().0,
-        packet.payload(),
+        &packet.topic_name,
+        packet.retain,
+        packet.qos_pid.qos(),
+        &packet.payload,
         global,
     )
     .await;
-    match packet.qos() {
-        QoSWithPacketIdentifier::Level0 => {}
-        QoSWithPacketIdentifier::Level1(pkid) => {
-            write_packet(session.client_id, conn, &PubackPacket::new(pkid)).await?;
-        }
-        QoSWithPacketIdentifier::Level2(pkid) => {
-            write_packet(session.client_id, conn, &PubrecPacket::new(pkid)).await?;
-        }
+    match packet.qos_pid {
+        QosPid::Level0 => {}
+        QosPid::Level1(pid) => write_packet(session.client_id, conn, &Packet::Puback(pid)).await?,
+        QosPid::Level2(pid) => write_packet(session.client_id, conn, &Packet::Pubrec(pid)).await?,
     }
     Ok(())
 }
@@ -407,151 +308,141 @@ topic name : {}
 #[inline]
 async fn handle_puback<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    packet: PubackPacket,
+    pid: Pid,
     _conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        "{:?} received a puback packet: id={}",
+        "{} received a puback packet: id={}",
         session.client_id,
-        packet.packet_identifier()
+        pid.value()
     );
-    session.pending_packets.complete(packet.packet_identifier());
+    session.pending_packets.complete(pid);
     Ok(())
 }
 
 #[inline]
 async fn handle_pubrec<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    packet: PubrecPacket,
+    pid: Pid,
     conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        "{:?} received a pubrec  packet: id={}",
+        "{} received a pubrec  packet: id={}",
         session.client_id,
-        packet.packet_identifier()
+        pid.value()
     );
-    session.pending_packets.pubrec(packet.packet_identifier());
-    let rv_packet = PubrelPacket::new(packet.packet_identifier());
-    write_packet(session.client_id, conn, &rv_packet).await?;
+    session.pending_packets.pubrec(pid);
+    write_packet(session.client_id, conn, &Packet::Pubrel(pid)).await?;
     Ok(())
 }
 
 #[inline]
 async fn handle_pubrel<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    packet: PubrelPacket,
+    pid: Pid,
     conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        "{:?} received a pubrel  packet: id={}",
+        "{} received a pubrel  packet: id={}",
         session.client_id,
-        packet.packet_identifier()
+        pid.value()
     );
-    let rv_packet = PubcompPacket::new(packet.packet_identifier());
-    write_packet(session.client_id, conn, &rv_packet).await?;
+    write_packet(session.client_id, conn, &Packet::Pubcomp(pid)).await?;
     Ok(())
 }
 
 #[inline]
 async fn handle_pubcomp<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    packet: PubcompPacket,
+    pid: Pid,
     _conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        "{:?} received a pubcomp packet: id={}",
+        "{} received a pubcomp packet: id={}",
         session.client_id,
-        packet.packet_identifier()
+        pid.value()
     );
-    session.pending_packets.complete(packet.packet_identifier());
+    session.pending_packets.complete(pid);
     Ok(())
 }
 
 #[inline]
 async fn handle_subscribe<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    packet: SubscribePacket,
+    packet: Subscribe,
     conn: &mut T,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        r#"{:?} received a subscribe packet:
+        r#"{} received a subscribe packet:
 packet id : {}
    topics : {:?}"#,
         session.client_id,
-        packet.packet_identifier(),
-        packet.subscribes(),
+        packet.pid.value(),
+        packet.topics,
     );
-    if packet.subscribes().is_empty() {
-        return Err(io::Error::from(io::ErrorKind::InvalidData));
-    }
-    let mut return_codes = Vec::with_capacity(packet.subscribes().len());
-    for (filter, qos) in packet.subscribes() {
-        let allowed_qos = cmp::min(*qos, global.config.max_allowed_qos());
+    let mut return_codes = Vec::with_capacity(packet.topics.len());
+    for (filter, qos) in packet.topics {
+        let allowed_qos = cmp::min(qos, global.config.max_allowed_qos());
         session.subscribes.insert(filter.clone(), allowed_qos);
         global
             .route_table
-            .subscribe(filter, session.client_id, allowed_qos);
+            .subscribe(&filter, session.client_id, allowed_qos);
 
-        for retain in global.retain_table.get_matches(filter) {
-            let topic_name = Arc::new(retain.topic_name.clone());
-            let subscribe_filter = Arc::new(filter.clone());
+        for retain in global.retain_table.get_matches(&filter) {
             recv_publish(
                 session,
-                &topic_name,
+                &retain.topic_name,
                 retain.qos,
                 true,
                 &retain.payload,
-                (&subscribe_filter, allowed_qos),
+                (&filter, allowed_qos),
                 Some(conn),
             )
             .await?;
         }
         return_codes.push(allowed_qos.into());
     }
-    let rv_packet = SubackPacket::new(packet.packet_identifier(), return_codes);
-    write_packet(session.client_id, conn, &rv_packet).await?;
+    let rv_packet = Suback::new(packet.pid, return_codes);
+    write_packet(session.client_id, conn, &rv_packet.into()).await?;
     Ok(())
 }
 
 #[inline]
 async fn handle_unsubscribe<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    packet: UnsubscribePacket,
+    packet: Unsubscribe,
     conn: &mut T,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
-        r#"{:?} received a unsubscribe packet:
+        r#"{} received a unsubscribe packet:
 packet id : {}
    topics : {:?}"#,
         session.client_id,
-        packet.packet_identifier(),
-        packet.subscribes(),
+        packet.pid.value(),
+        packet.topics,
     );
-    for filter in packet.subscribes() {
-        global.route_table.unsubscribe(filter, session.client_id);
-        session.subscribes.remove(filter);
+    for filter in packet.topics {
+        global.route_table.unsubscribe(&filter, session.client_id);
+        session.subscribes.remove(&filter);
     }
-    let rv_packet = UnsubackPacket::new(packet.packet_identifier());
-    write_packet(session.client_id, conn, &rv_packet).await?;
+    write_packet(session.client_id, conn, &Packet::Unsuback(packet.pid)).await?;
     Ok(())
 }
 
 #[inline]
 async fn handle_pingreq<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    _packet: PingreqPacket,
     conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    log::debug!("{:?} received a ping packet", session.client_id);
-    let rv_packet = PingrespPacket::new();
-    write_packet(session.client_id, conn, &rv_packet).await?;
+    log::debug!("{} received a ping packet", session.client_id);
+    write_packet(session.client_id, conn, &Packet::Pingresp).await?;
     Ok(())
 }
 
@@ -590,7 +481,7 @@ pub async fn handle_internal<T: AsyncWrite + Unpin>(
             let mut pending_packets = PendingPackets::new(0, 0, 0);
             mem::swap(&mut session.pending_packets, &mut pending_packets);
             let old_state = SessionState {
-                protocol_level: session.protocol_level,
+                protocol: session.protocol,
                 server_packet_id: session.server_packet_id,
                 pending_packets,
                 receiver: receiver.clone(),
@@ -603,7 +494,7 @@ pub async fn handle_internal<T: AsyncWrite + Unpin>(
         }
         InternalMessage::Kick { reason } => {
             log::info!(
-                "kick {:?}, reason: {}, offline: {}, network: {}",
+                "kick {}, reason: {}, offline: {}, network: {}",
                 session.client_id,
                 reason,
                 session.disconnected,
@@ -645,10 +536,10 @@ pub async fn handle_internal<T: AsyncWrite + Unpin>(
 // Received a publish message from client or will, then publish the message to matched clients
 async fn send_publish(
     session: &mut Session,
-    topic_name: &str,
+    topic_name: &TopicName,
     retain: bool,
-    qos: QualityOfService,
-    payload: &[u8],
+    qos: QoS,
+    payload: &Bytes,
     global: &Arc<GlobalState>,
 ) {
     if retain {
@@ -657,9 +548,9 @@ async fn send_publish(
             global.retain_table.remove(topic_name)
         } else {
             let content = Arc::new(RetainContent::new(
-                TopicName::new(topic_name).unwrap(),
+                topic_name.clone(),
                 qos,
-                Bytes::from(payload.to_vec()),
+                payload.clone(),
                 session.client_id,
             ));
             log::debug!("retain message inserted");
@@ -667,7 +558,7 @@ async fn send_publish(
         } {
             log::debug!(
                 r#"old retain content:
- client id : {:?}
+ client id : {}
 topic name : {}
    payload : {:?}
        qos : {:?}"#,
@@ -685,18 +576,16 @@ topic name : {}
         let content = content.read();
         for (client_id, subscribe_qos) in &content.clients {
             if let Some(sender) = global.get_client_sender(client_id) {
-                let subscribe_filter = Arc::new(content.topic_filter.clone().unwrap());
+                let subscribe_filter = content.topic_filter.clone().unwrap();
                 senders.push((*client_id, subscribe_filter, *subscribe_qos, sender));
             }
         }
     }
 
     if !senders.is_empty() {
-        let topic_name = Arc::new(TopicName::new(topic_name).unwrap());
-        let payload = Bytes::from(payload.to_vec());
         for (sender_client_id, subscribe_filter, subscribe_qos, sender) in senders {
             let msg = InternalMessage::Publish {
-                topic_name: Arc::clone(&topic_name),
+                topic_name: topic_name.clone(),
                 qos,
                 payload: payload.clone(),
                 subscribe_filter,
@@ -704,7 +593,7 @@ topic name : {}
             };
             if let Err(err) = sender.send_async((session.client_id, msg)).await {
                 log::error!(
-                    "send publish to connection {:?} failed: {}",
+                    "send publish to connection {} failed: {}",
                     sender_client_id,
                     err
                 );
@@ -716,15 +605,15 @@ topic name : {}
 // Got a publish message from retain message or subscribed topic, then send the publish message to client.
 async fn recv_publish<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    topic_name: &Arc<TopicName>,
-    qos: QualityOfService,
+    topic_name: &TopicName,
+    qos: QoS,
     retain: bool,
     payload: &Bytes,
-    (subscribe_filter, subscribe_qos): (&Arc<TopicFilter>, QualityOfService),
+    (subscribe_filter, subscribe_qos): (&TopicFilter, QoS),
     conn: Option<&mut T>,
 ) -> io::Result<()> {
-    if !session.subscribes.contains_key(subscribe_filter.as_ref()) {
-        let filter_str: &str = subscribe_filter.as_ref().deref();
+    if !session.subscribes.contains_key(subscribe_filter) {
+        let filter_str: &str = subscribe_filter.deref();
         log::warn!(
             "received a publish message that is not subscribe: {}, session.subscribes: {:?}",
             filter_str,
@@ -732,18 +621,18 @@ async fn recv_publish<T: AsyncWrite + Unpin>(
         );
     }
     let final_qos = cmp::min(qos, subscribe_qos);
-    if final_qos != QualityOfService::Level0 {
+    if final_qos != QoS::Level0 {
         // The packet_id equals to: `self.server_packet_id % 65536`
-        let packet_id = session.incr_server_packet_id() as u16;
+        let pid = session.incr_server_packet_id();
         session.pending_packets.clean_complete();
         if let Err(err) = session.pending_packets.push_back(
-            packet_id,
+            pid,
             PubPacket {
-                topic_name: Arc::clone(topic_name),
+                topic_name: topic_name.clone(),
                 qos: final_qos,
                 retain,
                 payload: payload.clone(),
-                subscribe_filter: Arc::clone(subscribe_filter),
+                subscribe_filter: subscribe_filter.clone(),
                 subscribe_qos,
             },
         ) {
@@ -754,14 +643,14 @@ async fn recv_publish<T: AsyncWrite + Unpin>(
             handle_pendings(session, conn).await?;
         }
     } else if let Some(conn) = conn {
-        let mut rv_packet = PublishPacket::new(
-            TopicName::new(topic_name.to_string()).unwrap(),
-            QoSWithPacketIdentifier::Level0,
-            payload.to_vec(),
-        );
-        rv_packet.set_dup(false);
-        rv_packet.set_retain(retain);
-        write_packet(session.client_id, conn, &rv_packet).await?;
+        let rv_packet = Publish {
+            dup: false,
+            qos_pid: QosPid::Level0,
+            retain,
+            topic_name: topic_name.clone(),
+            payload: payload.clone(),
+        };
+        write_packet(session.client_id, conn, &rv_packet.into()).await?;
     }
 
     Ok(())
@@ -778,29 +667,25 @@ async fn handle_pendings<T: AsyncWrite + Unpin>(
         start_idx = idx + 1;
         match packet_status {
             PendingPacketStatus::New {
-                dup,
-                packet_id,
-                packet,
-                ..
+                dup, pid, packet, ..
             } => {
-                let qos_with_id = match packet.qos {
-                    QualityOfService::Level0 => QoSWithPacketIdentifier::Level0,
-                    QualityOfService::Level1 => QoSWithPacketIdentifier::Level1(*packet_id),
-                    QualityOfService::Level2 => QoSWithPacketIdentifier::Level2(*packet_id),
+                let qos_pid = match packet.qos {
+                    QoS::Level0 => QosPid::Level0,
+                    QoS::Level1 => QosPid::Level1(*pid),
+                    QoS::Level2 => QosPid::Level2(*pid),
                 };
-                let mut rv_packet = PublishPacket::new(
-                    TopicName::clone(&packet.topic_name),
-                    qos_with_id,
-                    packet.payload.clone(),
-                );
-                rv_packet.set_dup(*dup);
-                rv_packet.set_retain(packet.retain);
+                let rv_packet = Publish {
+                    dup: *dup,
+                    retain: packet.retain,
+                    qos_pid,
+                    topic_name: packet.topic_name.clone(),
+                    payload: packet.payload.clone(),
+                };
                 *dup = true;
-                write_packet(session.client_id, conn, &rv_packet).await?;
+                write_packet(session.client_id, conn, &rv_packet.into()).await?;
             }
-            PendingPacketStatus::Pubrec { packet_id, .. } => {
-                let rv_packet = PubrelPacket::new(*packet_id);
-                write_packet(session.client_id, conn, &rv_packet).await?;
+            PendingPacketStatus::Pubrec { pid, .. } => {
+                write_packet(session.client_id, conn, &Packet::Pubrel(*pid)).await?;
             }
             PendingPacketStatus::Complete => unreachable!(),
         }
@@ -809,14 +694,12 @@ async fn handle_pendings<T: AsyncWrite + Unpin>(
 }
 
 #[inline]
-async fn write_packet<P: Encodable + Debug, T: AsyncWrite + Unpin>(
+async fn write_packet<T: AsyncWrite + Unpin>(
     client_id: ClientId,
     conn: &mut T,
-    packet: &P,
+    packet: &Packet,
 ) -> io::Result<()> {
-    log::debug!("write to {:?} with packet: {:?}", client_id, packet);
-    let mut buf = Vec::with_capacity(packet.encoded_length() as usize);
-    packet.encode(&mut buf)?;
-    conn.write_all(&buf).await?;
+    log::debug!("write to {:?} with packet: {:#?}", client_id, packet);
+    packet.encode_async(conn).await?;
     Ok(())
 }

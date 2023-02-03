@@ -1,29 +1,24 @@
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
-use mqtt::{
-    control::variable_header::ConnectReturnCode, packet::*, qos::QualityOfService, TopicFilter,
-    TopicName,
-};
+use bytes::Bytes;
+use mqtt_proto::v3::*;
+use mqtt_proto::*;
 use tokio::{task::JoinHandle, time::sleep};
 use ConnectReturnCode::*;
 
 use crate::config::{AuthType, Config};
 use crate::tests::utils::MockConn;
 
-async fn do_test(
-    config: Config,
-    connect: ConnectPacket,
-    connack: ConnackPacket,
-) -> JoinHandle<io::Result<()>> {
+async fn do_test(config: Config, connect: Connect, connack: Connack) -> JoinHandle<io::Result<()>> {
     let (conn, mut control) = MockConn::new(3333, config);
     let task = control.start(conn);
 
-    let finished = connack.connect_return_code() != ConnectionAccepted;
+    let finished = connack.code != Accepted;
     control.write_packet(connect.into()).await;
     let packet = control.read_packet().await;
-    let expected_packet = VariablePacket::ConnackPacket(connack);
-    assert_eq!(packet, expected_packet);
+    assert_eq!(packet, Packet::Connack(connack));
 
     sleep(Duration::from_millis(10)).await;
     assert_eq!(task.is_finished(), finished);
@@ -49,10 +44,13 @@ async fn test_connect_invalid_first_packet() {
         let (conn, mut control) = MockConn::new(3333, Config::default());
         let task = control.start(conn);
 
-        let sub_pk_id: u16 = 23;
-        let subscribe = SubscribePacket::new(
+        let sub_pk_id = Pid::try_from(23).unwrap();
+        let subscribe = Subscribe::new(
             sub_pk_id,
-            vec![(TopicFilter::new("abc/0").unwrap(), QualityOfService::Level0)],
+            vec![(
+                TopicFilter::try_from("abc/0".to_owned()).unwrap(),
+                QoS::Level0,
+            )],
         );
         control.write_packet(subscribe.into()).await;
 
@@ -66,12 +64,12 @@ async fn test_connect_invalid_first_packet() {
         let (conn, mut control) = MockConn::new(3333, Config::default());
         let task = control.start(conn);
 
-        let mut publish = PublishPacket::new(
-            TopicName::new("xyz/1").unwrap(),
-            QoSWithPacketIdentifier::Level0,
-            vec![3, 5, 55],
+        let mut publish = Publish::new(
+            QosPid::Level0,
+            TopicName::try_from("xyz/1".to_owned()).unwrap(),
+            Bytes::from(vec![3, 5, 55]),
         );
-        publish.set_retain(true);
+        publish.retain = true;
         control.write_packet(publish.into()).await;
 
         sleep(Duration::from_millis(10)).await;
@@ -82,23 +80,32 @@ async fn test_connect_invalid_first_packet() {
 }
 
 #[tokio::test]
-async fn test_connect_v310() {
+async fn test_connect_v31() {
     // connect accepted
     {
-        let connect = ConnectPacket::with_level("MQIsdp", "client_anonymous", 0x03).unwrap();
-        let connack = ConnackPacket::new(false, ConnectionAccepted);
+        let connect = Connect {
+            protocol: Protocol::V310,
+            ..Connect::new(Arc::new("client_anonymous".to_owned()), 10)
+        };
+        let connack = Connack::new(false, Accepted);
         do_test(Config::default(), connect, connack).await;
     }
     // connect identifier rejected: empty identifier
     {
-        let connect = ConnectPacket::with_level("MQIsdp", "", 0x03).unwrap();
-        let connack = ConnackPacket::new(false, IdentifierRejected);
+        let connect = Connect {
+            protocol: Protocol::V310,
+            ..Connect::new(Arc::new("".to_owned()), 10)
+        };
+        let connack = Connack::new(false, IdentifierRejected);
         do_test(Config::default(), connect, connack).await;
     }
     // connect identifier rejected: identifier too large
     {
-        let connect = ConnectPacket::with_level("MQIsdp", "a".repeat(24), 0x03).unwrap();
-        let connack = ConnackPacket::new(false, IdentifierRejected);
+        let connect = Connect {
+            protocol: Protocol::V310,
+            ..Connect::new(Arc::new("a".repeat(24)), 10)
+        };
+        let connack = Connack::new(false, IdentifierRejected);
         do_test(Config::default(), connect, connack).await;
     }
 }
@@ -107,24 +114,8 @@ async fn test_connect_v310() {
 async fn test_connect_v311() {
     // connect accepted: identifier empty
     {
-        let connect = ConnectPacket::new("");
-        let connack = ConnackPacket::new(false, ConnectionAccepted);
-        do_test(Config::default(), connect, connack).await;
-    }
-}
-
-#[tokio::test]
-async fn test_connect_invalid_protocol() {
-    // connect rejrected: invalid protocol name
-    {
-        let connect = ConnectPacket::with_level("MQISDP", "aaa", 0x03).unwrap();
-        let connack = ConnackPacket::new(false, UnacceptableProtocolVersion);
-        do_test(Config::default(), connect, connack).await;
-    }
-    // connect rejrected: invalid protocol level
-    {
-        let connect = ConnectPacket::with_level("MQTT", "aaa", 0x03).unwrap();
-        let connack = ConnackPacket::new(false, UnacceptableProtocolVersion);
+        let connect = Connect::new(Arc::new("".to_owned()), 30);
+        let connack = Connack::new(false, Accepted);
         do_test(Config::default(), connect, connack).await;
     }
 }
@@ -133,17 +124,15 @@ async fn test_connect_invalid_protocol() {
 async fn test_connect_keepalive() {
     // connect accepted: zero keep_alive
     {
-        let mut connect = ConnectPacket::new("client identifier");
-        connect.set_keep_alive(0);
-        let connack = ConnackPacket::new(false, ConnectionAccepted);
+        let connect = Connect::new(Arc::new("client identifier".to_owned()), 0);
+        let connack = Connack::new(false, Accepted);
         do_test(Config::default(), connect, connack).await;
     }
 
     // connect accepted: non-zero keep_alive
     {
-        let mut connect = ConnectPacket::new("client identifier");
-        connect.set_keep_alive(22);
-        let connack = ConnackPacket::new(false, ConnectionAccepted);
+        let connect = Connect::new(Arc::new("client identifier".to_owned()), 22);
+        let connack = Connack::new(false, Accepted);
         do_test(Config::default(), connect, connack).await;
     }
 }
@@ -152,10 +141,21 @@ async fn test_connect_keepalive() {
 async fn test_will() {
     // connect accepted: with will
     {
-        let mut connect = ConnectPacket::new("client identifier");
-        connect.set_will(Some((TopicName::new("topic/1").unwrap(), vec![1, 2, 3, 4])));
-        connect.set_will_qos(1);
-        let connack = ConnackPacket::new(false, ConnectionAccepted);
+        let connect = Connect {
+            protocol: Protocol::V311,
+            clean_session: true,
+            keep_alive: 30,
+            client_id: Arc::new("client identifier".to_owned()),
+            last_will: Some(LastWill {
+                qos: QoS::Level1,
+                retain: false,
+                topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+                message: Bytes::from(vec![1, 2, 3, 4]),
+            }),
+            username: None,
+            password: None,
+        };
+        let connack = Connack::new(false, Accepted);
         do_test(Config::default(), connect, connack).await;
     }
 
@@ -163,12 +163,20 @@ async fn test_will() {
     {
         let (conn, mut control) = MockConn::new(3333, Config::default());
         let task = control.start(conn);
-        let mut connect = ConnectPacket::new("client identifier");
-        connect.set_will(Some((
-            TopicName::new("$topic/1").unwrap(),
-            vec![1, 2, 3, 4],
-        )));
-        connect.set_will_qos(1);
+        let connect = Connect {
+            protocol: Protocol::V311,
+            clean_session: true,
+            keep_alive: 30,
+            client_id: Arc::new("client identifier".to_owned()),
+            last_will: Some(LastWill {
+                qos: QoS::Level1,
+                retain: false,
+                topic_name: TopicName::try_from("$topic/1".to_owned()).unwrap(),
+                message: Bytes::from(vec![1, 2, 3, 4]),
+            }),
+            username: None,
+            password: None,
+        };
         control.write_packet(connect.into()).await;
         assert!(control.try_read_packet().is_err());
 
@@ -183,9 +191,8 @@ async fn test_connect_auth() {
     // allow anonymous
     {
         let config = Config::default();
-        let mut connect = ConnectPacket::new("client_anonymous");
-        connect.set_keep_alive(10);
-        let connack = ConnackPacket::new(false, ConnectionAccepted);
+        let connect = Connect::new(Arc::new("client_anonymous".to_owned()), 10);
+        let connack = Connack::new(false, Accepted);
         do_test(config, connect, connack).await;
     }
     // empty username/password
@@ -195,9 +202,8 @@ async fn test_connect_auth() {
         config.users = [("user".to_owned(), "pass".to_owned())]
             .into_iter()
             .collect();
-        let mut connect = ConnectPacket::new("client_anonymous");
-        connect.set_keep_alive(10);
-        let connack = ConnackPacket::new(false, BadUserNameOrPassword);
+        let connect = Connect::new(Arc::new("client_anonymous".to_owned()), 10);
+        let connack = Connack::new(false, BadUsernameOrPassword);
         do_test(config, connect, connack).await;
     }
     // wrong username/password
@@ -207,11 +213,10 @@ async fn test_connect_auth() {
         config.users = [("user".to_owned(), "pass".to_owned())]
             .into_iter()
             .collect();
-        let mut connect = ConnectPacket::new("client_anonymous");
-        connect.set_keep_alive(10);
-        connect.set_user_name(Some("xxx".to_owned()));
-        connect.set_password(Some("yyy".to_owned()));
-        let connack = ConnackPacket::new(false, BadUserNameOrPassword);
+        let mut connect = Connect::new(Arc::new("client_anonymous".to_owned()), 10);
+        connect.username = Some(Arc::new("xxx".to_owned()));
+        connect.password = Some(Bytes::from(b"yyy".to_vec()));
+        let connack = Connack::new(false, BadUsernameOrPassword);
         do_test(config, connect, connack).await;
     }
     // right username/password
@@ -221,11 +226,10 @@ async fn test_connect_auth() {
         config.users = [("user".to_owned(), "pass".to_owned())]
             .into_iter()
             .collect();
-        let mut connect = ConnectPacket::new("client_anonymous");
-        connect.set_keep_alive(10);
-        connect.set_user_name(Some("user".to_owned()));
-        connect.set_password(Some("pass".to_owned()));
-        let connack = ConnackPacket::new(false, ConnectionAccepted);
+        let mut connect = Connect::new(Arc::new("client_anonymous".to_owned()), 10);
+        connect.username = Some(Arc::new("user".to_owned()));
+        connect.password = Some(Bytes::from(b"pass".to_vec()));
+        let connack = Connack::new(false, Accepted);
         do_test(config, connect, connack).await;
     }
 }

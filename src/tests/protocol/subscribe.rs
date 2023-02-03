@@ -1,9 +1,8 @@
+use std::sync::Arc;
 use std::time::Duration;
 
-use mqtt::{
-    control::variable_header::ConnectReturnCode, packet::suback::SubscribeReturnCode, packet::*,
-    qos::QualityOfService, TopicFilter,
-};
+use mqtt_proto::v3::*;
+use mqtt_proto::*;
 use tokio::time::sleep;
 use ConnectReturnCode::*;
 
@@ -15,47 +14,55 @@ async fn test_sub_unsub_simple() {
     let (conn, mut control) = MockConn::new(3333, Config::default());
     let task = control.start(conn);
 
-    let connect = ConnectPacket::new("client identifier");
-    let connack = ConnackPacket::new(false, ConnectionAccepted);
+    let connect = Connect::new(Arc::new("client identifier".to_owned()), 10);
+    let connack = Connack::new(false, Accepted);
     control.write_packet(connect.into()).await;
     let packet = control.read_packet().await;
-    let expected_packet = VariablePacket::ConnackPacket(connack);
+    let expected_packet = Packet::Connack(connack);
     assert_eq!(packet, expected_packet);
 
-    let sub_pk_id: u16 = 23;
-    let subscribe = SubscribePacket::new(
+    let sub_pk_id = Pid::try_from(23).unwrap();
+    let subscribe = Subscribe::new(
         sub_pk_id,
         vec![
-            (TopicFilter::new("abc/0").unwrap(), QualityOfService::Level0),
-            (TopicFilter::new("xyz/1").unwrap(), QualityOfService::Level1),
-            (TopicFilter::new("ijk/2").unwrap(), QualityOfService::Level2),
+            (
+                TopicFilter::try_from("abc/0".to_owned()).unwrap(),
+                QoS::Level0,
+            ),
+            (
+                TopicFilter::try_from("xyz/1".to_owned()).unwrap(),
+                QoS::Level1,
+            ),
+            (
+                TopicFilter::try_from("ijk/2".to_owned()).unwrap(),
+                QoS::Level2,
+            ),
         ],
     );
-    let suback = SubackPacket::new(
+    let suback = Suback::new(
         sub_pk_id,
         vec![
-            SubscribeReturnCode::MaximumQoSLevel0,
-            SubscribeReturnCode::MaximumQoSLevel1,
-            SubscribeReturnCode::MaximumQoSLevel2,
+            SubscribeReturnCode::MaxLevel0,
+            SubscribeReturnCode::MaxLevel1,
+            SubscribeReturnCode::MaxLevel2,
         ],
     );
     control.write_packet(subscribe.into()).await;
     let packet = control.read_packet().await;
-    let expected_packet = VariablePacket::SubackPacket(suback);
+    let expected_packet = Packet::Suback(suback);
     assert_eq!(packet, expected_packet);
 
-    let unsub_pk_id = 24;
-    let unsubscribe = UnsubscribePacket::new(
+    let unsub_pk_id = Pid::try_from(24).unwrap();
+    let unsubscribe = Unsubscribe::new(
         unsub_pk_id,
         vec![
-            TopicFilter::new("abc/0").unwrap(),
-            TopicFilter::new("xxx/+").unwrap(),
+            TopicFilter::try_from("abc/0".to_owned()).unwrap(),
+            TopicFilter::try_from("xxx/+".to_owned()).unwrap(),
         ],
     );
-    let unsuback = UnsubackPacket::new(unsub_pk_id);
     control.write_packet(unsubscribe.into()).await;
     let packet = control.read_packet().await;
-    let expected_packet = VariablePacket::UnsubackPacket(unsuback);
+    let expected_packet = Packet::Unsuback(unsub_pk_id);
     assert_eq!(packet, expected_packet);
 
     sleep(Duration::from_millis(10)).await;
@@ -67,15 +74,15 @@ async fn test_subscribe_reject_empty_topics() {
     let (conn, mut control) = MockConn::new(3333, Config::default());
     let task = control.start(conn);
 
-    let connect = ConnectPacket::new("client identifier");
-    let connack = ConnackPacket::new(false, ConnectionAccepted);
+    let connect = Connect::new(Arc::new("client identifier".to_owned()), 10);
+    let connack = Connack::new(false, Accepted);
     control.write_packet(connect.into()).await;
     let packet = control.read_packet().await;
-    let expected_packet = VariablePacket::ConnackPacket(connack);
+    let expected_packet = Packet::Connack(connack);
     assert_eq!(packet, expected_packet);
 
-    let sub_pk_id: u16 = 23;
-    let subscribe = SubscribePacket::new(sub_pk_id, vec![]);
+    let sub_pk_id = Pid::try_from(23).unwrap();
+    let subscribe = Subscribe::new(sub_pk_id, vec![]);
     control.write_packet(subscribe.into()).await;
 
     sleep(Duration::from_millis(10)).await;

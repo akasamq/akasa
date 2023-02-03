@@ -1,5 +1,5 @@
 use std::cmp;
-use std::io::{self, Cursor, IoSlice};
+use std::io::{self, IoSlice};
 use std::mem;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -10,7 +10,7 @@ use futures_lite::{
     io::{AsyncRead, AsyncWrite},
     FutureExt,
 };
-use mqtt::{packet::VariablePacket, Decodable, Encodable};
+use mqtt_proto::v3;
 use tokio::{
     sync::mpsc::{channel, error::TryRecvError, Receiver, Sender},
     task::JoinHandle,
@@ -75,25 +75,21 @@ impl MockConnControl {
     //     self.chan_out.try_recv() == Err(TryRecvError::Disconnected)
     // }
 
-    pub fn try_read_packet(&mut self) -> Result<VariablePacket, String> {
+    pub fn try_read_packet(&mut self) -> Result<v3::Packet, String> {
         self.chan_out
             .try_recv()
-            .map(|data| {
-                let mut data = Cursor::new(data);
-                VariablePacket::decode(&mut data).unwrap()
-            })
+            .map(|data| v3::Packet::decode(&data).unwrap().unwrap())
             .map_err(|err| err.to_string())
     }
 
-    pub async fn read_packet(&mut self) -> VariablePacket {
-        let mut data = Cursor::new(self.chan_out.recv().await.unwrap());
-        VariablePacket::decode(&mut data).unwrap()
+    pub async fn read_packet(&mut self) -> v3::Packet {
+        let data = self.chan_out.recv().await.unwrap();
+        v3::Packet::decode(&data).unwrap().unwrap()
     }
 
-    pub async fn write_packet(&self, packet: VariablePacket) {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf).unwrap();
-        self.write_data(buf).await;
+    pub async fn write_packet(&self, packet: v3::Packet) {
+        self.write_data(packet.encode().unwrap().as_slice().to_vec())
+            .await;
     }
 
     pub async fn write_data(&self, data: Vec<u8>) {

@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::io;
 use std::time::SystemTime;
 
-use mqtt::qos::QualityOfService;
+use mqtt_proto::{Pid, QoS};
 
 use super::session::PubPacket;
 
@@ -28,8 +28,8 @@ impl PendingPackets {
         }
     }
 
-    pub fn push_back(&mut self, packet_id: u16, packet: PubPacket) -> io::Result<()> {
-        assert!(packet.qos != QualityOfService::Level0);
+    pub fn push_back(&mut self, pid: Pid, packet: PubPacket) -> io::Result<()> {
+        assert!(packet.qos != QoS::Level0);
         if self.packets.len() >= self.max_packets {
             log::error!(
                 "drop packet {:?}, due to too many packets in the queue: {}",
@@ -41,23 +41,23 @@ impl PendingPackets {
         }
         self.packets.push_back(PendingPacketStatus::New {
             last_sent: 0,
-            packet_id,
+            pid,
             packet,
             dup: false,
         });
         Ok(())
     }
 
-    pub fn pubrec(&mut self, target_packet_id: u16) {
+    pub fn pubrec(&mut self, target_pid: Pid) {
         let current_inflight = cmp::min(self.max_inflight as usize, self.packets.len());
         for idx in 0..current_inflight {
             let packet_status = self.packets.get_mut(idx).expect("packet");
             match packet_status {
-                PendingPacketStatus::New { packet_id, .. } => {
-                    if *packet_id == target_packet_id {
+                PendingPacketStatus::New { pid, .. } => {
+                    if *pid == target_pid {
                         *packet_status = PendingPacketStatus::Pubrec {
                             last_sent: get_unix_ts(),
-                            packet_id: target_packet_id,
+                            pid: target_pid,
                         };
                         break;
                     }
@@ -68,19 +68,19 @@ impl PendingPackets {
         }
     }
 
-    pub fn complete(&mut self, target_packet_id: u16) {
+    pub fn complete(&mut self, target_pid: Pid) {
         let current_inflight = cmp::min(self.max_inflight as usize, self.packets.len());
         for idx in 0..current_inflight {
             let packet_status = self.packets.get_mut(idx).expect("packet");
             match packet_status {
-                PendingPacketStatus::New { packet_id, .. } => {
-                    if *packet_id == target_packet_id {
+                PendingPacketStatus::New { pid, .. } => {
+                    if *pid == target_pid {
                         *packet_status = PendingPacketStatus::Complete;
                         break;
                     }
                 }
-                PendingPacketStatus::Pubrec { packet_id, .. } => {
-                    if *packet_id == target_packet_id {
+                PendingPacketStatus::Pubrec { pid, .. } => {
+                    if *pid == target_pid {
                         *packet_status = PendingPacketStatus::Complete;
                         break;
                     }
@@ -145,14 +145,14 @@ pub enum PendingPacketStatus {
     New {
         // Last sent this packet timestamp as seconds
         last_sent: u64,
-        packet_id: u16,
+        pid: Pid,
         packet: PubPacket,
         dup: bool,
     },
     Pubrec {
         // Last sent this packet timestamp as seconds
         last_sent: u64,
-        packet_id: u16,
+        pid: Pid,
     },
     Complete,
 }

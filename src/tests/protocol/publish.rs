@@ -1,10 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use mqtt::{
-    control::variable_header::ConnectReturnCode, packet::publish::QoSWithPacketIdentifier,
-    packet::suback::SubscribeReturnCode, packet::*, qos::QualityOfService, TopicFilter, TopicName,
-};
+use bytes::Bytes;
+use mqtt_proto::v3::*;
+use mqtt_proto::*;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use ConnectReturnCode::*;
@@ -35,11 +34,11 @@ async fn test_publish_qos0() {
     let _task4 = control4.start(conn4);
 
     // Publisher connect
-    let connect = ConnectPacket::new("publisher");
-    let connack = ConnackPacket::new(false, ConnectionAccepted);
+    let connect = Connect::new(Arc::new("publisher".to_owned()), 10);
+    let connack = Connack::new(false, Accepted);
     control0.write_packet(connect.into()).await;
     let packet = control0.read_packet().await;
-    let expected_packet = VariablePacket::ConnackPacket(connack);
+    let expected_packet = Packet::Connack(connack);
     assert_eq!(packet, expected_packet);
 
     let (tx, mut rx) = mpsc::channel(4);
@@ -53,23 +52,26 @@ async fn test_publish_qos0() {
     ] {
         let tx = tx.clone();
         let task = tokio::spawn(async move {
-            let connect = ConnectPacket::new(format!("subscriber: {}", topic));
-            let connack = ConnackPacket::new(false, ConnectionAccepted);
+            let connect = Connect::new(Arc::new(format!("subscriber: {}", topic)), 10);
+            let connack = Connack::new(false, Accepted);
             control.write_packet(connect.into()).await;
             let packet = control.read_packet().await;
-            let expected_packet = VariablePacket::ConnackPacket(connack);
+            let expected_packet = Packet::Connack(connack);
             assert_eq!(packet, expected_packet);
 
             // subscribe to "xyz/0"
-            let sub_pk_id = 2;
-            let subscribe = SubscribePacket::new(
+            let sub_pk_id = Pid::try_from(2).unwrap();
+            let subscribe = Subscribe::new(
                 sub_pk_id,
-                vec![(TopicFilter::new(topic).unwrap(), QualityOfService::Level0)],
+                vec![(
+                    TopicFilter::try_from(topic.to_owned()).unwrap(),
+                    QoS::Level0,
+                )],
             );
-            let suback = SubackPacket::new(sub_pk_id, vec![SubscribeReturnCode::MaximumQoSLevel0]);
+            let suback = Suback::new(sub_pk_id, vec![SubscribeReturnCode::MaxLevel0]);
             control.write_packet(subscribe.into()).await;
             let packet = control.read_packet().await;
-            let expected_packet = VariablePacket::SubackPacket(suback);
+            let expected_packet = Packet::Suback(suback);
             assert_eq!(packet, expected_packet);
 
             // Subscribe is ready
@@ -79,13 +81,13 @@ async fn test_publish_qos0() {
 
             if topic != "xxx/bbb" {
                 for last_byte in 0..14u8 {
-                    let publish = PublishPacket::new(
-                        TopicName::new("xyz/0").unwrap(),
-                        QoSWithPacketIdentifier::Level0,
-                        vec![3, 5, 55, last_byte],
+                    let publish = Publish::new(
+                        QosPid::Level0,
+                        TopicName::try_from("xyz/0".to_owned()).unwrap(),
+                        Bytes::from(vec![3, 5, 55, last_byte]),
                     );
                     let packet = control.read_packet().await;
-                    let expected_packet = VariablePacket::PublishPacket(publish);
+                    let expected_packet = Packet::Publish(publish);
                     assert_eq!(packet, expected_packet);
                 }
             }
@@ -101,10 +103,10 @@ async fn test_publish_qos0() {
     }
 
     for last_byte in 0..14u8 {
-        let publish = PublishPacket::new(
-            TopicName::new("xyz/0").unwrap(),
-            QoSWithPacketIdentifier::Level0,
-            vec![3, 5, 55, last_byte],
+        let publish = Publish::new(
+            QosPid::Level0,
+            TopicName::try_from("xyz/0".to_owned()).unwrap(),
+            Bytes::from(vec![3, 5, 55, last_byte]),
         );
         control0.write_packet(publish.into()).await;
     }
@@ -118,7 +120,6 @@ async fn test_publish_qos0() {
 
 #[tokio::test]
 async fn test_publish_qos1() {
-    env_logger::init();
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
         Config::default(),
@@ -139,11 +140,11 @@ async fn test_publish_qos1() {
     let _task4 = control4.start(conn4);
 
     // Publisher connect
-    let connect = ConnectPacket::new("publisher");
-    let connack = ConnackPacket::new(false, ConnectionAccepted);
+    let connect = Connect::new(Arc::new("publisher".to_owned()), 10);
+    let connack = Connack::new(false, Accepted);
     control0.write_packet(connect.into()).await;
     let packet = control0.read_packet().await;
-    let expected_packet = VariablePacket::ConnackPacket(connack);
+    let expected_packet = Packet::Connack(connack);
     assert_eq!(packet, expected_packet);
 
     let (tx, mut rx) = mpsc::channel(4);
@@ -157,23 +158,26 @@ async fn test_publish_qos1() {
     ] {
         let tx = tx.clone();
         let task = tokio::spawn(async move {
-            let connect = ConnectPacket::new(format!("subscriber: {}", topic));
-            let connack = ConnackPacket::new(false, ConnectionAccepted);
+            let connect = Connect::new(Arc::new(format!("subscriber: {}", topic)), 10);
+            let connack = Connack::new(false, Accepted);
             control.write_packet(connect.into()).await;
             let packet = control.read_packet().await;
-            let expected_packet = VariablePacket::ConnackPacket(connack);
+            let expected_packet = Packet::Connack(connack);
             assert_eq!(packet, expected_packet);
 
             // subscribe to "xyz/1"
-            let sub_pk_id = 2;
-            let subscribe = SubscribePacket::new(
+            let sub_pk_id = Pid::try_from(2).unwrap();
+            let subscribe = Subscribe::new(
                 sub_pk_id,
-                vec![(TopicFilter::new(topic).unwrap(), QualityOfService::Level1)],
+                vec![(
+                    TopicFilter::try_from(topic.to_owned()).unwrap(),
+                    QoS::Level1,
+                )],
             );
-            let suback = SubackPacket::new(sub_pk_id, vec![SubscribeReturnCode::MaximumQoSLevel1]);
+            let suback = Suback::new(sub_pk_id, vec![SubscribeReturnCode::MaxLevel1]);
             control.write_packet(subscribe.into()).await;
             let packet = control.read_packet().await;
-            let expected_packet = VariablePacket::SubackPacket(suback);
+            let expected_packet = Packet::Suback(suback);
             assert_eq!(packet, expected_packet);
 
             // Subscribe is ready
@@ -183,17 +187,17 @@ async fn test_publish_qos1() {
 
             if topic != "xxx/bbb" {
                 for pub_pk_id in 0..14u16 {
-                    let publish = PublishPacket::new(
-                        TopicName::new("xyz/1").unwrap(),
-                        QoSWithPacketIdentifier::Level1(pub_pk_id),
-                        vec![3, 5, 55, pub_pk_id as u8],
+                    let pub_pk_id = Pid::try_from(pub_pk_id + 1).unwrap();
+                    let publish = Publish::new(
+                        QosPid::Level1(pub_pk_id),
+                        TopicName::try_from("xyz/1".to_owned()).unwrap(),
+                        Bytes::from(vec![3, 5, 55, pub_pk_id.value() as u8]),
                     );
                     let packet = control.read_packet().await;
-                    let expected_packet = VariablePacket::PublishPacket(publish);
+                    let expected_packet = Packet::Publish(publish);
                     assert_eq!(packet, expected_packet);
 
-                    let puback = PubackPacket::new(pub_pk_id);
-                    control.write_packet(puback.into()).await;
+                    control.write_packet(Packet::Puback(pub_pk_id)).await;
                 }
             }
             sleep(Duration::from_millis(100)).await;
@@ -208,16 +212,16 @@ async fn test_publish_qos1() {
     }
 
     for pub_pk_id in 0..14u16 {
-        let publish = PublishPacket::new(
-            TopicName::new("xyz/1").unwrap(),
-            QoSWithPacketIdentifier::Level1(pub_pk_id),
-            vec![3, 5, 55, pub_pk_id as u8],
+        let pub_pk_id = Pid::try_from(pub_pk_id + 1).unwrap();
+        let publish = Publish::new(
+            QosPid::Level1(pub_pk_id),
+            TopicName::try_from("xyz/1".to_owned()).unwrap(),
+            Bytes::from(vec![3, 5, 55, pub_pk_id.value() as u8]),
         );
         control0.write_packet(publish.into()).await;
 
-        let puback = PubackPacket::new(pub_pk_id);
         let packet = control0.read_packet().await;
-        let expected_packet = VariablePacket::PubackPacket(puback);
+        let expected_packet = Packet::Puback(pub_pk_id);
         assert_eq!(packet, expected_packet);
     }
 
@@ -231,7 +235,6 @@ async fn test_publish_qos1() {
 
 #[tokio::test]
 async fn test_publish_qos2() {
-    env_logger::init();
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
         Config::default(),
@@ -252,11 +255,11 @@ async fn test_publish_qos2() {
     let _task4 = control4.start(conn4);
 
     // Publisher connect
-    let connect = ConnectPacket::new("publisher");
-    let connack = ConnackPacket::new(false, ConnectionAccepted);
+    let connect = Connect::new(Arc::new("publisher".to_owned()), 10);
+    let connack = Connack::new(false, Accepted);
     control0.write_packet(connect.into()).await;
     let packet = control0.read_packet().await;
-    let expected_packet = VariablePacket::ConnackPacket(connack);
+    let expected_packet = Packet::Connack(connack);
     assert_eq!(packet, expected_packet);
 
     let (tx, mut rx) = mpsc::channel(4);
@@ -270,23 +273,26 @@ async fn test_publish_qos2() {
     ] {
         let tx = tx.clone();
         let task = tokio::spawn(async move {
-            let connect = ConnectPacket::new(format!("subscriber: {}", topic));
-            let connack = ConnackPacket::new(false, ConnectionAccepted);
+            let connect = Connect::new(Arc::new(format!("subscriber: {}", topic)), 10);
+            let connack = Connack::new(false, Accepted);
             control.write_packet(connect.into()).await;
             let packet = control.read_packet().await;
-            let expected_packet = VariablePacket::ConnackPacket(connack);
+            let expected_packet = Packet::Connack(connack);
             assert_eq!(packet, expected_packet);
 
             // subscribe to "xyz/2"
-            let sub_pk_id = 2;
-            let subscribe = SubscribePacket::new(
+            let sub_pk_id = Pid::try_from(2).unwrap();
+            let subscribe = Subscribe::new(
                 sub_pk_id,
-                vec![(TopicFilter::new(topic).unwrap(), QualityOfService::Level2)],
+                vec![(
+                    TopicFilter::try_from(topic.to_owned()).unwrap(),
+                    QoS::Level2,
+                )],
             );
-            let suback = SubackPacket::new(sub_pk_id, vec![SubscribeReturnCode::MaximumQoSLevel2]);
+            let suback = Suback::new(sub_pk_id, vec![SubscribeReturnCode::MaxLevel2]);
             control.write_packet(subscribe.into()).await;
             let packet = control.read_packet().await;
-            let expected_packet = VariablePacket::SubackPacket(suback);
+            let expected_packet = Packet::Suback(suback);
             assert_eq!(packet, expected_packet);
 
             // Subscribe is ready
@@ -295,28 +301,25 @@ async fn test_publish_qos2() {
             sleep(Duration::from_millis(100)).await;
 
             if topic != "xxx/bbb" {
-                let mut pub_pk_id = 0u16;
-                let mut rel_pk_id = 0u16;
-                while pub_pk_id < 14 || rel_pk_id < 14 {
+                let mut pub_pk_id = Pid::default();
+                let mut rel_pk_id = Pid::default();
+                while pub_pk_id.value() < 15 || rel_pk_id.value() < 15 {
                     let packet = control.read_packet().await;
                     match packet {
-                        VariablePacket::PublishPacket(publish) => {
-                            let expected = PublishPacket::new(
-                                TopicName::new("xyz/2").unwrap(),
-                                QoSWithPacketIdentifier::Level2(pub_pk_id),
-                                vec![3, 5, 55, pub_pk_id as u8],
+                        Packet::Publish(publish) => {
+                            let expected = Publish::new(
+                                QosPid::Level2(pub_pk_id),
+                                TopicName::try_from("xyz/2".to_owned()).unwrap(),
+                                Bytes::from(vec![3, 5, 55, pub_pk_id.value() as u8]),
                             );
                             assert_eq!(publish, expected);
-                            let pubrec = PubrecPacket::new(pub_pk_id);
-                            control.write_packet(pubrec.into()).await;
+                            control.write_packet(Packet::Pubrec(pub_pk_id)).await;
 
                             pub_pk_id += 1;
                         }
-                        VariablePacket::PubrelPacket(pubrel) => {
-                            let expected = PubrelPacket::new(rel_pk_id);
-                            assert_eq!(pubrel, expected);
-                            let pubcomp = PubcompPacket::new(rel_pk_id);
-                            control.write_packet(pubcomp.into()).await;
+                        Packet::Pubrel(pid) => {
+                            assert_eq!(pid, rel_pk_id);
+                            control.write_packet(Packet::Pubcomp(rel_pk_id)).await;
 
                             rel_pk_id += 1;
                         }
@@ -336,16 +339,16 @@ async fn test_publish_qos2() {
     }
 
     for pub_pk_id in 0..14u16 {
-        let publish = PublishPacket::new(
-            TopicName::new("xyz/2").unwrap(),
-            QoSWithPacketIdentifier::Level2(pub_pk_id),
-            vec![3, 5, 55, pub_pk_id as u8],
+        let pub_pk_id = Pid::try_from(pub_pk_id + 1).unwrap();
+        let publish = Publish::new(
+            QosPid::Level2(pub_pk_id),
+            TopicName::try_from("xyz/2".to_owned()).unwrap(),
+            Bytes::from(vec![3, 5, 55, pub_pk_id.value() as u8]),
         );
         control0.write_packet(publish.into()).await;
 
-        let pubrec = PubrecPacket::new(pub_pk_id);
         let packet = control0.read_packet().await;
-        let expected_packet = VariablePacket::PubrecPacket(pubrec);
+        let expected_packet = Packet::Pubrec(pub_pk_id);
         assert_eq!(packet, expected_packet);
     }
 

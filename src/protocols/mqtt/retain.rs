@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use dashmap::DashMap;
-use mqtt::{qos::QualityOfService, TopicName};
+use mqtt_proto::{QoS, TopicName};
 
 use super::route::{split_topic, MATCH_ALL, MATCH_ONE};
 use crate::state::ClientId;
@@ -19,10 +19,10 @@ struct RetainNode {
     nodes: Arc<DashMap<String, RetainNode>>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RetainContent {
     pub topic_name: TopicName,
-    pub qos: QualityOfService,
+    pub qos: QoS,
     pub payload: Bytes,
     pub client_id: ClientId,
 }
@@ -153,7 +153,7 @@ impl RetainNode {
 impl RetainContent {
     pub fn new(
         topic_name: TopicName,
-        qos: QualityOfService,
+        qos: QoS,
         payload: Bytes,
         client_id: ClientId,
     ) -> RetainContent {
@@ -170,13 +170,11 @@ impl RetainContent {
 mod tests {
     use super::*;
     use Action::*;
-    use QualityOfService::*;
+    use QoS::*;
 
-    impl From<(&str, QualityOfService, Vec<u8>, u64)> for RetainContent {
-        fn from(
-            (topic_name, qos, payload, client_id): (&str, QualityOfService, Vec<u8>, u64),
-        ) -> RetainContent {
-            let topic_name = unsafe { TopicName::new_unchecked(topic_name.to_string()) };
+    impl From<(&str, QoS, Vec<u8>, u64)> for RetainContent {
+        fn from((topic_name, qos, payload, client_id): (&str, QoS, Vec<u8>, u64)) -> RetainContent {
+            let topic_name = TopicName::try_from(topic_name.to_owned()).unwrap();
             let client_id = ClientId(client_id);
             let payload = Bytes::from(payload);
             Self::new(topic_name, qos, payload, client_id)
@@ -207,9 +205,13 @@ mod tests {
                 }
                 Query(topic_filter, retains) => {
                     let mut rv = table.get_matches(topic_filter);
-                    rv.sort();
+                    rv.sort_by_key(|v| {
+                        (v.topic_name.clone(), v.qos, v.payload.clone(), v.client_id)
+                    });
                     let mut retains = retains.into_iter().map(Arc::new).collect::<Vec<_>>();
-                    retains.sort();
+                    retains.sort_by_key(|v| {
+                        (v.topic_name.clone(), v.qos, v.payload.clone(), v.client_id)
+                    });
                     assert_eq!(
                         retains, rv,
                         "\nrv: {:#?}\nexpected: {:#?}\ntable: {:#?}",

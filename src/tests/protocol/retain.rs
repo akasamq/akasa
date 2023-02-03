@@ -1,10 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use mqtt::{
-    control::variable_header::ConnectReturnCode, packet::publish::QoSWithPacketIdentifier,
-    packet::suback::SubscribeReturnCode, packet::*, qos::QualityOfService, TopicFilter, TopicName,
-};
+use bytes::Bytes;
+use mqtt_proto::v3::*;
+use mqtt_proto::*;
 use tokio::time::sleep;
 use ConnectReturnCode::*;
 
@@ -17,56 +16,61 @@ async fn test_retain_simple() {
     let (conn, mut control) = MockConn::new(3333, Config::default());
     let task = control.start(conn);
 
-    let connect = ConnectPacket::new("client identifier");
-    let connack = ConnackPacket::new(false, ConnectionAccepted);
+    let connect = Connect::new(Arc::new("client identifier".to_owned()), 10);
+    let connack = Connack::new(false, Accepted);
     control.write_packet(connect.into()).await;
     let packet = control.read_packet().await;
-    let expected_packet = VariablePacket::ConnackPacket(connack);
+    let expected_packet = Packet::Connack(connack);
     assert_eq!(packet, expected_packet);
 
-    let pub_pk_id: u16 = 22;
-    let mut publish = PublishPacket::new(
-        TopicName::new("xyz/1").unwrap(),
-        QoSWithPacketIdentifier::Level1(pub_pk_id),
-        vec![3, 5, 55],
+    let pub_pk_id = Pid::try_from(22).unwrap();
+    let mut publish = Publish::new(
+        QosPid::Level1(pub_pk_id),
+        TopicName::try_from("xyz/1".to_owned()).unwrap(),
+        Bytes::from(vec![3, 5, 55]),
     );
-    publish.set_retain(true);
-    let puback = PubackPacket::new(pub_pk_id);
+    publish.retain = true;
     control.write_packet(publish.into()).await;
     let packet = control.read_packet().await;
-    let expected_packet = VariablePacket::PubackPacket(puback);
+    let expected_packet = Packet::Puback(pub_pk_id);
     assert_eq!(packet, expected_packet);
 
-    let sub_pk_id: u16 = 23;
-    let subscribe = SubscribePacket::new(
+    let sub_pk_id = Pid::try_from(23).unwrap();
+    let subscribe = Subscribe::new(
         sub_pk_id,
         vec![
-            (TopicFilter::new("abc/0").unwrap(), QualityOfService::Level0),
-            (TopicFilter::new("xyz/1").unwrap(), QualityOfService::Level1),
+            (
+                TopicFilter::try_from("abc/0".to_owned()).unwrap(),
+                QoS::Level0,
+            ),
+            (
+                TopicFilter::try_from("xyz/1".to_owned()).unwrap(),
+                QoS::Level1,
+            ),
         ],
     );
     control.write_packet(subscribe.into()).await;
 
-    let pub_pk_id: u16 = 0;
-    let mut publish = PublishPacket::new(
-        TopicName::new("xyz/1").unwrap(),
-        QoSWithPacketIdentifier::Level1(pub_pk_id),
-        vec![3, 5, 55],
+    let pub_pk_id = Pid::default();
+    let mut publish = Publish::new(
+        QosPid::Level1(pub_pk_id),
+        TopicName::try_from("xyz/1".to_owned()).unwrap(),
+        Bytes::from(vec![3, 5, 55]),
     );
-    publish.set_retain(true);
+    publish.retain = true;
     let packet = control.read_packet().await;
-    let expected_packet = VariablePacket::PublishPacket(publish);
+    let expected_packet = Packet::Publish(publish);
     assert_eq!(packet, expected_packet);
 
-    let suback = SubackPacket::new(
+    let suback = Suback::new(
         sub_pk_id,
         vec![
-            SubscribeReturnCode::MaximumQoSLevel0,
-            SubscribeReturnCode::MaximumQoSLevel1,
+            SubscribeReturnCode::MaxLevel0,
+            SubscribeReturnCode::MaxLevel1,
         ],
     );
     let packet = control.read_packet().await;
-    let expected_packet = VariablePacket::SubackPacket(suback);
+    let expected_packet = Packet::Suback(suback);
     assert_eq!(packet, expected_packet);
 
     sleep(Duration::from_millis(10)).await;
@@ -85,67 +89,74 @@ async fn test_retain_different_clients() {
     let (conn2, mut control2) = MockConn::new_with_global(222, global);
     let task2 = control2.start(conn2);
 
-    let connack = ConnackPacket::new(false, ConnectionAccepted);
+    let connack = Connack::new(false, Accepted);
     // client 1: publish retain message
     {
-        let connect1 = ConnectPacket::new("client identifier 1");
+        let connect1 = Connect::new(Arc::new("client identifier 1".to_owned()), 10);
         control1.write_packet(connect1.into()).await;
         let packet = control1.read_packet().await;
-        let expected_packet = VariablePacket::ConnackPacket(connack.clone());
+        let expected_packet = Packet::Connack(connack.clone());
         assert_eq!(packet, expected_packet);
 
-        let pub_pk_id: u16 = 11;
-        let mut publish = PublishPacket::new(
-            TopicName::new("xyz/1").unwrap(),
-            QoSWithPacketIdentifier::Level1(pub_pk_id),
-            vec![3, 5, 55],
+        let pub_pk_id = Pid::try_from(11).unwrap();
+        let mut publish = Publish::new(
+            QosPid::Level1(pub_pk_id),
+            TopicName::try_from("xyz/1".to_owned()).unwrap(),
+            Bytes::from(vec![3, 5, 55]),
         );
-        publish.set_retain(true);
-        let puback = PubackPacket::new(pub_pk_id);
+        publish.retain = true;
         control1.write_packet(publish.into()).await;
         let packet = control1.read_packet().await;
-        let expected_packet = VariablePacket::PubackPacket(puback);
+        let expected_packet = Packet::Puback(pub_pk_id);
         assert_eq!(packet, expected_packet);
     }
 
     // client 2: subscribe and received a retain message
     {
-        let connect2 = ConnectPacket::new("client identifier 2");
+        let connect2 = Connect::new(Arc::new("client identifier 2".to_owned()), 10);
         control2.write_packet(connect2.into()).await;
         let packet = control2.read_packet().await;
-        let expected_packet = VariablePacket::ConnackPacket(connack.clone());
+        let expected_packet = Packet::Connack(connack.clone());
         assert_eq!(packet, expected_packet);
 
         // subscribe multiple times
-        for (sub_pk_id, pub_pk_id) in [(22, 0), (23, 1)] {
-            let subscribe = SubscribePacket::new(
+        for (sub_pk_id, pub_pk_id) in [(22, 1), (23, 2)] {
+            let sub_pk_id = Pid::try_from(sub_pk_id).unwrap();
+            let pub_pk_id = Pid::try_from(pub_pk_id).unwrap();
+            let subscribe = Subscribe::new(
                 sub_pk_id,
                 vec![
-                    (TopicFilter::new("abc/0").unwrap(), QualityOfService::Level0),
-                    (TopicFilter::new("xyz/1").unwrap(), QualityOfService::Level1),
+                    (
+                        TopicFilter::try_from("abc/0".to_owned()).unwrap(),
+                        QoS::Level0,
+                    ),
+                    (
+                        TopicFilter::try_from("xyz/1".to_owned()).unwrap(),
+                        QoS::Level1,
+                    ),
                 ],
             );
             control2.write_packet(subscribe.into()).await;
 
-            let mut publish = PublishPacket::new(
-                TopicName::new("xyz/1").unwrap(),
-                QoSWithPacketIdentifier::Level1(pub_pk_id),
-                vec![3, 5, 55],
+            let mut publish = Publish::new(
+                QosPid::Level1(pub_pk_id),
+                TopicName::try_from("xyz/1".to_owned()).unwrap(),
+                Bytes::from(vec![3, 5, 55]),
             );
-            publish.set_retain(true);
+            publish.retain = true;
             let packet = control2.read_packet().await;
-            let expected_packet = VariablePacket::PublishPacket(publish);
+            let expected_packet = Packet::Publish(publish);
             assert_eq!(packet, expected_packet);
 
-            let suback = SubackPacket::new(
+            let suback = Suback::new(
                 sub_pk_id,
                 vec![
-                    SubscribeReturnCode::MaximumQoSLevel0,
-                    SubscribeReturnCode::MaximumQoSLevel1,
+                    SubscribeReturnCode::MaxLevel0,
+                    SubscribeReturnCode::MaxLevel1,
                 ],
             );
             let packet = control2.read_packet().await;
-            let expected_packet = VariablePacket::SubackPacket(suback);
+            let expected_packet = Packet::Suback(suback);
             assert_eq!(packet, expected_packet);
         }
     }

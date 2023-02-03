@@ -1,8 +1,9 @@
+use std::ops::Deref;
 use std::sync::Arc;
 
 use dashmap::DashMap;
 use hashbrown::HashMap;
-use mqtt::{qos::QualityOfService, TopicFilter};
+use mqtt_proto::{QoS, TopicFilter, TopicName};
 use parking_lot::RwLock;
 
 use crate::state::ClientId;
@@ -25,7 +26,7 @@ pub struct RouteContent {
     /// Returned RouteContent always have topic_filter
     // I wonder if `topic_filter` field is worth saving, since it cost quite some memory.
     pub topic_filter: Option<TopicFilter>,
-    pub clients: HashMap<ClientId, QualityOfService>,
+    pub clients: HashMap<ClientId, QoS>,
 }
 
 impl RouteTable {
@@ -35,8 +36,8 @@ impl RouteTable {
         }
     }
 
-    pub fn get_matches(&self, topic_name: &str) -> Vec<Arc<RwLock<RouteContent>>> {
-        let (topic_item, rest_items) = split_topic(topic_name);
+    pub fn get_matches(&self, topic_name: &TopicName) -> Vec<Arc<RwLock<RouteContent>>> {
+        let (topic_item, rest_items) = split_topic(topic_name.deref());
         let mut filters = Vec::new();
         for item in [topic_item, MATCH_ALL, MATCH_ONE] {
             if let Some(pair) = self.nodes.get(item) {
@@ -46,8 +47,8 @@ impl RouteTable {
         filters
     }
 
-    pub fn subscribe(&self, topic_filter: &str, id: ClientId, qos: QualityOfService) {
-        let (filter_item, rest_items) = split_topic(topic_filter);
+    pub fn subscribe(&self, topic_filter: &TopicFilter, id: ClientId, qos: QoS) {
+        let (filter_item, rest_items) = split_topic(topic_filter.deref());
         // Since subscribe is not an frequent action, string clone here is acceptable.
         self.nodes
             .entry(filter_item.to_string())
@@ -55,8 +56,8 @@ impl RouteTable {
             .insert(topic_filter, rest_items, id, qos);
     }
 
-    pub fn unsubscribe(&self, topic_filter: &str, id: ClientId) {
-        let (filter_item, rest_items) = split_topic(topic_filter);
+    pub fn unsubscribe(&self, topic_filter: &TopicFilter, id: ClientId) {
+        let (filter_item, rest_items) = split_topic(topic_filter.deref());
         // bool variable is for resolve dead lock of access `self.nodes`
         let mut remove_node = false;
         if let Some(mut pair) = self.nodes.get_mut(filter_item) {
@@ -112,10 +113,10 @@ impl RouteNode {
 
     fn insert(
         &self,
-        topic_filter: &str,
+        topic_filter: &TopicFilter,
         filter_items: Option<&str>,
         id: ClientId,
-        qos: QualityOfService,
+        qos: QoS,
     ) {
         if let Some(filter_items) = filter_items {
             let (filter_item, rest_items) = split_topic(filter_items);
@@ -126,7 +127,7 @@ impl RouteNode {
         } else {
             let mut content = self.content.write();
             if content.topic_filter.is_none() {
-                content.topic_filter = Some(unsafe { TopicFilter::new_unchecked(topic_filter) });
+                content.topic_filter = Some(topic_filter.clone());
             }
             content.clients.insert(id, qos);
         }
@@ -182,11 +183,11 @@ pub(crate) fn split_topic(topic: &str) -> (&str, Option<&str>) {
 mod tests {
     use super::*;
     use hashbrown::HashMap;
-    use mqtt::TopicName;
+    use mqtt_proto::TopicName;
     use Action::*;
 
     impl RouteContent {
-        fn to_simple(&self) -> (Option<String>, HashMap<ClientId, QualityOfService>) {
+        fn to_simple(&self) -> (Option<String>, HashMap<ClientId, QoS>) {
             let filter = self.topic_filter.as_ref().map(|v| v.to_string());
             let clients = self.clients.clone();
             (filter, clients)
@@ -209,29 +210,31 @@ mod tests {
             match action.clone() {
                 Sub(filter, id) => {
                     table.subscribe(
-                        &TopicFilter::new(filter).unwrap(),
+                        &TopicFilter::try_from(filter.to_owned()).unwrap(),
                         ClientId(id),
-                        QualityOfService::Level0,
+                        QoS::Level0,
                     );
                 }
                 UnSub(filter, id) => {
-                    table.unsubscribe(&TopicFilter::new(filter).unwrap(), ClientId(id));
+                    table.unsubscribe(
+                        &TopicFilter::try_from(filter.to_owned()).unwrap(),
+                        ClientId(id),
+                    );
                 }
                 Query(name, expected) => {
-                    let mut expected_items: Vec<(String, HashMap<ClientId, QualityOfService>)> =
-                        expected
-                            .into_iter()
-                            .map(|(k, v)| {
-                                (
-                                    k.to_string(),
-                                    v.into_iter()
-                                        .map(|v| (ClientId(v), QualityOfService::Level0))
-                                        .collect::<HashMap<_, _>>(),
-                                )
-                            })
-                            .collect();
-                    let mut items: Vec<(String, HashMap<ClientId, QualityOfService>)> = table
-                        .get_matches(&TopicName::new(name).unwrap())
+                    let mut expected_items: Vec<(String, HashMap<ClientId, QoS>)> = expected
+                        .into_iter()
+                        .map(|(k, v)| {
+                            (
+                                k.to_string(),
+                                v.into_iter()
+                                    .map(|v| (ClientId(v), QoS::Level0))
+                                    .collect::<HashMap<_, _>>(),
+                            )
+                        })
+                        .collect();
+                    let mut items: Vec<(String, HashMap<ClientId, QoS>)> = table
+                        .get_matches(&TopicName::try_from(name.to_owned()).unwrap())
                         .into_iter()
                         .map(|content| {
                             let (k, v) = content.read().to_simple();

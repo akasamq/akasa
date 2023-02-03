@@ -1,3 +1,4 @@
+use std::fmt;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
@@ -9,7 +10,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use dashmap::DashMap;
 use flume::{bounded, Receiver, Sender};
-use mqtt::{QualityOfService, TopicFilter, TopicName};
+use mqtt_proto::{QoS, TopicFilter, TopicName};
 use parking_lot::Mutex;
 
 use crate::config::Config;
@@ -202,16 +203,22 @@ pub enum InternalMessage {
     Kick { reason: String },
     /// A publish message matched
     Publish {
-        topic_name: Arc<TopicName>,
-        qos: QualityOfService,
+        topic_name: TopicName,
+        qos: QoS,
         payload: Bytes,
-        subscribe_filter: Arc<TopicFilter>,
-        subscribe_qos: QualityOfService,
+        subscribe_filter: TopicFilter,
+        subscribe_qos: QoS,
     },
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
 pub struct ClientId(pub u64);
+
+impl fmt::Display for ClientId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "client#{}", self.0)
+    }
+}
 
 pub enum AddClientReceipt {
     Present(SessionState),

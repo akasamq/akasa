@@ -4,7 +4,7 @@ use std::time::Instant;
 use bytes::Bytes;
 use flume::Receiver;
 use hashbrown::HashMap;
-use mqtt::{control::ProtocolLevel, qos::QualityOfService, TopicFilter, TopicName};
+use mqtt_proto::{Pid, Protocol, QoS, TopicFilter, TopicName};
 use parking_lot::RwLock;
 
 use crate::config::Config;
@@ -15,31 +15,31 @@ use super::pending::PendingPackets;
 pub struct Session {
     pub(super) connected: bool,
     pub(super) disconnected: bool,
-    pub(super) protocol_level: ProtocolLevel,
+    pub(super) protocol: Protocol,
     // last package timestamp
     pub(super) last_packet_time: Arc<RwLock<Instant>>,
     // For record packet id send from server to client
-    pub(super) server_packet_id: u64,
+    pub(super) server_packet_id: Pid,
     pub(super) pending_packets: PendingPackets,
 
     pub(super) client_id: ClientId,
-    pub(super) client_identifier: String,
-    pub(super) username: Option<String>,
+    pub(super) client_identifier: Arc<String>,
+    pub(super) username: Option<Arc<String>>,
     pub(super) keep_alive: u16,
     pub(super) clean_session: bool,
     pub(super) will: Option<Will>,
-    pub(super) subscribes: HashMap<TopicFilter, QualityOfService>,
+    pub(super) subscribes: HashMap<TopicFilter, QoS>,
 }
 
 pub struct SessionState {
-    pub protocol_level: ProtocolLevel,
+    pub protocol: Protocol,
     // For record packet id send from server to client
-    pub server_packet_id: u64,
+    pub server_packet_id: Pid,
     pub pending_packets: PendingPackets,
     pub receiver: Receiver<(ClientId, InternalMessage)>,
 
     pub client_id: ClientId,
-    pub subscribes: HashMap<TopicFilter, QualityOfService>,
+    pub subscribes: HashMap<TopicFilter, QoS>,
 }
 
 impl Session {
@@ -47,9 +47,9 @@ impl Session {
         Session {
             connected: false,
             disconnected: false,
-            protocol_level: ProtocolLevel::Version311,
+            protocol: Protocol::V311,
             last_packet_time: Arc::new(RwLock::new(Instant::now())),
-            server_packet_id: 0,
+            server_packet_id: Pid::default(),
             pending_packets: PendingPackets::new(
                 config.max_inflight,
                 config.max_in_mem_pending_messages,
@@ -57,7 +57,7 @@ impl Session {
             ),
 
             client_id: ClientId(u64::max_value()),
-            client_identifier: String::new(),
+            client_identifier: Arc::new(String::new()),
             username: None,
             keep_alive: 0,
             clean_session: true,
@@ -78,11 +78,11 @@ impl Session {
     pub fn client_id(&self) -> ClientId {
         self.client_id
     }
-    pub fn subscribes(&self) -> &HashMap<TopicFilter, QualityOfService> {
+    pub fn subscribes(&self) -> &HashMap<TopicFilter, QoS> {
         &self.subscribes
     }
 
-    pub(crate) fn incr_server_packet_id(&mut self) -> u64 {
+    pub(crate) fn incr_server_packet_id(&mut self) -> Pid {
         let old_value = self.server_packet_id;
         self.server_packet_id += 1;
         old_value
@@ -91,18 +91,18 @@ impl Session {
 
 #[derive(Debug, Clone)]
 pub struct PubPacket {
-    pub topic_name: Arc<TopicName>,
-    pub qos: QualityOfService,
+    pub topic_name: TopicName,
+    pub qos: QoS,
     pub retain: bool,
     pub payload: Bytes,
-    pub subscribe_filter: Arc<TopicFilter>,
-    pub subscribe_qos: QualityOfService,
+    pub subscribe_filter: TopicFilter,
+    pub subscribe_qos: QoS,
 }
 
 #[derive(Debug, Clone)]
 pub struct Will {
     pub retain: bool,
-    pub qos: QualityOfService,
+    pub qos: QoS,
     pub topic: TopicName,
-    pub message: Vec<u8>,
+    pub message: Bytes,
 }
