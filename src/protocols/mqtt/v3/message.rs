@@ -17,8 +17,8 @@ use mqtt_proto::{
 use crate::config::AuthType;
 use crate::state::{AddClientReceipt, ClientId, Executor, GlobalState, InternalMessage};
 
-use super::super::RetainContent;
-use super::{PendingPacketStatus, PendingPackets, PubPacket, Session, SessionState, Will};
+use super::super::{PendingPacketStatus, PendingPackets, RetainContent};
+use super::{PubPacket, Session, SessionState, Will};
 
 pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     session: &mut Session,

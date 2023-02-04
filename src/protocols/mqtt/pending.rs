@@ -3,23 +3,22 @@
 //!
 use std::cmp;
 use std::collections::VecDeque;
+use std::fmt::Debug;
 use std::io;
 use std::time::SystemTime;
 
-use mqtt_proto::{Pid, QoS};
+use mqtt_proto::Pid;
 
-use super::session::PubPacket;
-
-pub struct PendingPackets {
+pub struct PendingPackets<P> {
     max_inflight: usize,
     max_packets: usize,
     // The ack packet timeout, when reached resent the packet
     timeout: u64,
-    packets: VecDeque<PendingPacketStatus>,
+    packets: VecDeque<PendingPacketStatus<P>>,
 }
 
-impl PendingPackets {
-    pub fn new(max_inflight: usize, max_packets: usize, timeout: u64) -> PendingPackets {
+impl<P: Debug> PendingPackets<P> {
+    pub fn new(max_inflight: usize, max_packets: usize, timeout: u64) -> PendingPackets<P> {
         PendingPackets {
             max_inflight,
             max_packets,
@@ -28,8 +27,7 @@ impl PendingPackets {
         }
     }
 
-    pub fn push_back(&mut self, pid: Pid, packet: PubPacket) -> io::Result<()> {
-        assert!(packet.qos != QoS::Level0);
+    pub fn push_back(&mut self, pid: Pid, packet: P) -> io::Result<()> {
         if self.packets.len() >= self.max_packets {
             log::error!(
                 "drop packet {:?}, due to too many packets in the queue: {}",
@@ -109,7 +107,7 @@ impl PendingPackets {
     pub fn get_ready_packet(
         &mut self,
         start_idx: usize,
-    ) -> Option<(usize, &mut PendingPacketStatus)> {
+    ) -> Option<(usize, &mut PendingPacketStatus<P>)> {
         let now_ts = get_unix_ts();
         let current_inflight = cmp::min(self.max_inflight as usize, self.packets.len());
         let mut next_idx = None;
@@ -141,12 +139,12 @@ impl PendingPackets {
     }
 }
 
-pub enum PendingPacketStatus {
+pub enum PendingPacketStatus<P> {
     New {
         // Last sent this packet timestamp as seconds
         last_sent: u64,
         pid: Pid,
-        packet: PubPacket,
+        packet: P,
         dup: bool,
     },
     Pubrec {

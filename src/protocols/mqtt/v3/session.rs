@@ -10,7 +10,7 @@ use parking_lot::RwLock;
 use crate::config::Config;
 use crate::state::{ClientId, InternalMessage};
 
-use super::pending::PendingPackets;
+use super::super::PendingPackets;
 
 pub struct Session {
     pub(super) connected: bool,
@@ -20,7 +20,7 @@ pub struct Session {
     pub(super) last_packet_time: Arc<RwLock<Instant>>,
     // For record packet id send from server to client
     pub(super) server_packet_id: Pid,
-    pub(super) pending_packets: PendingPackets,
+    pub(super) pending_packets: PendingPackets<PubPacket>,
 
     pub(super) client_id: ClientId,
     pub(super) client_identifier: Arc<String>,
@@ -35,7 +35,7 @@ pub struct SessionState {
     pub protocol: Protocol,
     // For record packet id send from server to client
     pub server_packet_id: Pid,
-    pub pending_packets: PendingPackets,
+    pub pending_packets: PendingPackets<PubPacket>,
     pub receiver: Receiver<(ClientId, InternalMessage)>,
 
     pub client_id: ClientId,
