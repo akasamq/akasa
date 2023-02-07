@@ -13,9 +13,14 @@ use futures_lite::{
     FutureExt,
 };
 use mqtt_proto::{
-    v3::{
-        Connack, Connect, ConnectReturnCode, Header, Packet, Publish, Suback, Subscribe,
-        Unsubscribe,
+    v5::{
+        Auth, AuthProperties, AuthReasonCode, Connack, ConnackProperties, Connect,
+        ConnectProperties, ConnectReasonCode, Disconnect, DisconnectProperties,
+        DisconnectReasonCode, ErrorV5, Header, Packet, Puback, PubackProperties, PubackReasonCode,
+        Pubcomp, PubcompProperties, PubcompReasonCode, Publish, PublishProperties, Pubrec,
+        PubrecProperties, PubrecReasonCode, Pubrel, PubrelProperties, PubrelReasonCode, Suback,
+        SubackProperties, Subscribe, SubscribeProperties, SubscribeReasonCode, Unsuback,
+        UnsubackProperties, Unsubscribe, UnsubscribeReasonCode,
     },
     Pid, Protocol, QoS, QosPid, TopicFilter, TopicName,
 };
@@ -72,7 +77,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     mut conn: T,
     peer: SocketAddr,
-    _header: Header,
+    header: Header,
     protocol: Protocol,
     executor: &E,
     global: &Arc<GlobalState>,
@@ -86,10 +91,10 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     let mut receiver = None;
     let mut io_error = None;
 
-    let packet = match Connect::decode_with_protocol(&mut conn, protocol).await {
+    let packet = match Connect::decode_with_protocol(&mut conn, header, protocol).await {
         Ok(packet) => packet,
         Err(err) => {
-            log::debug!("mqtt v3.x connect codec error: {}", err);
+            log::debug!("mqtt v5.x connect codec error: {}", err);
             return Err(io::ErrorKind::InvalidData.into());
         }
     };
@@ -173,6 +178,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     if !session.disconnected() {
         handle_will(&mut session, &mut conn, global).await?;
     }
+    // FIXME: See: MQTT 3.1.2.11.2 for more details
     if session.clean_session() {
         global.remove_client(session.client_id());
         for filter in session.subscribes().keys() {
@@ -232,7 +238,7 @@ async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
         r#"{} received a connect packet:
      protocol : {}
     client_id : {}
-clean session : {}
+  clean start : {}
      username : {:?}
      password : {:?}
    keep-alive : {}s
@@ -240,22 +246,14 @@ clean session : {}
         session.peer,
         packet.protocol,
         packet.client_id,
-        packet.clean_session,
+        packet.clean_start,
         packet.username,
         packet.password,
         packet.keep_alive,
         packet.last_will,
     );
-    if packet.protocol == Protocol::V310
-        && (packet.client_id.is_empty() || packet.client_id.len() > 23)
-    {
-        let rv_packet = Connack::new(false, ConnectReturnCode::IdentifierRejected);
-        write_packet(session.client_id, conn, &rv_packet.into()).await?;
-        session.disconnected = true;
-        return Ok(());
-    }
 
-    let mut return_code = ConnectReturnCode::Accepted;
+    let mut reason_code = ConnectReasonCode::Success;
     // FIXME: auth by plugin
     for auth_type in &global.config.auth_types {
         match auth_type {
@@ -269,19 +267,23 @@ clean session : {}
                         != packet.password.as_ref().map(|s| s.as_ref())
                     {
                         log::debug!("incorrect password for user: {}", username);
-                        return_code = ConnectReturnCode::BadUserNameOrPassword;
+                        reason_code = ConnectReasonCode::BadUserNameOrPassword;
                     }
                 } else {
                     log::debug!("username password not set for client: {}", packet.client_id);
-                    return_code = ConnectReturnCode::BadUserNameOrPassword;
+                    reason_code = ConnectReasonCode::BadUserNameOrPassword;
                 }
             }
             _ => panic!("auth method not supported: {:?}", auth_type),
         }
     }
     // FIXME: permission check and return "not authorized"
-    if return_code != ConnectReturnCode::Accepted {
-        let rv_packet = Connack::new(false, return_code);
+    if reason_code != ConnectReasonCode::Success {
+        let rv_packet = Connack {
+            session_present: false,
+            reason_code,
+            properties: ConnackProperties::default(),
+        };
         write_packet(session.client_id, conn, &rv_packet.into()).await?;
         session.disconnected = true;
         return Ok(());
@@ -290,7 +292,7 @@ clean session : {}
     // FIXME: if connection reach rate limit return "Server unavailable"
 
     session.protocol = packet.protocol;
-    session.clean_session = packet.clean_session;
+    session.clean_start = packet.clean_start;
     session.client_identifier = if packet.client_id.is_empty() {
         Arc::new(uuid::Uuid::new_v4().to_string())
     } else {
@@ -346,7 +348,8 @@ clean session : {}
             retain: last_will.retain,
             qos: last_will.qos,
             topic_name: last_will.topic_name,
-            message: last_will.message,
+            payload: last_will.payload,
+            properties: last_will.properties,
         };
         session.will = Some(will);
     }
@@ -356,30 +359,30 @@ clean session : {}
         .add_client(session.client_identifier.as_str(), session.protocol)
         .await
     {
-        AddClientReceipt::PresentV3(old_state) => {
+        AddClientReceipt::PresentV3(_) => {
+            // not allowed, so this is dead branch.
+            unreachable!()
+        }
+        AddClientReceipt::PresentV5(old_state) => {
             log::debug!("Got exists session for {}", old_state.client_id);
             session.client_id = old_state.client_id;
             *receiver = Some(old_state.receiver);
             // TODO: if protocol level is compatiable, copy the session state?
-            if !session.clean_session && session.protocol == old_state.protocol {
+            if !session.clean_start && session.protocol == old_state.protocol {
                 session.server_packet_id = old_state.server_packet_id;
                 session.pending_packets = old_state.pending_packets;
                 session.subscribes = old_state.subscribes;
                 session_present = true;
             } else {
                 log::info!(
-                    "{} session state removed due to reconnect with a different protocol version, new: {}, old: {}, or clean session: {}",
+                    "{} session state removed due to reconnect with a different protocol version, new: {}, old: {}, or clean start: {}",
                     old_state.pending_packets.len(),
                     session.protocol,
                     old_state.protocol,
-                    session.clean_session,
+                    session.clean_start,
                 );
                 session_present = false;
             }
-        }
-        AddClientReceipt::PresentV5(_) => {
-            // not allowed, so this is dead branch.
-            unreachable!();
         }
         AddClientReceipt::New {
             client_id,
@@ -393,7 +396,11 @@ clean session : {}
 
     log::debug!("Socket {} assgined to: {}", session.peer, session.client_id);
 
-    let rv_packet = Connack::new(session_present, return_code);
+    let rv_packet = Connack {
+        session_present,
+        reason_code,
+        properties: ConnackProperties::default(),
+    };
     write_packet(session.client_id, conn, &rv_packet.into()).await?;
     session.connected = true;
     after_handle_packet(session, conn).await?;
@@ -409,7 +416,7 @@ async fn handle_packet<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     let packet = match Packet::decode_async(conn).await {
         Ok(packet) => packet,
         Err(err) => {
-            log::debug!("mqtt v3.x codec error: {}", err);
+            log::debug!("mqtt v5.x codec error: {}", err);
             if err.is_eof() {
                 if !session.disconnected {
                     return Err(io::ErrorKind::UnexpectedEof.into());
@@ -422,12 +429,13 @@ async fn handle_packet<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         }
     };
     match packet {
-        Packet::Disconnect => handle_disconnect(session, conn, global).await?,
+        Packet::Disconnect(pkt) => handle_disconnect(session, pkt, conn, global).await?,
+        Packet::Auth(pkt) => handle_auth(session, pkt, conn, global).await?,
         Packet::Publish(pkt) => handle_publish(session, pkt, conn, global).await?,
-        Packet::Puback(pid) => handle_puback(session, pid, conn, global).await?,
-        Packet::Pubrec(pid) => handle_pubrec(session, pid, conn, global).await?,
-        Packet::Pubrel(pid) => handle_pubrel(session, pid, conn, global).await?,
-        Packet::Pubcomp(pid) => handle_pubcomp(session, pid, conn, global).await?,
+        Packet::Puback(pkt) => handle_puback(session, pkt, conn, global).await?,
+        Packet::Pubrec(pkt) => handle_pubrec(session, pkt, conn, global).await?,
+        Packet::Pubrel(pkt) => handle_pubrel(session, pkt, conn, global).await?,
+        Packet::Pubcomp(pkt) => handle_pubcomp(session, pkt, conn, global).await?,
         Packet::Subscribe(pkt) => handle_subscribe(session, pkt, conn, global).await?,
         Packet::Unsubscribe(pkt) => handle_unsubscribe(session, pkt, conn, global).await?,
         Packet::Pingreq => handle_pingreq(session, conn, global).await?,
@@ -440,6 +448,7 @@ async fn handle_packet<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 #[inline]
 async fn handle_disconnect<T: AsyncWrite + Unpin>(
     session: &mut Session,
+    packet: Disconnect,
     _conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
@@ -447,6 +456,16 @@ async fn handle_disconnect<T: AsyncWrite + Unpin>(
     session.will = None;
     session.disconnected = true;
     Ok(())
+}
+
+#[inline]
+async fn handle_auth<T: AsyncWrite + Unpin>(
+    session: &mut Session,
+    packet: Auth,
+    _conn: &mut T,
+    _global: &Arc<GlobalState>,
+) -> io::Result<()> {
+    todo!()
 }
 
 #[inline]
@@ -488,10 +507,26 @@ topic name : {}
         global,
     )
     .await;
+    // FIXME: reason code
+    // FIXME: properties
     match packet.qos_pid {
         QosPid::Level0 => {}
-        QosPid::Level1(pid) => write_packet(session.client_id, conn, &Packet::Puback(pid)).await?,
-        QosPid::Level2(pid) => write_packet(session.client_id, conn, &Packet::Pubrec(pid)).await?,
+        QosPid::Level1(pid) => {
+            let rv_packet = Puback {
+                pid,
+                reason_code: PubackReasonCode::Success,
+                properties: PubackProperties::default(),
+            };
+            write_packet(session.client_id, conn, &rv_packet.into()).await?
+        }
+        QosPid::Level2(pid) => {
+            let rv_packet = Pubrec {
+                pid,
+                reason_code: PubrecReasonCode::Success,
+                properties: PubrecProperties::default(),
+            };
+            write_packet(session.client_id, conn, &rv_packet.into()).await?
+        }
     }
     Ok(())
 }
@@ -499,65 +534,75 @@ topic name : {}
 #[inline]
 async fn handle_puback<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    pid: Pid,
+    packet: Puback,
     _conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "{} received a puback packet: id={}",
         session.client_id,
-        pid.value()
+        packet.pid.value(),
     );
-    session.pending_packets.complete(pid);
+    session.pending_packets.complete(packet.pid);
     Ok(())
 }
 
 #[inline]
 async fn handle_pubrec<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    pid: Pid,
+    packet: Pubrec,
     conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "{} received a pubrec  packet: id={}",
         session.client_id,
-        pid.value()
+        packet.pid.value()
     );
-    session.pending_packets.pubrec(pid);
-    write_packet(session.client_id, conn, &Packet::Pubrel(pid)).await?;
+    session.pending_packets.pubrec(packet.pid);
+    let rv_packet = Pubrel {
+        pid: packet.pid,
+        reason_code: PubrelReasonCode::Success,
+        properties: PubrelProperties::default(),
+    };
+    write_packet(session.client_id, conn, &rv_packet.into()).await?;
     Ok(())
 }
 
 #[inline]
 async fn handle_pubrel<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    pid: Pid,
+    packet: Pubrel,
     conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "{} received a pubrel  packet: id={}",
         session.client_id,
-        pid.value()
+        packet.pid.value()
     );
-    write_packet(session.client_id, conn, &Packet::Pubcomp(pid)).await?;
+    let rv_packet = Pubcomp {
+        pid: packet.pid,
+        reason_code: PubcompReasonCode::Success,
+        properties: PubcompProperties::default(),
+    };
+    write_packet(session.client_id, conn, &rv_packet.into()).await?;
     Ok(())
 }
 
 #[inline]
 async fn handle_pubcomp<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    pid: Pid,
+    packet: Pubcomp,
     _conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!(
         "{} received a pubcomp packet: id={}",
         session.client_id,
-        pid.value()
+        packet.pid.value()
     );
-    session.pending_packets.complete(pid);
+    session.pending_packets.complete(packet.pid);
     Ok(())
 }
 
@@ -576,9 +621,9 @@ packet id : {}
         packet.pid.value(),
         packet.topics,
     );
-    let mut return_codes = Vec::with_capacity(packet.topics.len());
-    for (filter, qos) in packet.topics {
-        let allowed_qos = cmp::min(qos, global.config.max_allowed_qos());
+    let mut reason_codes = Vec::with_capacity(packet.topics.len());
+    for (filter, sub_opts) in packet.topics {
+        let allowed_qos = cmp::min(sub_opts.max_qos, global.config.max_allowed_qos());
         session.subscribes.insert(filter.clone(), allowed_qos);
         global
             .route_table
@@ -594,14 +639,24 @@ packet id : {}
                     payload: &retain.payload,
                     subscribe_filter: &filter,
                     subscribe_qos: allowed_qos,
+                    properties: &PublishProperties::default(),
                 },
                 Some(conn),
             )
             .await?;
         }
-        return_codes.push(allowed_qos.into());
+        let reason_code = match allowed_qos {
+            QoS::Level0 => SubscribeReasonCode::GrantedQoS0,
+            QoS::Level1 => SubscribeReasonCode::GrantedQoS1,
+            QoS::Level2 => SubscribeReasonCode::GrantedQoS2,
+        };
+        reason_codes.push(reason_code);
     }
-    let rv_packet = Suback::new(packet.pid, return_codes);
+    let rv_packet = Suback {
+        pid: packet.pid,
+        properties: SubackProperties::default(),
+        topics: reason_codes,
+    };
     write_packet(session.client_id, conn, &rv_packet.into()).await?;
     Ok(())
 }
@@ -621,11 +676,22 @@ packet id : {}
         packet.pid.value(),
         packet.topics,
     );
+    let mut reason_codes = Vec::with_capacity(packet.topics.len());
     for filter in packet.topics {
         global.route_table.unsubscribe(&filter, session.client_id);
-        session.subscribes.remove(&filter);
+        let reason_code = if session.subscribes.remove(&filter).is_some() {
+            UnsubscribeReasonCode::Success
+        } else {
+            UnsubscribeReasonCode::NoSubscriptionExisted
+        };
+        reason_codes.push(reason_code);
     }
-    write_packet(session.client_id, conn, &Packet::Unsuback(packet.pid)).await?;
+    let rv_packet = Unsuback {
+        pid: packet.pid,
+        properties: UnsubackProperties::default(),
+        topics: reason_codes,
+    };
+    write_packet(session.client_id, conn, &rv_packet.into()).await?;
     Ok(())
 }
 
@@ -663,7 +729,7 @@ async fn handle_will<T: AsyncWrite + Unpin>(
                 topic_name: &will.topic_name,
                 retain: will.retain,
                 qos: will.qos,
-                payload: &will.message,
+                payload: &will.payload,
             },
             global,
         )
@@ -686,7 +752,11 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
     // queue is full, set a marker to the global state so that the sender stop
     // sending qos0 messages to this client.
     match msg {
-        InternalMessage::OnlineV3 { sender } => {
+        InternalMessage::OnlineV3 { .. } => {
+            log::info!("take over v5.x by v3.x client is not allowed");
+            Ok(false)
+        }
+        InternalMessage::OnlineV5 { sender } => {
             let mut pending_packets = PendingPackets::new(0, 0, 0);
             mem::swap(&mut session.pending_packets, &mut pending_packets);
             let old_state = SessionState {
@@ -701,9 +771,15 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
             sender.send_async(old_state).await.unwrap();
             Ok(true)
         }
-        InternalMessage::OnlineV5 { .. } => {
-            log::info!("take over v3.x by v5.x client is not allowed");
-            Ok(false)
+        InternalMessage::Kick { reason } => {
+            log::info!(
+                "kick {}, reason: {}, offline: {}, network: {}",
+                session.client_id,
+                reason,
+                session.disconnected,
+                conn.is_some(),
+            );
+            Ok(conn.is_some())
         }
         InternalMessage::PublishV3 {
             ref topic_name,
@@ -713,7 +789,7 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
             subscribe_qos,
         } => {
             log::debug!(
-                "{:?} received a v3.x publish message from {:?}",
+                "{:?} received publish message from {:?}",
                 session.client_id,
                 sender
             );
@@ -726,6 +802,7 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
                     payload,
                     subscribe_filter,
                     subscribe_qos,
+                    properties: &PublishProperties::default(),
                 },
                 conn,
             )
@@ -738,10 +815,10 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
             ref payload,
             ref subscribe_filter,
             subscribe_qos,
-            properties: _,
+            ref properties,
         } => {
             log::debug!(
-                "{:?} received a v5.x publish message from {:?}",
+                "{:?} received publish message from {:?}",
                 session.client_id,
                 sender
             );
@@ -754,21 +831,12 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
                     payload,
                     subscribe_filter,
                     subscribe_qos,
+                    properties,
                 },
                 conn,
             )
             .await?;
             Ok(false)
-        }
-        InternalMessage::Kick { reason } => {
-            log::info!(
-                "kick {}, reason: {}, offline: {}, network: {}",
-                session.client_id,
-                reason,
-                session.disconnected,
-                conn.is_some(),
-            );
-            Ok(conn.is_some())
         }
     }
 }
@@ -821,14 +889,15 @@ topic name : {}
 
     if !senders.is_empty() {
         for (sender_client_id, subscribe_filter, subscribe_qos, sender) in senders {
-            let publish = InternalMessage::PublishV3 {
+            let msg = InternalMessage::PublishV5 {
                 topic_name: msg.topic_name.clone(),
                 qos: msg.qos,
                 payload: msg.payload.clone(),
                 subscribe_filter,
                 subscribe_qos,
+                properties: PublishProperties::default(),
             };
-            if let Err(err) = sender.send_async((session.client_id, publish)).await {
+            if let Err(err) = sender.send_async((session.client_id, msg)).await {
                 log::error!(
                     "send publish to connection {} failed: {}",
                     sender_client_id,
@@ -867,6 +936,7 @@ async fn recv_publish<'a, T: AsyncWrite + Unpin>(
                 payload: msg.payload.clone(),
                 subscribe_filter: msg.subscribe_filter.clone(),
                 subscribe_qos: msg.subscribe_qos,
+                properties: msg.properties.clone(),
             },
         ) {
             // TODO: proper handle this error
@@ -882,6 +952,7 @@ async fn recv_publish<'a, T: AsyncWrite + Unpin>(
             retain: msg.retain,
             topic_name: msg.topic_name.clone(),
             payload: msg.payload.clone(),
+            properties: msg.properties.clone(),
         };
         write_packet(session.client_id, conn, &rv_packet.into()).await?;
     }
@@ -913,12 +984,18 @@ async fn handle_pendings<T: AsyncWrite + Unpin>(
                     qos_pid,
                     topic_name: packet.topic_name.clone(),
                     payload: packet.payload.clone(),
+                    properties: packet.properties.clone(),
                 };
                 *dup = true;
                 write_packet(session.client_id, conn, &rv_packet.into()).await?;
             }
             PendingPacketStatus::Pubrec { pid, .. } => {
-                write_packet(session.client_id, conn, &Packet::Pubrel(*pid)).await?;
+                let rv_packet = Pubrel {
+                    pid: *pid,
+                    reason_code: PubrelReasonCode::Success,
+                    properties: PubrelProperties::default(),
+                };
+                write_packet(session.client_id, conn, &rv_packet.into()).await?;
             }
             PendingPacketStatus::Complete => unreachable!(),
         }
@@ -933,7 +1010,10 @@ async fn write_packet<T: AsyncWrite + Unpin>(
     packet: &Packet,
 ) -> io::Result<()> {
     log::debug!("write to {:?} with packet: {:#?}", client_id, packet);
-    packet.encode_async(conn).await?;
+    packet.encode_async(conn).await.map_err(|err| match err {
+        ErrorV5::Common(err) => io::Error::from(err),
+        _ => io::ErrorKind::InvalidData.into(),
+    })?;
     Ok(())
 }
 
@@ -944,6 +1024,7 @@ struct RecvPublish<'a> {
     payload: &'a Bytes,
     subscribe_filter: &'a TopicFilter,
     subscribe_qos: QoS,
+    properties: &'a PublishProperties,
 }
 
 struct SendPublish<'a> {

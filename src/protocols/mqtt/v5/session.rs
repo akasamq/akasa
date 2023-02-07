@@ -5,7 +5,10 @@ use std::time::Instant;
 use bytes::Bytes;
 use flume::Receiver;
 use hashbrown::HashMap;
-use mqtt_proto::{Pid, Protocol, QoS, TopicFilter, TopicName};
+use mqtt_proto::{
+    v5::{PublishProperties, WillProperties},
+    Pid, Protocol, QoS, TopicFilter, TopicName,
+};
 use parking_lot::RwLock;
 
 use crate::config::Config;
@@ -28,9 +31,12 @@ pub struct Session {
     pub(super) client_identifier: Arc<String>,
     pub(super) username: Option<Arc<String>>,
     pub(super) keep_alive: u16,
-    pub(super) clean_session: bool,
+    pub(super) clean_start: bool,
     pub(super) will: Option<Will>,
     pub(super) subscribes: HashMap<TopicFilter, QoS>,
+
+    // properties
+    pub(super) session_expiry_interval: u32,
 }
 
 pub struct SessionState {
@@ -63,9 +69,11 @@ impl Session {
             client_identifier: Arc::new(String::new()),
             username: None,
             keep_alive: 0,
-            clean_session: true,
+            clean_start: true,
             will: None,
             subscribes: HashMap::new(),
+
+            session_expiry_interval: 0,
         }
     }
 
@@ -73,7 +81,8 @@ impl Session {
         &self.peer
     }
     pub fn clean_session(&self) -> bool {
-        self.clean_session
+        // FIXME: this is not that simple
+        self.clean_start && self.session_expiry_interval == 0
     }
     pub fn connected(&self) -> bool {
         self.connected
@@ -103,6 +112,7 @@ pub struct PubPacket {
     pub payload: Bytes,
     pub subscribe_filter: TopicFilter,
     pub subscribe_qos: QoS,
+    pub properties: PublishProperties,
 }
 
 #[derive(Debug, Clone)]
@@ -110,5 +120,6 @@ pub struct Will {
     pub retain: bool,
     pub qos: QoS,
     pub topic_name: TopicName,
-    pub message: Bytes,
+    pub payload: Bytes,
+    pub properties: WillProperties,
 }

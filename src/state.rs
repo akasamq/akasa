@@ -10,11 +10,11 @@ use std::time::Duration;
 use bytes::Bytes;
 use dashmap::DashMap;
 use flume::{bounded, Receiver, Sender};
-use mqtt_proto::{QoS, TopicFilter, TopicName};
+use mqtt_proto::{v5::PublishProperties, Protocol, QoS, TopicFilter, TopicName};
 use parking_lot::Mutex;
 
 use crate::config::Config;
-use crate::protocols::mqtt::{v3::SessionState, RetainTable, RouteTable};
+use crate::protocols::mqtt::{self, RetainTable, RouteTable};
 
 pub struct GlobalState {
     // The next client internal id
@@ -97,7 +97,11 @@ impl GlobalState {
 
     // Client connected
     // TODO: error handling
-    pub async fn add_client(&self, client_identifier: &str) -> AddClientReceipt {
+    pub async fn add_client(
+        &self,
+        client_identifier: &str,
+        protocol: Protocol,
+    ) -> AddClientReceipt {
         let (old_id, internal_sender) = {
             let mut next_client_id = self.next_client_id.lock();
             self.online_clients.fetch_add(1, Ordering::AcqRel);
@@ -117,7 +121,9 @@ impl GlobalState {
                     .insert(client_id, (client_identifier.to_string(), true));
                 self.client_identifier_map
                     .insert(client_identifier.to_string(), client_id);
-                let (sender, receiver) = bounded(4);
+                // FIXME: if some one subscribe topic "#" and never receive the message it will block all sender clients.
+                //   Suggestion: Add QoS0 message to pending queue
+                let (sender, receiver) = bounded(8);
                 self.clients.insert(client_id, sender);
                 next_client_id.0 += 1;
                 return AddClientReceipt::New {
@@ -127,14 +133,25 @@ impl GlobalState {
             }
         };
 
-        let (sender, receiver) = bounded(1);
-        // FIXME: will panic here, handle the error
-        internal_sender
-            .send_async((old_id, InternalMessage::Online { sender }))
-            .await
-            .unwrap();
-        let session_state = receiver.recv_async().await.unwrap();
-        AddClientReceipt::Present(session_state)
+        if (protocol as u8) < 5 {
+            let (sender, receiver) = bounded(1);
+            // FIXME: will panic here, handle the error
+            internal_sender
+                .send_async((old_id, InternalMessage::OnlineV3 { sender }))
+                .await
+                .unwrap();
+            let session_state = receiver.recv_async().await.unwrap();
+            AddClientReceipt::PresentV3(session_state)
+        } else {
+            let (sender, receiver) = bounded(1);
+            // FIXME: will panic here, handle the error
+            internal_sender
+                .send_async((old_id, InternalMessage::OnlineV5 { sender }))
+                .await
+                .unwrap();
+            let session_state = receiver.recv_async().await.unwrap();
+            AddClientReceipt::PresentV5(session_state)
+        }
     }
 }
 
@@ -197,18 +214,32 @@ impl<T: Executor> Executor for Arc<T> {
 
 #[derive(Clone)]
 pub enum InternalMessage {
-    /// The client of the session connected, send the keept session to the connection loop
-    Online { sender: Sender<SessionState> },
-    /// Kick client out (disconnect the client)
-    Kick { reason: String },
+    /// The v3.x client of the session connected, send the keept session to the connection loop
+    OnlineV3 {
+        sender: Sender<mqtt::v3::SessionState>,
+    },
+    /// The v5.x client of the session connected, send the keept session to the connection loop
+    OnlineV5 {
+        sender: Sender<mqtt::v5::SessionState>,
+    },
     /// A publish message matched
-    Publish {
+    PublishV3 {
         topic_name: TopicName,
         qos: QoS,
         payload: Bytes,
         subscribe_filter: TopicFilter,
         subscribe_qos: QoS,
     },
+    PublishV5 {
+        topic_name: TopicName,
+        qos: QoS,
+        payload: Bytes,
+        subscribe_filter: TopicFilter,
+        subscribe_qos: QoS,
+        properties: PublishProperties,
+    },
+    /// Kick client out (disconnect the client)
+    Kick { reason: String },
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
@@ -221,7 +252,8 @@ impl fmt::Display for ClientId {
 }
 
 pub enum AddClientReceipt {
-    Present(SessionState),
+    PresentV3(mqtt::v3::SessionState),
+    PresentV5(mqtt::v5::SessionState),
     New {
         client_id: ClientId,
         receiver: Receiver<(ClientId, InternalMessage)>,
