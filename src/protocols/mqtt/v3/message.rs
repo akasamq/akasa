@@ -4,7 +4,7 @@ use std::mem;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use bytes::Bytes;
 use flume::Receiver;
@@ -23,8 +23,8 @@ use mqtt_proto::{
 use crate::config::AuthType;
 use crate::state::{AddClientReceipt, ClientId, Executor, GlobalState, InternalMessage};
 
-use super::super::{PendingPacketStatus, PendingPackets, RetainContent};
-use super::{PubPacket, Session, SessionState, Will};
+use super::super::{start_keep_alive_timer, PendingPacketStatus, PendingPackets, RetainContent};
+use super::{PubPacket, Session, SessionState};
 
 pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     conn: T,
@@ -174,16 +174,14 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         handle_will(&mut session, &mut conn, global).await?;
     }
     if session.clean_session() {
-        global.remove_client(session.client_id());
-        for filter in session.subscribes().keys() {
-            global.route_table.unsubscribe(filter, session.client_id());
-        }
+        global.remove_client(session.client_id(), session.subscribes().keys());
         if let Some(err) = io_error {
             return Err(err);
         }
     } else {
         // become a offline client, but session keep updating
         global.offline_client(session.client_id());
+        session.connected = false;
         return Ok(Some((session, receiver)));
     }
 
@@ -299,56 +297,19 @@ clean session : {}
     session.username = packet.username.map(|name| Arc::clone(&name));
     session.keep_alive = packet.keep_alive;
 
-    // FIXME: if kee_alive is zero, set a default keep_alive value from config
-    if session.keep_alive > 0 {
-        let interval = Duration::from_millis(session.keep_alive as u64 * 500);
-        let client_id = session.client_id;
-        log::debug!("{} keep alive: {:?}", client_id, interval * 2);
-        let last_packet_time = Arc::clone(&session.last_packet_time);
-        let global = Arc::clone(global);
-        if let Err(err) = executor.spawn_timer(move || {
-            // Need clone twice: https://stackoverflow.com/a/68462908/1274372
-            let last_packet_time = Arc::clone(&last_packet_time);
-            let global = Arc::clone(&global);
-            async move {
-                {
-                    let last_packet_time = last_packet_time.read();
-                    if last_packet_time.elapsed() <= interval * 2 {
-                        return Some(interval);
-                    }
-                }
-                // timeout, kick it out
-                if let Some(sender) = global.get_client_sender(&client_id) {
-                    let msg = InternalMessage::Kick {
-                        reason: "timeout".to_owned(),
-                    };
-                    if let Err(err) = sender.send_async((client_id, msg)).await {
-                        log::warn!(
-                            "send timeout kick message to {:?} error: {:?}",
-                            client_id,
-                            err
-                        );
-                    }
-                }
-                None
-            }
-        }) {
-            log::warn!("spawn executor timer failed: {:?}", err);
-            return Err(err);
-        }
-    }
+    start_keep_alive_timer(
+        session.keep_alive,
+        session.client_id,
+        &session.last_packet_time,
+        executor,
+        global,
+    )?;
 
     if let Some(last_will) = packet.last_will {
         if last_will.topic_name.starts_with('$') {
             return Err(io::ErrorKind::InvalidData.into());
         }
-        let will = Will {
-            retain: last_will.retain,
-            qos: last_will.qos,
-            topic_name: last_will.topic_name,
-            message: last_will.message,
-        };
-        session.will = Some(will);
+        session.last_will = Some(last_will);
     }
 
     let mut session_present = false;
@@ -444,7 +405,7 @@ async fn handle_disconnect<T: AsyncWrite + Unpin>(
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     log::debug!("{} received a disconnect packet", session.client_id);
-    session.will = None;
+    session.last_will = None;
     session.disconnected = true;
     Ok(())
 }
@@ -476,7 +437,13 @@ topic name : {}
         log::debug!("invalid dup flag");
         return Err(io::ErrorKind::InvalidData.into());
     }
+
+    // FIXME: handle message.qos == 2
+    //   * Broadcast message when receive the message and record the packet identifier
+    //   * Remove the packet identifier when received crossponding PUBREL packet
+    //   * When received a packet from the client again, don't broadcast
     // FIXME: handle dup flag
+
     send_publish(
         session,
         SendPublish {
@@ -508,7 +475,7 @@ async fn handle_puback<T: AsyncWrite + Unpin>(
         session.client_id,
         pid.value()
     );
-    session.pending_packets.complete(pid);
+    let _matched = session.pending_packets.complete(pid, QoS::Level1);
     Ok(())
 }
 
@@ -524,7 +491,8 @@ async fn handle_pubrec<T: AsyncWrite + Unpin>(
         session.client_id,
         pid.value()
     );
-    session.pending_packets.pubrec(pid);
+
+    let _matched = session.pending_packets.pubrec(pid);
     write_packet(session.client_id, conn, &Packet::Pubrel(pid)).await?;
     Ok(())
 }
@@ -557,7 +525,7 @@ async fn handle_pubcomp<T: AsyncWrite + Unpin>(
         session.client_id,
         pid.value()
     );
-    session.pending_packets.complete(pid);
+    let _matched = session.pending_packets.complete(pid, QoS::Level2);
     Ok(())
 }
 
@@ -578,28 +546,30 @@ packet id : {}
     );
     let mut return_codes = Vec::with_capacity(packet.topics.len());
     for (filter, qos) in packet.topics {
-        let allowed_qos = cmp::min(qos, global.config.max_allowed_qos());
-        session.subscribes.insert(filter.clone(), allowed_qos);
+        let granted_qos = cmp::min(qos, global.config.max_allowed_qos());
+        session.subscribes.insert(filter.clone(), granted_qos);
         global
             .route_table
-            .subscribe(&filter, session.client_id, allowed_qos);
+            .subscribe(&filter, session.client_id, granted_qos);
 
         for retain in global.retain_table.get_matches(&filter) {
-            recv_publish(
-                session,
-                RecvPublish {
-                    topic_name: &retain.topic_name,
-                    qos: retain.qos,
-                    retain: true,
-                    payload: &retain.payload,
-                    subscribe_filter: &filter,
-                    subscribe_qos: allowed_qos,
-                },
-                Some(conn),
-            )
-            .await?;
+            if retain.qos <= granted_qos {
+                recv_publish(
+                    session,
+                    RecvPublish {
+                        topic_name: &retain.topic_name,
+                        qos: retain.qos,
+                        retain: true,
+                        payload: &retain.payload,
+                        subscribe_filter: &filter,
+                        subscribe_qos: granted_qos,
+                    },
+                    Some(conn),
+                )
+                .await?;
+            }
         }
-        return_codes.push(allowed_qos.into());
+        return_codes.push(granted_qos.into());
     }
     let rv_packet = Suback::new(packet.pid, return_codes);
     write_packet(session.client_id, conn, &rv_packet.into()).await?;
@@ -656,14 +626,14 @@ async fn handle_will<T: AsyncWrite + Unpin>(
     _conn: &mut T,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    if let Some(will) = session.will.take() {
+    if let Some(last_will) = session.last_will.take() {
         send_publish(
             session,
             SendPublish {
-                topic_name: &will.topic_name,
-                retain: will.retain,
-                qos: will.qos,
-                payload: &will.message,
+                topic_name: &last_will.topic_name,
+                retain: last_will.retain,
+                qos: last_will.qos,
+                payload: &last_will.message,
             },
             global,
         )
@@ -685,6 +655,7 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
     // FIXME: call receiver.try_recv() to clear the channel, if the pending
     // queue is full, set a marker to the global state so that the sender stop
     // sending qos0 messages to this client.
+    let mut stop = false;
     match msg {
         InternalMessage::OnlineV3 { sender } => {
             let mut pending_packets = PendingPackets::new(0, 0, 0);
@@ -697,17 +668,19 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
                 client_id: session.client_id,
                 subscribes: session.subscribes.clone(),
             };
-            // FIXME: will panic here, handle the error
-            sender.send_async(old_state).await.unwrap();
-            Ok(true)
+            if sender.send_async(old_state).await.is_ok() {
+                stop = true;
+            } else {
+                log::info!("the connection want take over current session already ended");
+            }
         }
         InternalMessage::OnlineV5 { .. } => {
             log::info!("take over v3.x by v5.x client is not allowed");
-            Ok(false)
         }
         InternalMessage::PublishV3 {
             ref topic_name,
             qos,
+            retain,
             ref payload,
             ref subscribe_filter,
             subscribe_qos,
@@ -722,7 +695,7 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
                 RecvPublish {
                     topic_name,
                     qos,
-                    retain: false,
+                    retain,
                     payload,
                     subscribe_filter,
                     subscribe_qos,
@@ -730,11 +703,11 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
                 conn,
             )
             .await?;
-            Ok(false)
         }
         InternalMessage::PublishV5 {
             ref topic_name,
             qos,
+            retain,
             ref payload,
             ref subscribe_filter,
             subscribe_qos,
@@ -750,7 +723,7 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
                 RecvPublish {
                     topic_name,
                     qos,
-                    retain: false,
+                    retain,
                     payload,
                     subscribe_filter,
                     subscribe_qos,
@@ -758,7 +731,6 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
                 conn,
             )
             .await?;
-            Ok(false)
         }
         InternalMessage::Kick { reason } => {
             log::info!(
@@ -768,9 +740,13 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
                 session.disconnected,
                 conn.is_some(),
             );
-            Ok(conn.is_some())
+            stop = conn.is_some();
+        }
+        InternalMessage::WillDelayReached { .. } | InternalMessage::SessionExpired { .. } => {
+            unreachable!();
         }
     }
+    Ok(stop)
 }
 
 // ===========================
@@ -785,21 +761,22 @@ async fn send_publish<'a>(session: &mut Session, msg: SendPublish<'a>, global: &
             global.retain_table.remove(msg.topic_name)
         } else {
             let content = Arc::new(RetainContent::new(
-                msg.topic_name.clone(),
+                session.client_identifier.clone(),
                 msg.qos,
+                msg.topic_name.clone(),
                 msg.payload.clone(),
-                session.client_id,
+                None,
             ));
             log::debug!("retain message inserted");
             global.retain_table.insert(content)
         } {
             log::debug!(
                 r#"old retain content:
- client id : {}
-topic name : {}
-   payload : {:?}
-       qos : {:?}"#,
-                old_content.client_id,
+ client identifier : {}
+        topic name : {}
+           payload : {:?}
+               qos : {:?}"#,
+                old_content.client_identifier,
                 &old_content.topic_name.deref().deref(),
                 old_content.payload.as_ref(),
                 old_content.qos,
@@ -808,7 +785,7 @@ topic name : {}
     }
 
     let matches = global.route_table.get_matches(msg.topic_name);
-    let mut senders = Vec::new();
+    let mut senders = Vec::with_capacity(matches.len());
     for content in matches {
         let content = content.read();
         for (client_id, subscribe_qos) in &content.clients {
@@ -819,22 +796,21 @@ topic name : {}
         }
     }
 
-    if !senders.is_empty() {
-        for (sender_client_id, subscribe_filter, subscribe_qos, sender) in senders {
-            let publish = InternalMessage::PublishV3 {
-                topic_name: msg.topic_name.clone(),
-                qos: msg.qos,
-                payload: msg.payload.clone(),
-                subscribe_filter,
-                subscribe_qos,
-            };
-            if let Err(err) = sender.send_async((session.client_id, publish)).await {
-                log::error!(
-                    "send publish to connection {} failed: {}",
-                    sender_client_id,
-                    err
-                );
-            }
+    for (sender_client_id, subscribe_filter, subscribe_qos, sender) in senders {
+        let publish = InternalMessage::PublishV3 {
+            retain: msg.retain,
+            qos: msg.qos,
+            topic_name: msg.topic_name.clone(),
+            payload: msg.payload.clone(),
+            subscribe_filter,
+            subscribe_qos,
+        };
+        if let Err(err) = sender.send_async((session.client_id, publish)).await {
+            log::error!(
+                "send publish to connection {} failed: {}",
+                sender_client_id,
+                err
+            );
         }
     }
 }
@@ -846,16 +822,12 @@ async fn recv_publish<'a, T: AsyncWrite + Unpin>(
     conn: Option<&mut T>,
 ) -> io::Result<()> {
     if !session.subscribes.contains_key(msg.subscribe_filter) {
-        let filter_str: &str = msg.subscribe_filter.deref();
-        log::warn!(
-            "received a publish message that is not subscribe: {}, session.subscribes: {:?}",
-            filter_str,
-            session.subscribes
-        );
+        // the client already unsubscribed.
+        return Ok(());
     }
+
     let final_qos = cmp::min(msg.qos, msg.subscribe_qos);
     if final_qos != QoS::Level0 {
-        // The packet_id equals to: `self.server_packet_id % 65536`
         let pid = session.incr_server_packet_id();
         session.pending_packets.clean_complete();
         if let Err(err) = session.pending_packets.push_back(
@@ -865,8 +837,6 @@ async fn recv_publish<'a, T: AsyncWrite + Unpin>(
                 qos: final_qos,
                 retain: msg.retain,
                 payload: msg.payload.clone(),
-                subscribe_filter: msg.subscribe_filter.clone(),
-                subscribe_qos: msg.subscribe_qos,
             },
         ) {
             // TODO: proper handle this error

@@ -7,10 +7,10 @@ use std::fmt::Debug;
 use std::io;
 use std::time::SystemTime;
 
-use mqtt_proto::Pid;
+use mqtt_proto::{Pid, QoS};
 
 pub struct PendingPackets<P> {
-    max_inflight: usize,
+    max_inflight: u16,
     max_packets: usize,
     // The ack packet timeout, when reached resent the packet
     timeout: u64,
@@ -18,7 +18,7 @@ pub struct PendingPackets<P> {
 }
 
 impl<P: Debug> PendingPackets<P> {
-    pub fn new(max_inflight: usize, max_packets: usize, timeout: u64) -> PendingPackets<P> {
+    pub fn new(max_inflight: u16, max_packets: usize, timeout: u64) -> PendingPackets<P> {
         PendingPackets {
             max_inflight,
             max_packets,
@@ -38,6 +38,7 @@ impl<P: Debug> PendingPackets<P> {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
         self.packets.push_back(PendingPacketStatus::New {
+            added_at: get_unix_ts(),
             last_sent: 0,
             pid,
             packet,
@@ -46,7 +47,7 @@ impl<P: Debug> PendingPackets<P> {
         Ok(())
     }
 
-    pub fn pubrec(&mut self, target_pid: Pid) {
+    pub fn pubrec(&mut self, target_pid: Pid) -> bool {
         let current_inflight = cmp::min(self.max_inflight as usize, self.packets.len());
         for idx in 0..current_inflight {
             let packet_status = self.packets.get_mut(idx).expect("packet");
@@ -57,35 +58,37 @@ impl<P: Debug> PendingPackets<P> {
                             last_sent: get_unix_ts(),
                             pid: target_pid,
                         };
-                        break;
+                        return true;
                     }
                 }
                 PendingPacketStatus::Pubrec { .. } => {}
                 PendingPacketStatus::Complete => {}
             }
         }
+        false
     }
 
-    pub fn complete(&mut self, target_pid: Pid) {
+    pub fn complete(&mut self, target_pid: Pid, qos: QoS) -> bool {
         let current_inflight = cmp::min(self.max_inflight as usize, self.packets.len());
         for idx in 0..current_inflight {
             let packet_status = self.packets.get_mut(idx).expect("packet");
             match packet_status {
-                PendingPacketStatus::New { pid, .. } => {
+                PendingPacketStatus::New { pid, .. } if qos == QoS::Level1 => {
                     if *pid == target_pid {
                         *packet_status = PendingPacketStatus::Complete;
-                        break;
+                        return true;
                     }
                 }
-                PendingPacketStatus::Pubrec { pid, .. } => {
+                PendingPacketStatus::Pubrec { pid, .. } if qos == QoS::Level2 => {
                     if *pid == target_pid {
                         *packet_status = PendingPacketStatus::Complete;
-                        break;
+                        return true;
                     }
                 }
-                PendingPacketStatus::Complete => {}
+                _ => {}
             }
         }
+        false
     }
 
     pub fn clean_complete(&mut self) {
@@ -137,10 +140,15 @@ impl<P: Debug> PendingPackets<P> {
     pub fn len(&self) -> usize {
         self.packets.len()
     }
+
+    pub fn set_max_inflight(&mut self, new_value: u16) {
+        self.max_inflight = new_value;
+    }
 }
 
 pub enum PendingPacketStatus<P> {
     New {
+        added_at: u64,
         // Last sent this packet timestamp as seconds
         last_sent: u64,
         pid: Pid,
@@ -151,11 +159,14 @@ pub enum PendingPacketStatus<P> {
         // Last sent this packet timestamp as seconds
         last_sent: u64,
         pid: Pid,
+        // v5.x only field
+        // properties: Option<PubrecProperties>,
     },
     Complete,
 }
 
-fn get_unix_ts() -> u64 {
+/// Unix timestamp as seconds
+pub(crate) fn get_unix_ts() -> u64 {
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
         Ok(n) => n.as_secs(),
         Err(_) => panic!("SystemTime before UNIX EPOCH!"),

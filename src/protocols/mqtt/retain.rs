@@ -3,10 +3,9 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use dashmap::DashMap;
-use mqtt_proto::{QoS, TopicName};
+use mqtt_proto::{v5::PublishProperties, QoS, TopicName};
 
 use super::route::{split_topic, MATCH_ALL, MATCH_ONE};
-use crate::state::ClientId;
 
 #[derive(Debug)]
 pub struct RetainTable {
@@ -21,10 +20,12 @@ struct RetainNode {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RetainContent {
-    pub topic_name: TopicName,
+    // the publisher client id
+    pub client_identifier: Arc<String>,
     pub qos: QoS,
+    pub topic_name: TopicName,
     pub payload: Bytes,
-    pub client_id: ClientId,
+    pub properties: Option<PublishProperties>,
 }
 
 impl RetainTable {
@@ -152,16 +153,18 @@ impl RetainNode {
 
 impl RetainContent {
     pub fn new(
-        topic_name: TopicName,
+        client_identifier: Arc<String>,
         qos: QoS,
+        topic_name: TopicName,
         payload: Bytes,
-        client_id: ClientId,
+        properties: Option<PublishProperties>,
     ) -> RetainContent {
         RetainContent {
-            topic_name,
+            client_identifier,
             qos,
+            topic_name,
             payload,
-            client_id,
+            properties,
         }
     }
 }

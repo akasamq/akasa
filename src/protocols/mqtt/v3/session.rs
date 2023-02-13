@@ -5,7 +5,7 @@ use std::time::Instant;
 use bytes::Bytes;
 use flume::Receiver;
 use hashbrown::HashMap;
-use mqtt_proto::{Pid, Protocol, QoS, TopicFilter, TopicName};
+use mqtt_proto::{v3::LastWill, Pid, Protocol, QoS, TopicFilter, TopicName};
 use parking_lot::RwLock;
 
 use crate::config::Config;
@@ -29,18 +29,18 @@ pub struct Session {
     pub(super) username: Option<Arc<String>>,
     pub(super) keep_alive: u16,
     pub(super) clean_session: bool,
-    pub(super) will: Option<Will>,
+    pub(super) last_will: Option<LastWill>,
     pub(super) subscribes: HashMap<TopicFilter, QoS>,
 }
 
 pub struct SessionState {
+    pub client_id: ClientId,
     pub protocol: Protocol,
+    pub receiver: Receiver<(ClientId, InternalMessage)>,
+
     // For record packet id send from server to client
     pub server_packet_id: Pid,
     pub pending_packets: PendingPackets<PubPacket>,
-    pub receiver: Receiver<(ClientId, InternalMessage)>,
-
-    pub client_id: ClientId,
     pub subscribes: HashMap<TopicFilter, QoS>,
 }
 
@@ -54,7 +54,7 @@ impl Session {
             last_packet_time: Arc::new(RwLock::new(Instant::now())),
             server_packet_id: Pid::default(),
             pending_packets: PendingPackets::new(
-                config.max_inflight,
+                config.max_inflight_client,
                 config.max_in_mem_pending_messages,
                 config.inflight_timeout,
             ),
@@ -64,7 +64,7 @@ impl Session {
             username: None,
             keep_alive: 0,
             clean_session: true,
-            will: None,
+            last_will: None,
             subscribes: HashMap::new(),
         }
     }
@@ -101,14 +101,4 @@ pub struct PubPacket {
     pub qos: QoS,
     pub retain: bool,
     pub payload: Bytes,
-    pub subscribe_filter: TopicFilter,
-    pub subscribe_qos: QoS,
-}
-
-#[derive(Debug, Clone)]
-pub struct Will {
-    pub retain: bool,
-    pub qos: QoS,
-    pub topic_name: TopicName,
-    pub message: Bytes,
 }

@@ -86,7 +86,18 @@ impl Executor for GlommioExecutor {
         spawn_local(future).detach();
     }
 
-    fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
+    fn spawn_sleep<F>(&self, duration: Duration, task: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        spawn_local(async move {
+            sleep(duration).await;
+            task.await;
+        })
+        .detach();
+    }
+
+    fn spawn_interval<G, F>(&self, action_gen: G) -> io::Result<()>
     where
         G: (Fn() -> F) + Send + Sync + 'static,
         F: Future<Output = Option<Duration>> + Send + 'static,

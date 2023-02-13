@@ -75,7 +75,17 @@ impl Executor for TokioExecutor {
         tokio::spawn(future);
     }
 
-    fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
+    fn spawn_sleep<F>(&self, duration: Duration, task: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        tokio::spawn(async move {
+            tokio::time::sleep(duration).await;
+            task.await;
+        });
+    }
+
+    fn spawn_interval<G, F>(&self, action_gen: G) -> io::Result<()>
     where
         G: (Fn() -> F) + Send + Sync + 'static,
         F: Future<Output = Option<Duration>> + Send + 'static,

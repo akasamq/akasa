@@ -66,7 +66,7 @@ fn main() -> anyhow::Result<()> {
             runtime,
         } => {
             let config: Config = {
-                let content = fs::read_to_string(&config)?;
+                let content = fs::read_to_string(config)?;
                 serde_yaml::from_str(&content)
                     .map_err(|err| anyhow!("invalid config format {}", err))?
             };

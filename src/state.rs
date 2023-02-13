@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -67,7 +67,11 @@ impl GlobalState {
     }
 
     // When clean_session=1 and client disconnected
-    pub fn remove_client(&self, client_id: ClientId) {
+    pub fn remove_client<'a>(
+        &self,
+        client_id: ClientId,
+        subscribes: impl IntoIterator<Item = &'a TopicFilter>,
+    ) {
         // keep client operation atomic
         let _guard = self.next_client_id.lock();
         if let Some((_, (client_identifier, online))) = self.client_id_map.remove(&client_id) {
@@ -77,6 +81,9 @@ impl GlobalState {
             }
         }
         self.clients.remove(&client_id);
+        for filter in subscribes {
+            self.route_table.unsubscribe(filter, client_id);
+        }
     }
 
     // When clean_session=0 and client disconnected
@@ -102,55 +109,69 @@ impl GlobalState {
         client_identifier: &str,
         protocol: Protocol,
     ) -> AddClientReceipt {
-        let (old_id, internal_sender) = {
-            let mut next_client_id = self.next_client_id.lock();
-            self.online_clients.fetch_add(1, Ordering::AcqRel);
-            let client_id_opt: Option<ClientId> = self
-                .client_identifier_map
-                .get(client_identifier)
-                .map(|pair| *pair.value());
-            if let Some(old_id) = client_id_opt {
-                if let Some(mut pair) = self.client_id_map.get_mut(&old_id) {
-                    pair.value_mut().1 = true;
+        let mut round = 0;
+        loop {
+            let (old_id, internal_sender) = {
+                let mut next_client_id = self.next_client_id.lock();
+                self.online_clients.fetch_add(1, Ordering::AcqRel);
+                let client_id_opt: Option<ClientId> = self
+                    .client_identifier_map
+                    .get(client_identifier)
+                    .map(|pair| *pair.value());
+                if let Some(old_id) = client_id_opt {
+                    if let Some(mut pair) = self.client_id_map.get_mut(&old_id) {
+                        pair.value_mut().1 = true;
+                    }
+                    let internal_sender = self.clients.get(&old_id).unwrap().value().clone();
+                    (old_id, internal_sender)
+                } else {
+                    let client_id = *next_client_id;
+                    self.client_id_map
+                        .insert(client_id, (client_identifier.to_string(), true));
+                    self.client_identifier_map
+                        .insert(client_identifier.to_string(), client_id);
+                    // FIXME: if some one subscribe topic "#" and never receive the message it will block all sender clients.
+                    //   Suggestion: Add QoS0 message to pending queue
+                    let (sender, receiver) = bounded(8);
+                    self.clients.insert(client_id, sender);
+                    next_client_id.0 += 1;
+                    return AddClientReceipt::New {
+                        client_id,
+                        receiver,
+                    };
                 }
-                let internal_sender = self.clients.get(&old_id).unwrap().value().clone();
-                (old_id, internal_sender)
-            } else {
-                let client_id = *next_client_id;
-                self.client_id_map
-                    .insert(client_id, (client_identifier.to_string(), true));
-                self.client_identifier_map
-                    .insert(client_identifier.to_string(), client_id);
-                // FIXME: if some one subscribe topic "#" and never receive the message it will block all sender clients.
-                //   Suggestion: Add QoS0 message to pending queue
-                let (sender, receiver) = bounded(8);
-                self.clients.insert(client_id, sender);
-                next_client_id.0 += 1;
-                return AddClientReceipt::New {
-                    client_id,
-                    receiver,
-                };
-            }
-        };
+            };
 
-        if (protocol as u8) < 5 {
-            let (sender, receiver) = bounded(1);
-            // FIXME: will panic here, handle the error
-            internal_sender
-                .send_async((old_id, InternalMessage::OnlineV3 { sender }))
-                .await
-                .unwrap();
-            let session_state = receiver.recv_async().await.unwrap();
-            AddClientReceipt::PresentV3(session_state)
-        } else {
-            let (sender, receiver) = bounded(1);
-            // FIXME: will panic here, handle the error
-            internal_sender
-                .send_async((old_id, InternalMessage::OnlineV5 { sender }))
-                .await
-                .unwrap();
-            let session_state = receiver.recv_async().await.unwrap();
-            AddClientReceipt::PresentV5(session_state)
+            // NOTE: only one retry is allowed
+            assert!(round == 0, "add client round: {}", round);
+
+            if protocol < Protocol::V500 {
+                let (sender, receiver) = bounded(1);
+                if internal_sender
+                    .send_async((old_id, InternalMessage::OnlineV3 { sender }))
+                    .await
+                    .is_err()
+                {
+                    // old client may already removed, retry to create new one
+                    round += 1;
+                    continue;
+                }
+                let session_state = receiver.recv_async().await.unwrap();
+                return AddClientReceipt::PresentV3(session_state);
+            } else {
+                let (sender, receiver) = bounded(1);
+                if internal_sender
+                    .send_async((old_id, InternalMessage::OnlineV5 { sender }))
+                    .await
+                    .is_err()
+                {
+                    // old client may already removed, retry to crate new one
+                    round += 1;
+                    continue;
+                }
+                let session_state = receiver.recv_async().await.unwrap();
+                return AddClientReceipt::PresentV5(session_state);
+            }
         }
     }
 }
@@ -164,7 +185,11 @@ pub trait Executor {
         F: Future + Send + 'static,
         F::Output: Send + 'static;
 
-    fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
+    fn spawn_sleep<F>(&self, duration: Duration, task: F)
+    where
+        F: Future<Output = ()> + Send + 'static;
+
+    fn spawn_interval<G, F>(&self, action_gen: G) -> io::Result<()>
     where
         G: (Fn() -> F) + Send + Sync + 'static,
         F: Future<Output = Option<Duration>> + Send + 'static;
@@ -182,12 +207,19 @@ impl<T: Executor> Executor for Rc<T> {
         self.as_ref().spawn_local(future);
     }
 
-    fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
+    fn spawn_sleep<F>(&self, duration: Duration, task: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.as_ref().spawn_sleep(duration, task);
+    }
+
+    fn spawn_interval<G, F>(&self, action_gen: G) -> io::Result<()>
     where
         G: (Fn() -> F) + Send + Sync + 'static,
         F: Future<Output = Option<Duration>> + Send + 'static,
     {
-        self.as_ref().spawn_timer(action_gen)
+        self.as_ref().spawn_interval(action_gen)
     }
 }
 impl<T: Executor> Executor for Arc<T> {
@@ -203,12 +235,19 @@ impl<T: Executor> Executor for Arc<T> {
         self.as_ref().spawn_local(future);
     }
 
-    fn spawn_timer<G, F>(&self, action_gen: G) -> io::Result<()>
+    fn spawn_sleep<F>(&self, duration: Duration, task: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.as_ref().spawn_sleep(duration, task);
+    }
+
+    fn spawn_interval<G, F>(&self, action_gen: G) -> io::Result<()>
     where
         G: (Fn() -> F) + Send + Sync + 'static,
         F: Future<Output = Option<Duration>> + Send + 'static,
     {
-        self.as_ref().spawn_timer(action_gen)
+        self.as_ref().spawn_interval(action_gen)
     }
 }
 
@@ -224,22 +263,33 @@ pub enum InternalMessage {
     },
     /// A publish message matched
     PublishV3 {
-        topic_name: TopicName,
+        retain: bool,
         qos: QoS,
+        topic_name: TopicName,
         payload: Bytes,
         subscribe_filter: TopicFilter,
         subscribe_qos: QoS,
     },
     PublishV5 {
-        topic_name: TopicName,
+        retain: bool,
         qos: QoS,
+        topic_name: TopicName,
         payload: Bytes,
         subscribe_filter: TopicFilter,
+        // [MQTTv5.0-3.8.4] keyword: downgraded
         subscribe_qos: QoS,
         properties: PublishProperties,
     },
     /// Kick client out (disconnect the client)
-    Kick { reason: String },
+    Kick {
+        reason: String,
+    },
+    WillDelayReached {
+        connected_time: Instant,
+    },
+    SessionExpired {
+        connected_time: Instant,
+    },
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]

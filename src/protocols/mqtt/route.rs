@@ -24,7 +24,6 @@ struct RouteNode {
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct RouteContent {
     /// Returned RouteContent always have topic_filter
-    // I wonder if `topic_filter` field is worth saving, since it cost quite some memory.
     pub topic_filter: Option<TopicFilter>,
     pub clients: HashMap<ClientId, QoS>,
 }
