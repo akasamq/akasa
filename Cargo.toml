@@ -28,6 +28,9 @@ serde = { version = "1.0.147", features = ["derive"] }
 thiserror = "1.0.38"
 tokio = { version = "1.23.0", features = ["full"] }
 uuid = { version = "1.2.2", features = ["v4"] }
+lazy_static = "1.4.0"
+rand = { version = "0.8.5", features = ["getrandom"] }
+siphasher = "0.3.10"
 
 [profile.release]
 debug = true

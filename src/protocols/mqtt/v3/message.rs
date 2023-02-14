@@ -546,6 +546,10 @@ packet id : {}
     );
     let mut return_codes = Vec::with_capacity(packet.topics.len());
     for (filter, qos) in packet.topics {
+        if filter.is_shared() {
+            log::info!("mqtt v3.x don't support shared subscription");
+            return Err(io::ErrorKind::InvalidData.into());
+        }
         let granted_qos = cmp::min(qos, global.config.max_allowed_qos());
         session.subscribes.insert(filter.clone(), granted_qos);
         global

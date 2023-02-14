@@ -203,7 +203,7 @@ async fn test_connect_auth() {
             .into_iter()
             .collect();
         let connect = Connect::new(Arc::new("client_anonymous".to_owned()), 10);
-        let connack = Connack::new(false, BadUsernameOrPassword);
+        let connack = Connack::new(false, BadUserNameOrPassword);
         do_test(config, connect, connack).await;
     }
     // wrong username/password
@@ -216,7 +216,7 @@ async fn test_connect_auth() {
         let mut connect = Connect::new(Arc::new("client_anonymous".to_owned()), 10);
         connect.username = Some(Arc::new("xxx".to_owned()));
         connect.password = Some(Bytes::from(b"yyy".to_vec()));
-        let connack = Connack::new(false, BadUsernameOrPassword);
+        let connack = Connack::new(false, BadUserNameOrPassword);
         do_test(config, connect, connack).await;
     }
     // right username/password

@@ -12,6 +12,9 @@ pub(crate) const MATCH_ALL: &str = "#";
 pub(crate) const MATCH_ONE: &str = "+";
 pub(crate) const LEVEL_SEP: char = '/';
 
+// FIXME: [MQTT-4.7.2-1] The Server MUST NOT match Topic Filters starting with a
+// wildcard character (# or +) with Topic Names beginning with a $ character
+
 pub struct RouteTable {
     nodes: DashMap<String, RouteNode>,
 }
@@ -26,6 +29,50 @@ pub struct RouteContent {
     /// Returned RouteContent always have topic_filter
     pub topic_filter: Option<TopicFilter>,
     pub clients: HashMap<ClientId, QoS>,
+    pub groups: HashMap<String, SharedClients>,
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Default)]
+pub struct SharedClients {
+    items: Vec<(ClientId, QoS)>,
+    index: HashMap<ClientId, usize>,
+}
+
+impl SharedClients {
+    pub fn get_one_by_u64(&self, number: u64) -> (ClientId, QoS) {
+        // Empty SharedClients MUST already removed from parent data structure immediately.
+        debug_assert!(!self.items.is_empty());
+        let idx = number as usize % self.items.len();
+        self.items[idx]
+    }
+
+    fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    fn insert(&mut self, item: (ClientId, QoS)) {
+        if let Some(idx) = self.index.get(&item.0) {
+            self.items[*idx].1 = item.1;
+        } else {
+            self.index.insert(item.0, self.items.len());
+            self.items.push(item);
+        }
+    }
+
+    fn remove(&mut self, item_key: &ClientId) {
+        if let Some(idx) = self.index.remove(item_key) {
+            if self.items.len() == 1 {
+                self.items.clear();
+            } else {
+                let last_client_id = self.items.last().expect("shared items").0;
+                self.items.swap_remove(idx);
+                self.index.insert(last_client_id, idx);
+                if self.items.capacity() >= 16 && self.items.capacity() >= (self.items.len() << 2) {
+                    self.items.shrink_to(self.items.len() << 1);
+                }
+            }
+        }
+    }
 }
 
 impl RouteTable {
@@ -46,24 +93,58 @@ impl RouteTable {
         filters
     }
 
-    pub fn subscribe(&self, topic_filter: &TopicFilter, id: ClientId, qos: QoS) {
+    fn subscribe_with_group(
+        &self,
+        topic_filter: &TopicFilter,
+        id: ClientId,
+        qos: QoS,
+        group: Option<String>,
+    ) {
         let (filter_item, rest_items) = split_topic(topic_filter.deref());
         // Since subscribe is not an frequent action, string clone here is acceptable.
         self.nodes
             .entry(filter_item.to_string())
             .or_insert_with(RouteNode::new)
-            .insert(topic_filter, rest_items, id, qos);
+            .insert(topic_filter, rest_items, id, qos, group);
+    }
+    pub fn subscribe(&self, topic_filter: &TopicFilter, id: ClientId, qos: QoS) {
+        if let Some((shared_group_name, shared_filter)) = topic_filter.shared_info() {
+            self.subscribe_with_group(
+                &TopicFilter::try_from(shared_filter.to_owned()).expect("shared filter"),
+                id,
+                qos,
+                Some(shared_group_name.to_owned()),
+            );
+        } else {
+            self.subscribe_with_group(topic_filter, id, qos, None);
+        }
     }
 
-    pub fn unsubscribe(&self, topic_filter: &TopicFilter, id: ClientId) {
+    fn unsubscribe_with_group(
+        &self,
+        topic_filter: &TopicFilter,
+        id: ClientId,
+        group: Option<&str>,
+    ) {
         let (filter_item, rest_items) = split_topic(topic_filter.deref());
         // bool variable is for resolve dead lock of access `self.nodes`
         let mut remove_node = false;
         if let Some(mut pair) = self.nodes.get_mut(filter_item) {
-            remove_node = pair.value_mut().remove(rest_items, id);
+            remove_node = pair.value_mut().remove(rest_items, id, group);
         }
         if remove_node {
             self.nodes.remove(filter_item);
+        }
+    }
+    pub fn unsubscribe(&self, topic_filter: &TopicFilter, id: ClientId) {
+        if let Some((shared_group_name, shared_filter)) = topic_filter.shared_info() {
+            self.unsubscribe_with_group(
+                &TopicFilter::try_from(shared_filter.to_owned()).expect("shared filter"),
+                id,
+                Some(shared_group_name),
+            );
+        } else {
+            self.unsubscribe_with_group(topic_filter, id, None);
         }
     }
 }
@@ -74,6 +155,7 @@ impl RouteNode {
             content: Arc::new(RwLock::new(RouteContent {
                 topic_filter: None,
                 clients: HashMap::new(),
+                groups: HashMap::new(),
             })),
             nodes: Arc::new(DashMap::new()),
         }
@@ -116,29 +198,37 @@ impl RouteNode {
         filter_items: Option<&str>,
         id: ClientId,
         qos: QoS,
+        group: Option<String>,
     ) {
         if let Some(filter_items) = filter_items {
             let (filter_item, rest_items) = split_topic(filter_items);
             self.nodes
                 .entry(filter_item.to_string())
                 .or_insert_with(RouteNode::new)
-                .insert(topic_filter, rest_items, id, qos);
+                .insert(topic_filter, rest_items, id, qos, group);
         } else {
             let mut content = self.content.write();
             if content.topic_filter.is_none() {
                 content.topic_filter = Some(topic_filter.clone());
             }
             content.clients.insert(id, qos);
+            if let Some(name) = group {
+                content
+                    .groups
+                    .entry(name)
+                    .or_insert_with(SharedClients::default)
+                    .insert((id, qos));
+            }
         }
     }
 
-    fn remove(&self, filter_items: Option<&str>, id: ClientId) -> bool {
+    fn remove(&self, filter_items: Option<&str>, id: ClientId, group: Option<&str>) -> bool {
         if let Some(filter_items) = filter_items {
             let (filter_item, rest_items) = split_topic(filter_items);
             // bool variables are for resolve dead lock of access `self.nodes`
             let mut remove_node = false;
             if let Some(mut pair) = self.nodes.get_mut(filter_item) {
-                if pair.value_mut().remove(rest_items, id) {
+                if pair.value_mut().remove(rest_items, id, group) {
                     remove_node = true;
                 }
             }
@@ -152,6 +242,14 @@ impl RouteNode {
         } else {
             let mut content = self.content.write();
             content.clients.remove(&id);
+            if let Some(name) = group {
+                if let Some(shared_clients) = content.groups.get_mut(name) {
+                    shared_clients.remove(&id);
+                    if shared_clients.is_empty() {
+                        content.groups.remove(name);
+                    }
+                }
+            }
             if content.is_empty() {
                 content.topic_filter = None;
                 if self.nodes.is_empty() {
@@ -165,7 +263,7 @@ impl RouteNode {
 
 impl RouteContent {
     pub fn is_empty(&self) -> bool {
-        self.clients.is_empty()
+        self.clients.is_empty() && self.groups.is_empty()
     }
 }
 

@@ -10,6 +10,8 @@ pub struct Config {
     // FIXME: replace it later
     pub users: HashMap<String, String>,
 
+    pub shared_subscription_mode: SharedSubscriptionMode,
+
     /// max allowed qos, allowed values: [0, 1, 2], default: 2
     pub max_allowed_qos: u8,
 
@@ -47,11 +49,19 @@ pub enum AuthType {
     X509ClientCert,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub enum SharedSubscriptionMode {
+    Random,
+    HashClientId,
+    HashTopic,
+}
+
 impl Default for Config {
     fn default() -> Config {
         Config {
             auth_types: Vec::new(),
             users: HashMap::new(),
+            shared_subscription_mode: SharedSubscriptionMode::Random,
             max_allowed_qos: 2,
             inflight_timeout: 15,
             max_inflight_client: 10,

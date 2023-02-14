@@ -1,4 +1,5 @@
 use std::cmp;
+use std::hash::Hasher;
 use std::io;
 use std::mem;
 use std::net::SocketAddr;
@@ -12,6 +13,7 @@ use futures_lite::{
     io::{AsyncRead, AsyncWrite},
     FutureExt,
 };
+use lazy_static::lazy_static;
 use mqtt_proto::{
     v5::{
         Auth, AuthProperties, AuthReasonCode, Connack, ConnackProperties, Connect,
@@ -22,16 +24,27 @@ use mqtt_proto::{
         Subscribe, SubscribeReasonCode, Unsuback, UnsubackProperties, Unsubscribe,
         UnsubscribeReasonCode,
     },
-    Protocol, QoS, QosPid, TopicFilter, TopicName, MATCH_ALL_CHAR, MATCH_ONE_CHAR,
+    Protocol, QoS, QosPid, TopicFilter, TopicName, MATCH_ALL_CHAR, MATCH_ONE_CHAR, SHARED_PREFIX,
 };
+use rand::{rngs::OsRng, thread_rng, Rng, RngCore};
+use siphasher::sip::SipHasher24;
 
-use crate::config::AuthType;
+use crate::config::{AuthType, SharedSubscriptionMode};
 use crate::state::{AddClientReceipt, ClientId, Executor, GlobalState, InternalMessage};
 
 use super::super::{
     get_unix_ts, start_keep_alive_timer, PendingPacketStatus, PendingPackets, RetainContent,
 };
 use super::{PubPacket, Session, SessionState, SubscriptionData};
+
+lazy_static! {
+    static ref SIP_HASHER_24_KEY: [u8; 16] = {
+        let mut os_rng = OsRng::default();
+        let mut key = [0u8; 16];
+        os_rng.fill_bytes(&mut key);
+        key
+    };
+}
 
 pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     conn: T,
@@ -903,6 +916,7 @@ packet id : {}
                     .subscribe(&filter, session.client_id, granted_qos);
 
                 let send_retain = global.config.retain_available
+                    && !filter.is_shared()
                     && match sub_opts.retain_handling {
                         RetainHandling::SendAtSubscribe => true,
                         RetainHandling::SendAtSubscribeIfNotExist => old_sub.is_none(),
@@ -1216,8 +1230,8 @@ async fn send_publish<'a>(
     let mut senders = Vec::with_capacity(matched_len);
     for content in matches {
         let content = content.read();
+        let subscribe_filter = content.topic_filter.as_ref().unwrap();
         for (client_id, subscribe_qos) in &content.clients {
-            let subscribe_filter = content.topic_filter.as_ref().unwrap();
             if *client_id == session.client_id {
                 if let Some(sub) = session.subscribes.get(subscribe_filter) {
                     if sub.options.no_local {
@@ -1230,6 +1244,30 @@ async fn send_publish<'a>(
             }
             if let Some(sender) = global.get_client_sender(client_id) {
                 senders.push((*client_id, subscribe_filter.clone(), *subscribe_qos, sender));
+            }
+        }
+        for (group_name, shared_clients) in &content.groups {
+            let number: u64 = match global.config.shared_subscription_mode {
+                SharedSubscriptionMode::Random => thread_rng().gen(),
+                SharedSubscriptionMode::HashClientId => {
+                    let mut hasher = SipHasher24::new_with_key(&SIP_HASHER_24_KEY);
+                    hasher.write(session.client_identifier.as_bytes());
+                    hasher.finish()
+                }
+                SharedSubscriptionMode::HashTopic => {
+                    let mut hasher = SipHasher24::new_with_key(&SIP_HASHER_24_KEY);
+                    hasher.write(msg.topic_name.as_bytes());
+                    hasher.finish()
+                }
+            };
+            let (client_id, subscribe_qos) = shared_clients.get_one_by_u64(number);
+            let full_filter = TopicFilter::try_from(format!(
+                "{}{}/{}",
+                SHARED_PREFIX, group_name, subscribe_filter
+            ))
+            .expect("full topic filter");
+            if let Some(sender) = global.get_client_sender(&client_id) {
+                senders.push((client_id, full_filter, subscribe_qos, sender));
             }
         }
     }

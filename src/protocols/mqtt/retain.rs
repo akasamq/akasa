@@ -175,12 +175,14 @@ mod tests {
     use Action::*;
     use QoS::*;
 
-    impl From<(&str, QoS, Vec<u8>, u64)> for RetainContent {
-        fn from((topic_name, qos, payload, client_id): (&str, QoS, Vec<u8>, u64)) -> RetainContent {
+    impl From<(&str, QoS, Vec<u8>, &str)> for RetainContent {
+        fn from(
+            (topic_name, qos, payload, client_identifier): (&str, QoS, Vec<u8>, &str),
+        ) -> RetainContent {
+            let client_identifier = Arc::new(client_identifier.to_owned());
             let topic_name = TopicName::try_from(topic_name.to_owned()).unwrap();
-            let client_id = ClientId(client_id);
             let payload = Bytes::from(payload);
-            Self::new(topic_name, qos, payload, client_id)
+            Self::new(client_identifier, qos, topic_name, payload, None)
         }
     }
 
@@ -209,11 +211,21 @@ mod tests {
                 Query(topic_filter, retains) => {
                     let mut rv = table.get_matches(topic_filter);
                     rv.sort_by_key(|v| {
-                        (v.topic_name.clone(), v.qos, v.payload.clone(), v.client_id)
+                        (
+                            v.topic_name.clone(),
+                            v.qos,
+                            v.payload.clone(),
+                            v.client_identifier.clone(),
+                        )
                     });
                     let mut retains = retains.into_iter().map(Arc::new).collect::<Vec<_>>();
                     retains.sort_by_key(|v| {
-                        (v.topic_name.clone(), v.qos, v.payload.clone(), v.client_id)
+                        (
+                            v.topic_name.clone(),
+                            v.qos,
+                            v.payload.clone(),
+                            v.client_identifier.clone(),
+                        )
                     });
                     assert_eq!(
                         retains, rv,
@@ -228,35 +240,35 @@ mod tests {
     #[test]
     fn test_match_all() {
         run_actions(&[
-            Insert(("1/2/3/4", Level1, vec![9, 9], 9).into(), None),
-            Insert(("abc", Level0, vec![1, 1], 3).into(), None),
-            Insert(("abc/ijk", Level1, vec![2, 2], 4).into(), None),
-            Insert(("abc/xyz", Level1, vec![3, 3], 5).into(), None),
-            Insert(("abc/xyz/xxx", Level1, vec![4, 4], 6).into(), None),
+            Insert(("1/2/3/4", Level1, vec![9, 9], "9").into(), None),
+            Insert(("abc", Level0, vec![1, 1], "3").into(), None),
+            Insert(("abc/ijk", Level1, vec![2, 2], "4").into(), None),
+            Insert(("abc/xyz", Level1, vec![3, 3], "5").into(), None),
+            Insert(("abc/xyz/xxx", Level1, vec![4, 4], "6").into(), None),
             Query(
                 "#",
                 vec![
-                    ("abc", Level0, vec![1, 1], 3).into(),
-                    ("1/2/3/4", Level1, vec![9, 9], 9).into(),
-                    ("abc/ijk", Level1, vec![2, 2], 4).into(),
-                    ("abc/xyz", Level1, vec![3, 3], 5).into(),
-                    ("abc/xyz/xxx", Level1, vec![4, 4], 6).into(),
+                    ("abc", Level0, vec![1, 1], "3").into(),
+                    ("1/2/3/4", Level1, vec![9, 9], "9").into(),
+                    ("abc/ijk", Level1, vec![2, 2], "4").into(),
+                    ("abc/xyz", Level1, vec![3, 3], "5").into(),
+                    ("abc/xyz/xxx", Level1, vec![4, 4], "6").into(),
                 ],
             ),
             Query(
                 "abc/#",
                 vec![
-                    ("abc", Level0, vec![1, 1], 3).into(),
-                    ("abc/ijk", Level1, vec![2, 2], 4).into(),
-                    ("abc/xyz", Level1, vec![3, 3], 5).into(),
-                    ("abc/xyz/xxx", Level1, vec![4, 4], 6).into(),
+                    ("abc", Level0, vec![1, 1], "3").into(),
+                    ("abc/ijk", Level1, vec![2, 2], "4").into(),
+                    ("abc/xyz", Level1, vec![3, 3], "5").into(),
+                    ("abc/xyz/xxx", Level1, vec![4, 4], "6").into(),
                 ],
             ),
             Query(
                 "abc/xyz/#",
                 vec![
-                    ("abc/xyz", Level1, vec![3, 3], 5).into(),
-                    ("abc/xyz/xxx", Level1, vec![4, 4], 6).into(),
+                    ("abc/xyz", Level1, vec![3, 3], "5").into(),
+                    ("abc/xyz/xxx", Level1, vec![4, 4], "6").into(),
                 ],
             ),
         ]);
@@ -265,93 +277,96 @@ mod tests {
     #[test]
     fn test_match_one() {
         run_actions(&[
-            Insert(("1/2/3/4", Level1, vec![9, 9], 9).into(), None),
-            Insert(("abc", Level0, vec![1, 1], 3).into(), None),
-            Insert(("abc/ijk", Level1, vec![2, 2], 4).into(), None),
-            Insert(("abc/xyz", Level1, vec![3, 3], 5).into(), None),
-            Insert(("abc/xyz/xxx", Level1, vec![4, 4], 6).into(), None),
-            Query("+", vec![("abc", Level0, vec![1, 1], 3).into()]),
+            Insert(("1/2/3/4", Level1, vec![9, 9], "9").into(), None),
+            Insert(("abc", Level0, vec![1, 1], "3").into(), None),
+            Insert(("abc/ijk", Level1, vec![2, 2], "4").into(), None),
+            Insert(("abc/xyz", Level1, vec![3, 3], "5").into(), None),
+            Insert(("abc/xyz/xxx", Level1, vec![4, 4], "6").into(), None),
+            Query("+", vec![("abc", Level0, vec![1, 1], "3").into()]),
             Query(
                 "abc/+",
                 vec![
-                    ("abc/ijk", Level1, vec![2, 2], 4).into(),
-                    ("abc/xyz", Level1, vec![3, 3], 5).into(),
+                    ("abc/ijk", Level1, vec![2, 2], "4").into(),
+                    ("abc/xyz", Level1, vec![3, 3], "5").into(),
                 ],
             ),
             Query(
                 "abc/+/+",
-                vec![("abc/xyz/xxx", Level1, vec![4, 4], 6).into()],
+                vec![("abc/xyz/xxx", Level1, vec![4, 4], "6").into()],
             ),
-            Query("+/ijk", vec![("abc/ijk", Level1, vec![2, 2], 4).into()]),
+            Query("+/ijk", vec![("abc/ijk", Level1, vec![2, 2], "4").into()]),
             Query("+/6666", vec![]),
-            Query("1/+/3/+", vec![("1/2/3/4", Level1, vec![9, 9], 9).into()]),
+            Query("1/+/3/+", vec![("1/2/3/4", Level1, vec![9, 9], "9").into()]),
         ])
     }
 
     #[test]
     fn test_match_complex() {
         run_actions(&[
-            Insert(("1/2/3/4", Level1, vec![9, 9], 9).into(), None),
-            Insert(("abc", Level0, vec![1, 1], 3).into(), None),
-            Insert(("abc/ijk", Level1, vec![2, 2], 4).into(), None),
-            Insert(("abc/xyz", Level1, vec![3, 3], 5).into(), None),
-            Insert(("abc/xyz/xxx", Level1, vec![4, 4], 6).into(), None),
+            Insert(("1/2/3/4", Level1, vec![9, 9], "9").into(), None),
+            Insert(("abc", Level0, vec![1, 1], "3").into(), None),
+            Insert(("abc/ijk", Level1, vec![2, 2], "4").into(), None),
+            Insert(("abc/xyz", Level1, vec![3, 3], "5").into(), None),
+            Insert(("abc/xyz/xxx", Level1, vec![4, 4], "6").into(), None),
             Query(
                 "+/#",
                 vec![
-                    ("1/2/3/4", Level1, vec![9, 9], 9).into(),
-                    ("abc", Level0, vec![1, 1], 3).into(),
-                    ("abc/ijk", Level1, vec![2, 2], 4).into(),
-                    ("abc/xyz", Level1, vec![3, 3], 5).into(),
-                    ("abc/xyz/xxx", Level1, vec![4, 4], 6).into(),
+                    ("1/2/3/4", Level1, vec![9, 9], "9").into(),
+                    ("abc", Level0, vec![1, 1], "3").into(),
+                    ("abc/ijk", Level1, vec![2, 2], "4").into(),
+                    ("abc/xyz", Level1, vec![3, 3], "5").into(),
+                    ("abc/xyz/xxx", Level1, vec![4, 4], "6").into(),
                 ],
             ),
             Query(
                 "abc/+/#",
                 vec![
-                    ("abc/ijk", Level1, vec![2, 2], 4).into(),
-                    ("abc/xyz", Level1, vec![3, 3], 5).into(),
-                    ("abc/xyz/xxx", Level1, vec![4, 4], 6).into(),
+                    ("abc/ijk", Level1, vec![2, 2], "4").into(),
+                    ("abc/xyz", Level1, vec![3, 3], "5").into(),
+                    ("abc/xyz/xxx", Level1, vec![4, 4], "6").into(),
                 ],
             ),
             Query(
                 "+/xyz/#",
                 vec![
-                    ("abc/xyz", Level1, vec![3, 3], 5).into(),
-                    ("abc/xyz/xxx", Level1, vec![4, 4], 6).into(),
+                    ("abc/xyz", Level1, vec![3, 3], "5").into(),
+                    ("abc/xyz/xxx", Level1, vec![4, 4], "6").into(),
                 ],
             ),
             Query("abc/xyz/3", vec![]),
             Query("1/2/3/4/5", vec![]),
             Query("1/2/3/4/+", vec![]),
-            Query("1/2/3/4/#", vec![("1/2/3/4", Level1, vec![9, 9], 9).into()]),
-            Query("1/2/#", vec![("1/2/3/4", Level1, vec![9, 9], 9).into()]),
+            Query(
+                "1/2/3/4/#",
+                vec![("1/2/3/4", Level1, vec![9, 9], "9").into()],
+            ),
+            Query("1/2/#", vec![("1/2/3/4", Level1, vec![9, 9], "9").into()]),
         ]);
     }
 
     #[test]
     fn test_insert() {
         run_actions(&[
-            Insert(("abc", Level0, vec![1, 1], 3).into(), None),
-            Insert(("abc/ijk", Level1, vec![2, 2], 4).into(), None),
-            Insert(("abc/xyz", Level1, vec![3, 3], 5).into(), None),
-            Insert(("abc/xyz/xxx", Level1, vec![4, 4], 6).into(), None),
-            Query("abc", vec![("abc", Level0, vec![1, 1], 3).into()]),
+            Insert(("abc", Level0, vec![1, 1], "3").into(), None),
+            Insert(("abc/ijk", Level1, vec![2, 2], "4").into(), None),
+            Insert(("abc/xyz", Level1, vec![3, 3], "5").into(), None),
+            Insert(("abc/xyz/xxx", Level1, vec![4, 4], "6").into(), None),
+            Query("abc", vec![("abc", Level0, vec![1, 1], "3").into()]),
             Insert(
-                ("abc", Level1, vec![11, 11], 13).into(),
-                Some(("abc", Level0, vec![1, 1], 3).into()),
+                ("abc", Level1, vec![11, 11], "13").into(),
+                Some(("abc", Level0, vec![1, 1], "3").into()),
             ),
-            Query("abc", vec![("abc", Level1, vec![11, 11], 13).into()]),
+            Query("abc", vec![("abc", Level1, vec![11, 11], "13").into()]),
             Insert(
-                ("abc", Level2, vec![21, 21], 23).into(),
-                Some(("abc", Level1, vec![11, 11], 13).into()),
+                ("abc", Level2, vec![21, 21], "23").into(),
+                Some(("abc", Level1, vec![11, 11], "13").into()),
             ),
-            Query("abc", vec![("abc", Level2, vec![21, 21], 23).into()]),
+            Query("abc", vec![("abc", Level2, vec![21, 21], "23").into()]),
             Query(
                 "abc/+",
                 vec![
-                    ("abc/ijk", Level1, vec![2, 2], 4).into(),
-                    ("abc/xyz", Level1, vec![3, 3], 5).into(),
+                    ("abc/ijk", Level1, vec![2, 2], "4").into(),
+                    ("abc/xyz", Level1, vec![3, 3], "5").into(),
                 ],
             ),
         ]);
@@ -360,20 +375,20 @@ mod tests {
     #[test]
     fn test_remove() {
         run_actions(&[
-            Insert(("abc", Level0, vec![1, 1], 3).into(), None),
-            Insert(("abc/ijk", Level1, vec![2, 2], 4).into(), None),
-            Insert(("abc/xyz", Level1, vec![3, 3], 5).into(), None),
-            Insert(("abc/xyz/xxx", Level1, vec![4, 4], 6).into(), None),
-            Query("abc", vec![("abc", Level0, vec![1, 1], 3).into()]),
-            Remove("abc", Some(("abc", Level0, vec![1, 1], 3).into())),
+            Insert(("abc", Level0, vec![1, 1], "3").into(), None),
+            Insert(("abc/ijk", Level1, vec![2, 2], "4").into(), None),
+            Insert(("abc/xyz", Level1, vec![3, 3], "5").into(), None),
+            Insert(("abc/xyz/xxx", Level1, vec![4, 4], "6").into(), None),
+            Query("abc", vec![("abc", Level0, vec![1, 1], "3").into()]),
+            Remove("abc", Some(("abc", Level0, vec![1, 1], "3").into())),
             Query("abc", vec![]),
             Remove("abc", None),
             Query("abc", vec![]),
             Query(
                 "abc/+",
                 vec![
-                    ("abc/ijk", Level1, vec![2, 2], 4).into(),
-                    ("abc/xyz", Level1, vec![3, 3], 5).into(),
+                    ("abc/ijk", Level1, vec![2, 2], "4").into(),
+                    ("abc/xyz", Level1, vec![3, 3], "5").into(),
                 ],
             ),
         ]);

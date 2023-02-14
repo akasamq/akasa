@@ -143,7 +143,10 @@ impl GlobalState {
             };
 
             // NOTE: only one retry is allowed
-            assert!(round == 0, "add client round: {}", round);
+            debug_assert!(round == 0, "add client round: {}", round);
+            if round > 0 {
+                log::error!("add client round: {}, which is more than 0", round);
+            }
 
             if protocol < Protocol::V500 {
                 let (sender, receiver) = bounded(1);

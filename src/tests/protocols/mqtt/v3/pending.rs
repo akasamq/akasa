@@ -183,7 +183,7 @@ async fn test_pending_qos1() {
 #[tokio::test]
 async fn test_pending_max_inflight_qos1() {
     let mut config = Config::default();
-    config.max_inflight = 8;
+    config.max_inflight_client = 8;
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
         config.clone(),
