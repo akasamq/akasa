@@ -23,6 +23,7 @@ pub struct Session {
     // For record packet id send from server to client
     pub(super) server_packet_id: Pid,
     pub(super) pending_packets: PendingPackets<PubPacket>,
+    pub(super) qos2_pids: HashMap<Pid, u64>,
 
     pub(super) client_id: ClientId,
     pub(super) client_identifier: Arc<String>,
@@ -41,6 +42,7 @@ pub struct SessionState {
     // For record packet id send from server to client
     pub server_packet_id: Pid,
     pub pending_packets: PendingPackets<PubPacket>,
+    pub qos2_pids: HashMap<Pid, u64>,
     pub subscribes: HashMap<TopicFilter, QoS>,
 }
 
@@ -58,6 +60,7 @@ impl Session {
                 config.max_in_mem_pending_messages,
                 config.inflight_timeout,
             ),
+            qos2_pids: HashMap::new(),
 
             client_id: ClientId(u64::max_value()),
             client_identifier: Arc::new(String::new()),

@@ -29,6 +29,11 @@ pub struct Session {
     // For record packet id send from server to client
     pub(super) server_packet_id: Pid,
     pub(super) pending_packets: PendingPackets<PubPacket>,
+    // client side of pending packets (ids), the value is a siphash24 digest for
+    // detecting PacketIdentifierInUse.
+    //   See this page for why choose siphash24:
+    //   https://github.com/tkaitchuck/aHash/blob/master/compare/readme.md#speed
+    pub(super) qos2_pids: HashMap<Pid, u64>,
 
     pub(super) client_id: ClientId,
     pub(super) client_identifier: Arc<String>,
@@ -54,18 +59,6 @@ pub struct Session {
     pub(super) auth_data: Option<Bytes>,
 }
 
-#[derive(Clone, Debug)]
-pub struct SubscriptionData {
-    pub options: SubscriptionOptions,
-    pub id: Option<VarByteInt>,
-}
-
-impl SubscriptionData {
-    pub fn new(options: SubscriptionOptions, id: Option<VarByteInt>) -> Self {
-        SubscriptionData { options, id }
-    }
-}
-
 pub struct SessionState {
     pub client_id: ClientId,
     pub receiver: Receiver<(ClientId, InternalMessage)>,
@@ -74,6 +67,7 @@ pub struct SessionState {
     // For record packet id send from server to client
     pub server_packet_id: Pid,
     pub pending_packets: PendingPackets<PubPacket>,
+    pub qos2_pids: HashMap<Pid, u64>,
     pub subscribes: HashMap<TopicFilter, SubscriptionData>,
 }
 
@@ -83,7 +77,7 @@ impl Session {
             peer,
             connected: false,
             disconnected: false,
-            protocol: Protocol::V311,
+            protocol: Protocol::V500,
             connected_time: None,
             connection_closed_time: None,
             last_packet_time: Arc::new(RwLock::new(Instant::now())),
@@ -93,6 +87,7 @@ impl Session {
                 config.max_in_mem_pending_messages,
                 config.inflight_timeout,
             ),
+            qos2_pids: HashMap::new(),
 
             client_id: ClientId(u64::max_value()),
             client_identifier: Arc::new(String::new()),
@@ -135,6 +130,18 @@ impl Session {
         let old_value = self.server_packet_id;
         self.server_packet_id += 1;
         old_value
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SubscriptionData {
+    pub options: SubscriptionOptions,
+    pub id: Option<VarByteInt>,
+}
+
+impl SubscriptionData {
+    pub fn new(options: SubscriptionOptions, id: Option<VarByteInt>) -> Self {
+        SubscriptionData { options, id }
     }
 }
 

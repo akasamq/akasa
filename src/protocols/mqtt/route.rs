@@ -93,7 +93,19 @@ impl RouteTable {
         filters
     }
 
-    fn subscribe_with_group(
+    pub fn subscribe(&self, topic_filter: &TopicFilter, id: ClientId, qos: QoS) {
+        if let Some((shared_group_name, shared_filter)) = topic_filter.shared_info() {
+            self.subscribe_shared(
+                &TopicFilter::try_from(shared_filter.to_owned()).expect("shared filter"),
+                id,
+                qos,
+                Some(shared_group_name.to_owned()),
+            );
+        } else {
+            self.subscribe_shared(topic_filter, id, qos, None);
+        }
+    }
+    fn subscribe_shared(
         &self,
         topic_filter: &TopicFilter,
         id: ClientId,
@@ -107,25 +119,19 @@ impl RouteTable {
             .or_insert_with(RouteNode::new)
             .insert(topic_filter, rest_items, id, qos, group);
     }
-    pub fn subscribe(&self, topic_filter: &TopicFilter, id: ClientId, qos: QoS) {
+
+    pub fn unsubscribe(&self, topic_filter: &TopicFilter, id: ClientId) {
         if let Some((shared_group_name, shared_filter)) = topic_filter.shared_info() {
-            self.subscribe_with_group(
+            self.unsubscribe_shared(
                 &TopicFilter::try_from(shared_filter.to_owned()).expect("shared filter"),
                 id,
-                qos,
-                Some(shared_group_name.to_owned()),
+                Some(shared_group_name),
             );
         } else {
-            self.subscribe_with_group(topic_filter, id, qos, None);
+            self.unsubscribe_shared(topic_filter, id, None);
         }
     }
-
-    fn unsubscribe_with_group(
-        &self,
-        topic_filter: &TopicFilter,
-        id: ClientId,
-        group: Option<&str>,
-    ) {
+    fn unsubscribe_shared(&self, topic_filter: &TopicFilter, id: ClientId, group: Option<&str>) {
         let (filter_item, rest_items) = split_topic(topic_filter.deref());
         // bool variable is for resolve dead lock of access `self.nodes`
         let mut remove_node = false;
@@ -134,17 +140,6 @@ impl RouteTable {
         }
         if remove_node {
             self.nodes.remove(filter_item);
-        }
-    }
-    pub fn unsubscribe(&self, topic_filter: &TopicFilter, id: ClientId) {
-        if let Some((shared_group_name, shared_filter)) = topic_filter.shared_info() {
-            self.unsubscribe_with_group(
-                &TopicFilter::try_from(shared_filter.to_owned()).expect("shared filter"),
-                id,
-                Some(shared_group_name),
-            );
-        } else {
-            self.unsubscribe_with_group(topic_filter, id, None);
         }
     }
 }

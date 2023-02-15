@@ -53,7 +53,7 @@ pub enum AuthType {
 pub enum SharedSubscriptionMode {
     Random,
     HashClientId,
-    HashTopic,
+    HashTopicName,
 }
 
 impl Default for Config {

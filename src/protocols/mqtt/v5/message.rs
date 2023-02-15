@@ -1,5 +1,5 @@
 use std::cmp;
-use std::hash::Hasher;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::mem;
 use std::net::SocketAddr;
@@ -13,6 +13,7 @@ use futures_lite::{
     io::{AsyncRead, AsyncWrite},
     FutureExt,
 };
+use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use mqtt_proto::{
     v5::{
@@ -34,11 +35,12 @@ use crate::state::{AddClientReceipt, ClientId, Executor, GlobalState, InternalMe
 
 use super::super::{
     get_unix_ts, start_keep_alive_timer, PendingPacketStatus, PendingPackets, RetainContent,
+    SIP24_QOS2_KEY,
 };
 use super::{PubPacket, Session, SessionState, SubscriptionData};
 
 lazy_static! {
-    static ref SIP_HASHER_24_KEY: [u8; 16] = {
+    static ref SIP24_SHARED_KEY: [u8; 16] = {
         let mut os_rng = OsRng::default();
         let mut key = [0u8; 16];
         os_rng.fill_bytes(&mut key);
@@ -430,6 +432,7 @@ async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
             if !session.clean_start && session.protocol == old_state.protocol {
                 session.server_packet_id = old_state.server_packet_id;
                 session.pending_packets = old_state.pending_packets;
+                session.qos2_pids = old_state.qos2_pids;
                 session.subscribes = old_state.subscribes;
                 session_present = true;
             } else {
@@ -494,7 +497,7 @@ async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
         connack_properties.server_keep_alive = Some(session.keep_alive);
     }
     if session.request_response_info {
-        // * TODO ResponseTopic
+        // * TODO handle ResponseTopic in plugin
     }
     // * TODO ServerReference
     // * TODO AuthenticationMethod
@@ -717,11 +720,28 @@ topic name : {}
         return Ok(());
     }
 
-    // FIXME: handle message.qos == 2 (see [MQTT 4.4])
-    //   * Broadcast message when receive the message and record the packet identifier
-    //   * Remove the packet identifier when received crossponding PUBREL packet
-    //   * When received a packet from the client again, don't broadcast
     // FIXME: handle dup flag
+
+    if let QosPid::Level2(pid) = packet.qos_pid {
+        let mut hasher = SipHasher24::new_with_key(&SIP24_QOS2_KEY);
+        packet.hash(&mut hasher);
+        let current_hash = hasher.finish();
+
+        if let Some(previous_hash) = session.qos2_pids.get(&pid) {
+            if current_hash != *previous_hash {
+                let reason_code = PubrecReasonCode::PacketIdentifierInUse;
+                let rv_packet = Pubrec {
+                    pid,
+                    reason_code,
+                    properties: PubrecProperties::default(),
+                };
+                write_packet(session.client_id, conn, &rv_packet.into()).await?;
+                return Ok(());
+            }
+        } else {
+            session.qos2_pids.insert(pid, current_hash);
+        }
+    }
 
     let matched_len = send_publish(
         session,
@@ -752,7 +772,6 @@ topic name : {}
             write_packet(session.client_id, conn, &rv_packet.into()).await?
         }
         QosPid::Level2(pid) => {
-            // FIXME: report packet identifier in use
             let reason_code = if matched_len > 0 {
                 PubrecReasonCode::Success
             } else {
@@ -781,8 +800,7 @@ async fn handle_puback<T: AsyncWrite + Unpin>(
         session.client_id,
         packet.pid.value(),
     );
-    // FIXME: handle client side publish qos1
-    let matched = session.pending_packets.complete(packet.pid, QoS::Level1);
+    let _matched = session.pending_packets.complete(packet.pid, QoS::Level1);
     Ok(())
 }
 
@@ -824,10 +842,14 @@ async fn handle_pubrel<T: AsyncWrite + Unpin>(
         session.client_id,
         packet.pid.value()
     );
-    // FIXME: handle client side publish qos2
+    let reason_code = if session.qos2_pids.remove(&packet.pid).is_some() {
+        PubcompReasonCode::Success
+    } else {
+        PubcompReasonCode::PacketIdentifierNotFound
+    };
     let rv_packet = Pubcomp {
         pid: packet.pid,
-        reason_code: PubcompReasonCode::Success,
+        reason_code,
         properties: PubcompProperties::default(),
     };
     write_packet(session.client_id, conn, &rv_packet.into()).await?;
@@ -1074,14 +1096,19 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
         }
         InternalMessage::OnlineV5 { sender } => {
             let mut pending_packets = PendingPackets::new(0, 0, 0);
+            let mut qos2_pids = HashMap::new();
+            let mut subscribes = HashMap::new();
             mem::swap(&mut session.pending_packets, &mut pending_packets);
+            mem::swap(&mut session.qos2_pids, &mut qos2_pids);
+            mem::swap(&mut session.subscribes, &mut subscribes);
             let old_state = SessionState {
                 protocol: session.protocol,
                 server_packet_id: session.server_packet_id,
                 pending_packets,
+                qos2_pids,
                 receiver: receiver.clone(),
                 client_id: session.client_id,
-                subscribes: session.subscribes.clone(),
+                subscribes,
             };
             if sender.send_async(old_state).await.is_ok() {
                 stop = true;
@@ -1222,7 +1249,7 @@ async fn send_publish<'a>(
         }
     }
 
-    // FIXME: enable subscription identifier list by config.
+    // TODO: enable subscription identifier list by config.
     //   It is also an opinioned optimization.
 
     let matches = global.route_table.get_matches(msg.topic_name);
@@ -1250,12 +1277,12 @@ async fn send_publish<'a>(
             let number: u64 = match global.config.shared_subscription_mode {
                 SharedSubscriptionMode::Random => thread_rng().gen(),
                 SharedSubscriptionMode::HashClientId => {
-                    let mut hasher = SipHasher24::new_with_key(&SIP_HASHER_24_KEY);
+                    let mut hasher = SipHasher24::new_with_key(&SIP24_SHARED_KEY);
                     hasher.write(session.client_identifier.as_bytes());
                     hasher.finish()
                 }
-                SharedSubscriptionMode::HashTopic => {
-                    let mut hasher = SipHasher24::new_with_key(&SIP_HASHER_24_KEY);
+                SharedSubscriptionMode::HashTopicName => {
+                    let mut hasher = SipHasher24::new_with_key(&SIP24_SHARED_KEY);
                     hasher.write(msg.topic_name.as_bytes());
                     hasher.finish()
                 }

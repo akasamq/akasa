@@ -1,4 +1,5 @@
 use std::cmp;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::mem;
 use std::net::SocketAddr;
@@ -12,6 +13,7 @@ use futures_lite::{
     io::{AsyncRead, AsyncWrite},
     FutureExt,
 };
+use hashbrown::HashMap;
 use mqtt_proto::{
     v3::{
         Connack, Connect, ConnectReturnCode, Header, Packet, Publish, Suback, Subscribe,
@@ -19,11 +21,14 @@ use mqtt_proto::{
     },
     Pid, Protocol, QoS, QosPid, TopicFilter, TopicName,
 };
+use siphasher::sip::SipHasher24;
 
 use crate::config::AuthType;
 use crate::state::{AddClientReceipt, ClientId, Executor, GlobalState, InternalMessage};
 
-use super::super::{start_keep_alive_timer, PendingPacketStatus, PendingPackets, RetainContent};
+use super::super::{
+    start_keep_alive_timer, PendingPacketStatus, PendingPackets, RetainContent, SIP24_QOS2_KEY,
+};
 use super::{PubPacket, Session, SessionState};
 
 pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
@@ -325,6 +330,7 @@ clean session : {}
             if !session.clean_session && session.protocol == old_state.protocol {
                 session.server_packet_id = old_state.server_packet_id;
                 session.pending_packets = old_state.pending_packets;
+                session.qos2_pids = old_state.qos2_pids;
                 session.subscribes = old_state.subscribes;
                 session_present = true;
             } else {
@@ -438,11 +444,22 @@ topic name : {}
         return Err(io::ErrorKind::InvalidData.into());
     }
 
-    // FIXME: handle message.qos == 2
-    //   * Broadcast message when receive the message and record the packet identifier
-    //   * Remove the packet identifier when received crossponding PUBREL packet
-    //   * When received a packet from the client again, don't broadcast
     // FIXME: handle dup flag
+
+    if let QosPid::Level2(pid) = packet.qos_pid {
+        let mut hasher = SipHasher24::new_with_key(&SIP24_QOS2_KEY);
+        packet.hash(&mut hasher);
+        let current_hash = hasher.finish();
+
+        if let Some(previous_hash) = session.qos2_pids.get(&pid) {
+            if current_hash != *previous_hash {
+                log::warn!("packet identifier in use: {}", pid.value());
+                return Err(io::ErrorKind::InvalidData.into());
+            }
+        } else {
+            session.qos2_pids.insert(pid, current_hash);
+        }
+    }
 
     send_publish(
         session,
@@ -509,6 +526,10 @@ async fn handle_pubrel<T: AsyncWrite + Unpin>(
         session.client_id,
         pid.value()
     );
+    if session.qos2_pids.remove(&pid).is_none() {
+        log::warn!("packet identifier not found: {}", pid.value());
+        return Err(io::ErrorKind::InvalidData.into());
+    }
     write_packet(session.client_id, conn, &Packet::Pubcomp(pid)).await?;
     Ok(())
 }
@@ -663,14 +684,19 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
     match msg {
         InternalMessage::OnlineV3 { sender } => {
             let mut pending_packets = PendingPackets::new(0, 0, 0);
+            let mut qos2_pids = HashMap::new();
+            let mut subscribes = HashMap::new();
             mem::swap(&mut session.pending_packets, &mut pending_packets);
+            mem::swap(&mut session.qos2_pids, &mut qos2_pids);
+            mem::swap(&mut session.subscribes, &mut subscribes);
             let old_state = SessionState {
                 protocol: session.protocol,
                 server_packet_id: session.server_packet_id,
                 pending_packets,
+                qos2_pids,
                 receiver: receiver.clone(),
                 client_id: session.client_id,
-                subscribes: session.subscribes.clone(),
+                subscribes,
             };
             if sender.send_async(old_state).await.is_ok() {
                 stop = true;

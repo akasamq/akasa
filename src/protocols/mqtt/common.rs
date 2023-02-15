@@ -2,9 +2,20 @@ use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use lazy_static::lazy_static;
 use parking_lot::RwLock;
+use rand::{rngs::OsRng, RngCore};
 
 use crate::state::{ClientId, Executor, GlobalState, InternalMessage};
+
+lazy_static! {
+    pub static ref SIP24_QOS2_KEY: [u8; 16] = {
+        let mut os_rng = OsRng::default();
+        let mut key = [0u8; 16];
+        os_rng.fill_bytes(&mut key);
+        key
+    };
+}
 
 pub(crate) fn start_keep_alive_timer<E: Executor>(
     keep_alive: u16,
