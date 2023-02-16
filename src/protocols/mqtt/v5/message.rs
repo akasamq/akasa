@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cmp;
 use std::hash::{Hash, Hasher};
 use std::io;
@@ -301,7 +302,7 @@ async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     }
     // FIXME: permission check and return "not authorized"
     if reason_code != ConnectReasonCode::Success {
-        send_error_connack(conn, session, false, reason_code, None, None).await?;
+        send_error_connack(conn, session, false, reason_code, "").await?;
         return Ok(());
     }
 
@@ -324,11 +325,10 @@ async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     };
 
     let properties = packet.properties;
-    let reason_string = if properties.request_problem_info != Some(false) {
-        Some(())
-    } else {
-        None
-    };
+    session.request_problem_info = properties.request_problem_info.unwrap_or(true);
+    session.max_packet_size = properties
+        .max_packet_size
+        .unwrap_or(global.config.max_packet_size);
     if properties.receive_max == Some(0) {
         log::debug!("connect properties ReceiveMaximum is 0");
         send_error_connack(
@@ -336,21 +336,19 @@ async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
             session,
             false,
             ConnectReasonCode::ProtocolError,
-            reason_string.map(|()| "ReceiveMaximum is 0".to_owned()),
-            properties.max_packet_size,
+            "ReceiveMaximum value=0 is not allowed",
         )
         .await?;
         return Ok(());
     }
-    if properties.max_packet_size == Some(0) {
+    if session.max_packet_size == 0 {
         log::debug!("connect properties MaximumPacketSize is 0");
         send_error_connack(
             conn,
             session,
             false,
             ConnectReasonCode::ProtocolError,
-            reason_string.map(|()| "MaximumPacketSize is 0".to_owned()),
-            properties.max_packet_size,
+            "MaximumPacketSize value=0 is not allowed",
         )
         .await?;
         return Ok(());
@@ -362,8 +360,7 @@ async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
             session,
             false,
             ConnectReasonCode::ProtocolError,
-            reason_string.map(|()| "AuthenticationMethod is missing".to_owned()),
-            properties.max_packet_size,
+            "AuthenticationMethod is missing",
         )
         .await?;
         return Ok(());
@@ -372,12 +369,10 @@ async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     session.receive_max = properties
         .receive_max
         .unwrap_or(global.config.max_inflight_client);
-    session.max_packet_size = properties
-        .max_packet_size
-        .unwrap_or(global.config.max_packet_size);
+    // MaximumPacketSize assigned above
     session.topic_alias_max = properties.topic_alias_max.unwrap_or(0);
     session.request_response_info = properties.request_response_info.unwrap_or(false);
-    session.request_problem_info = properties.request_problem_info.unwrap_or(true);
+    // RequestProblemInformation assigned above
     session.user_properties = properties.user_properties;
     session.auth_method = properties.auth_method;
     session.auth_data = properties.auth_data;
@@ -553,18 +548,13 @@ async fn handle_disconnect<T: AsyncWrite + Unpin>(
 ) -> io::Result<()> {
     log::debug!("{} received a disconnect packet", session.client_id);
     let properties = packet.properties;
-    let reason_string = if session.request_problem_info {
-        Some(())
-    } else {
-        None
-    };
     if let Some(value) = properties.session_expiry_interval {
         if session.session_expiry_interval == 0 && value > 0 {
             send_error_disconnect(
                 conn,
                 session,
                 DisconnectReasonCode::ProtocolError,
-                reason_string.map(|()| "SessionExpiryInterval is 0 in CONNECT".to_owned()),
+                "SessionExpiryInterval is 0 in CONNECT",
             )
             .await?;
             return Ok(());
@@ -591,17 +581,12 @@ async fn handle_auth<T: AsyncWrite + Unpin>(
     conn: &mut T,
     _global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    let reason_string = if session.request_problem_info {
-        Some(())
-    } else {
-        None
-    };
     if session.auth_method.is_none() {
         send_error_disconnect(
             conn,
             session,
             DisconnectReasonCode::ProtocolError,
-            reason_string.map(|()| "AuthenticationMethod not presented in CONNECT".to_owned()),
+            "AuthenticationMethod not presented in CONNECT",
         )
         .await?;
         return Ok(());
@@ -611,7 +596,7 @@ async fn handle_auth<T: AsyncWrite + Unpin>(
             conn,
             session,
             DisconnectReasonCode::ProtocolError,
-            reason_string.map(|()| "AuthenticationMethod not same with CONNECT".to_owned()),
+            "AuthenticationMethod not same with CONNECT",
         )
         .await?;
         return Ok(());
@@ -641,22 +626,17 @@ topic name : {}
         packet.retain,
         packet.dup,
     );
-    let reason_string = if session.request_problem_info {
-        Some(())
-    } else {
-        None
-    };
 
     if packet.topic_name.starts_with('$') {
         log::warn!(
-            "publish to special topic name is not allowed: {}",
+            "publish to topic name start with '$' is not allowed: {}",
             packet.topic_name
         );
         send_error_disconnect(
             conn,
             session,
             DisconnectReasonCode::TopicNameInvalid,
-            reason_string.map(|()| "special topic (start with $) not allowed".to_owned()),
+            "publish to topic name start with '$' is not allowed",
         )
         .await?;
         return Ok(());
@@ -674,7 +654,7 @@ topic name : {}
                 conn,
                 session,
                 DisconnectReasonCode::TopicAliasInvalid,
-                reason_string.map(|()| "topic alias too large or is 0".to_owned()),
+                "topic alias too large or is 0",
             )
             .await?;
             return Ok(());
@@ -687,7 +667,7 @@ topic name : {}
                     conn,
                     session,
                     DisconnectReasonCode::ProtocolError,
-                    reason_string.map(|()| "topic alias not found".to_owned()),
+                    "topic alias not found",
                 )
                 .await?;
                 return Ok(());
@@ -703,7 +683,7 @@ topic name : {}
             conn,
             session,
             DisconnectReasonCode::ProtocolError,
-            reason_string.map(|()| "subscription identifier can't in publish".to_owned()),
+            "subscription identifier can't in publish",
         )
         .await?;
         return Ok(());
@@ -878,17 +858,12 @@ packet id : {}
     );
 
     let properties = packet.properties;
-    let reason_string = if session.request_problem_info {
-        Some(())
-    } else {
-        None
-    };
     if properties.subscription_id.map(|id| id.value()) == Some(0) {
         send_error_disconnect(
             conn,
             session,
             DisconnectReasonCode::ProtocolError,
-            reason_string.map(|()| "Subscription identifier is 0".to_owned()),
+            "Subscription identifier value=0 is not allowed",
         )
         .await?;
         return Ok(());
@@ -1014,16 +989,6 @@ async fn handle_pingreq<T: AsyncWrite + Unpin>(
 ) -> io::Result<()> {
     log::debug!("{} received a ping packet", session.client_id);
     write_packet(session.client_id, conn, &Packet::Pingresp).await?;
-    Ok(())
-}
-
-#[inline]
-async fn after_handle_packet<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    conn: &mut T,
-) -> io::Result<()> {
-    *session.last_packet_time.write() = Instant::now();
-    handle_pendings(session, conn).await?;
     Ok(())
 }
 
@@ -1199,6 +1164,16 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
 // ===========================
 // ==== Utils Functions ====
 // ===========================
+
+#[inline]
+async fn after_handle_packet<T: AsyncWrite + Unpin>(
+    session: &mut Session,
+    conn: &mut T,
+) -> io::Result<()> {
+    *session.last_packet_time.write() = Instant::now();
+    handle_pendings(session, conn).await?;
+    Ok(())
+}
 
 // Received a publish message from client or will, then publish the message to
 // matched clients, return the matched subscriptions length.
@@ -1393,30 +1368,33 @@ async fn send_will(session: &mut Session, global: &Arc<GlobalState>) -> io::Resu
 }
 
 #[inline]
-async fn send_error_connack<T: AsyncWrite + Unpin>(
-    conn: &mut T,
-    session: &mut Session,
+async fn send_error_connack<'a, T: AsyncWrite + Unpin, R: Into<Cow<'a, str>>>(
+    conn: &'a mut T,
+    session: &'a mut Session,
     session_present: bool,
     reason_code: ConnectReasonCode,
-    reason_string: Option<String>,
-    max_packet_size: Option<u32>,
+    reason_string: R,
 ) -> io::Result<()> {
-    let has_reason_string = reason_string.is_some();
+    let reason_string = if session.request_problem_info {
+        Some(Arc::new(reason_string.into().into_owned()))
+    } else {
+        None
+    };
     let mut rv_packet: Packet = Connack {
         session_present,
         reason_code,
         properties: ConnackProperties {
-            reason_string: reason_string.map(Arc::new),
+            reason_string,
             ..Default::default()
         },
     }
     .into();
-    if has_reason_string {
+    if session.request_problem_info {
         let encode_len = rv_packet.encode_len().map_err(|_| {
             log::warn!("connack packet size too large");
             io::Error::from(io::ErrorKind::InvalidData)
         })? as u32;
-        if encode_len > max_packet_size.unwrap_or(u32::max_value()) {
+        if encode_len > session.max_packet_size {
             rv_packet = Connack {
                 session_present,
                 reason_code,
@@ -1430,24 +1408,27 @@ async fn send_error_connack<T: AsyncWrite + Unpin>(
     Ok(())
 }
 
-// TODO: replace this with a macro
 #[inline]
-async fn send_error_disconnect<T: AsyncWrite + Unpin>(
-    conn: &mut T,
-    session: &mut Session,
+async fn send_error_disconnect<'a, T: AsyncWrite + Unpin, R: Into<Cow<'a, str>>>(
+    conn: &'a mut T,
+    session: &'a mut Session,
     reason_code: DisconnectReasonCode,
-    reason_string: Option<String>,
+    reason_string: R,
 ) -> io::Result<()> {
-    let has_reason_string = reason_string.is_some();
+    let reason_string = if session.request_problem_info {
+        Some(Arc::new(reason_string.into().into_owned()))
+    } else {
+        None
+    };
     let mut rv_packet: Packet = Disconnect {
         reason_code,
         properties: DisconnectProperties {
-            reason_string: reason_string.map(Arc::new),
+            reason_string,
             ..Default::default()
         },
     }
     .into();
-    if has_reason_string {
+    if session.request_problem_info {
         let encode_len = rv_packet.encode_len().map_err(|_| {
             // not likely to happen
             log::warn!("disconnect packet too large");

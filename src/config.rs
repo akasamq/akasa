@@ -92,6 +92,10 @@ impl Config {
             );
             return false;
         }
+        if self.max_packet_size == 0 {
+            log::error!("invalid max_packet_size, 0 is not allowed");
+            return false;
+        }
         true
     }
 
