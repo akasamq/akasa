@@ -29,9 +29,9 @@ pub struct Session {
     // For record packet id send from server to client
     pub(super) server_packet_id: Pid,
     pub(super) pending_packets: PendingPackets<PubPacket>,
-    // client side of pending packets (ids), the value is a siphash24 digest for
+    // client side of pending packets (ids), the value is a ahash digest for
     // detecting PacketIdentifierInUse.
-    //   See this page for why choose siphash24:
+    //   See this page for why choose ahash:
     //   https://github.com/tkaitchuck/aHash/blob/master/compare/readme.md#speed
     pub(super) qos2_pids: HashMap<Pid, u64>,
 

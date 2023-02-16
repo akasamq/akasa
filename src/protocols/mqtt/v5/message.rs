@@ -7,6 +7,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ahash::AHasher;
 use bytes::Bytes;
 use flume::Receiver;
 use futures_lite::{
@@ -14,7 +15,6 @@ use futures_lite::{
     FutureExt,
 };
 use hashbrown::HashMap;
-use lazy_static::lazy_static;
 use mqtt_proto::{
     v5::{
         Auth, AuthProperties, AuthReasonCode, Connack, ConnackProperties, Connect,
@@ -27,26 +27,15 @@ use mqtt_proto::{
     },
     Protocol, QoS, QosPid, TopicFilter, TopicName, MATCH_ALL_CHAR, MATCH_ONE_CHAR, SHARED_PREFIX,
 };
-use rand::{rngs::OsRng, thread_rng, Rng, RngCore};
-use siphasher::sip::SipHasher24;
+use rand::{thread_rng, Rng};
 
 use crate::config::{AuthType, SharedSubscriptionMode};
 use crate::state::{AddClientReceipt, ClientId, Executor, GlobalState, InternalMessage};
 
 use super::super::{
     get_unix_ts, start_keep_alive_timer, PendingPacketStatus, PendingPackets, RetainContent,
-    SIP24_QOS2_KEY,
 };
 use super::{PubPacket, Session, SessionState, SubscriptionData};
-
-lazy_static! {
-    static ref SIP24_SHARED_KEY: [u8; 16] = {
-        let mut os_rng = OsRng::default();
-        let mut key = [0u8; 16];
-        os_rng.fill_bytes(&mut key);
-        key
-    };
-}
 
 pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     conn: T,
@@ -723,11 +712,12 @@ topic name : {}
     // FIXME: handle dup flag
 
     if let QosPid::Level2(pid) = packet.qos_pid {
-        let mut hasher = SipHasher24::new_with_key(&SIP24_QOS2_KEY);
+        let mut hasher = AHasher::default();
         packet.hash(&mut hasher);
         let current_hash = hasher.finish();
 
         if let Some(previous_hash) = session.qos2_pids.get(&pid) {
+            // hash collision is accepted here
             if current_hash != *previous_hash {
                 let reason_code = PubrecReasonCode::PacketIdentifierInUse;
                 let rv_packet = Pubrec {
@@ -1277,12 +1267,12 @@ async fn send_publish<'a>(
             let number: u64 = match global.config.shared_subscription_mode {
                 SharedSubscriptionMode::Random => thread_rng().gen(),
                 SharedSubscriptionMode::HashClientId => {
-                    let mut hasher = SipHasher24::new_with_key(&SIP24_SHARED_KEY);
+                    let mut hasher = AHasher::default();
                     hasher.write(session.client_identifier.as_bytes());
                     hasher.finish()
                 }
                 SharedSubscriptionMode::HashTopicName => {
-                    let mut hasher = SipHasher24::new_with_key(&SIP24_SHARED_KEY);
+                    let mut hasher = AHasher::default();
                     hasher.write(msg.topic_name.as_bytes());
                     hasher.finish()
                 }

@@ -7,6 +7,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Instant;
 
+use ahash::AHasher;
 use bytes::Bytes;
 use flume::Receiver;
 use futures_lite::{
@@ -21,14 +22,11 @@ use mqtt_proto::{
     },
     Pid, Protocol, QoS, QosPid, TopicFilter, TopicName,
 };
-use siphasher::sip::SipHasher24;
 
 use crate::config::AuthType;
 use crate::state::{AddClientReceipt, ClientId, Executor, GlobalState, InternalMessage};
 
-use super::super::{
-    start_keep_alive_timer, PendingPacketStatus, PendingPackets, RetainContent, SIP24_QOS2_KEY,
-};
+use super::super::{start_keep_alive_timer, PendingPacketStatus, PendingPackets, RetainContent};
 use super::{PubPacket, Session, SessionState};
 
 pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
@@ -447,11 +445,12 @@ topic name : {}
     // FIXME: handle dup flag
 
     if let QosPid::Level2(pid) = packet.qos_pid {
-        let mut hasher = SipHasher24::new_with_key(&SIP24_QOS2_KEY);
+        let mut hasher = AHasher::default();
         packet.hash(&mut hasher);
         let current_hash = hasher.finish();
 
         if let Some(previous_hash) = session.qos2_pids.get(&pid) {
+            // hash collision is acceptable here
             if current_hash != *previous_hash {
                 log::warn!("packet identifier in use: {}", pid.value());
                 return Err(io::ErrorKind::InvalidData.into());
