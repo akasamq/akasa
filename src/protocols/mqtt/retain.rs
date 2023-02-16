@@ -3,9 +3,12 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use dashmap::DashMap;
-use mqtt_proto::{v5::PublishProperties, QoS, TopicName};
+use mqtt_proto::{
+    v5::PublishProperties, QoS, TopicName, MATCH_ALL_CHAR, MATCH_ALL_STR, MATCH_ONE_CHAR,
+    MATCH_ONE_STR,
+};
 
-use super::route::{split_topic, MATCH_ALL, MATCH_ONE};
+use super::route::split_topic;
 
 #[derive(Debug)]
 pub struct RetainTable {
@@ -36,10 +39,14 @@ impl RetainTable {
     }
 
     pub fn get_matches(&self, topic_filter: &str) -> Vec<Arc<RetainContent>> {
+        // [MQTT-4.7.2-1] The Server MUST NOT match Topic Filters starting with a
+        // wildcard character (# or +) with Topic Names beginning with a $ character
+        let wildcard_first =
+            topic_filter.starts_with(|c| c == MATCH_ONE_CHAR || c == MATCH_ALL_CHAR);
         let (filter_item, rest_items) = split_topic(topic_filter);
         let mut retains = Vec::new();
         self.inner
-            .get_matches(filter_item, rest_items, &mut retains);
+            .get_matches(filter_item, rest_items, wildcard_first, &mut retains);
         retains
     }
 
@@ -71,28 +78,35 @@ impl RetainNode {
         &self,
         prev_item: &str,
         filter_items: Option<&str>,
+        wildcard_first: bool,
         retains: &mut Vec<Arc<RetainContent>>,
     ) {
         match prev_item {
-            MATCH_ALL => {
+            MATCH_ALL_STR => {
                 assert!(filter_items.is_none(), "invalid topic filter");
                 for pair in self.nodes.iter() {
-                    pair.value().get_matches(MATCH_ALL, None, retains);
+                    pair.value()
+                        .get_matches(MATCH_ALL_STR, None, wildcard_first, retains);
                 }
                 // Topic name "abc" will match topic filter "abc/#", since "#" also represent parent level.
                 if let Some(content) = self.content.as_ref() {
-                    retains.push(Arc::clone(content));
+                    if !(content.topic_name.starts_with('$') && wildcard_first) {
+                        retains.push(Arc::clone(content));
+                    }
                 }
             }
-            MATCH_ONE => {
+            MATCH_ONE_STR => {
                 if let Some((filter_item, rest_items)) = filter_items.map(split_topic) {
                     for pair in self.nodes.iter() {
-                        pair.value().get_matches(filter_item, rest_items, retains);
+                        pair.value()
+                            .get_matches(filter_item, rest_items, wildcard_first, retains);
                     }
                 } else {
                     for pair in self.nodes.iter() {
                         if let Some(content) = pair.value().content.as_ref() {
-                            retains.push(Arc::clone(content));
+                            if !(content.topic_name.starts_with('$') && wildcard_first) {
+                                retains.push(Arc::clone(content));
+                            }
                         }
                     }
                 }
@@ -100,9 +114,12 @@ impl RetainNode {
             _ => {
                 if let Some(pair) = self.nodes.get(prev_item) {
                     if let Some((filter_item, rest_items)) = filter_items.map(split_topic) {
-                        pair.value().get_matches(filter_item, rest_items, retains);
+                        pair.value()
+                            .get_matches(filter_item, rest_items, wildcard_first, retains);
                     } else if let Some(content) = pair.value().content.as_ref() {
-                        retains.push(Arc::clone(content));
+                        if !(content.topic_name.starts_with('$') && wildcard_first) {
+                            retains.push(Arc::clone(content));
+                        }
                     }
                 }
             }
@@ -391,6 +408,32 @@ mod tests {
                     ("abc/xyz", Level1, vec![3, 3], "5").into(),
                 ],
             ),
+        ]);
+    }
+
+    #[test]
+    fn test_special_dollor_prefix() {
+        run_actions(&[
+            Insert(("$abc/dev", Level0, vec![1, 1], "2").into(), None),
+            Insert(("$abc/", Level0, vec![2, 2], "3").into(), None),
+            Insert(("$abc", Level0, vec![3, 3], "4").into(), None),
+            Query(
+                "$abc/+",
+                vec![
+                    ("$abc/dev", Level0, vec![1, 1], "2").into(),
+                    ("$abc/", Level0, vec![2, 2], "3").into(),
+                ],
+            ),
+            Query(
+                "$abc/#",
+                vec![
+                    ("$abc/dev", Level0, vec![1, 1], "2").into(),
+                    ("$abc/", Level0, vec![2, 2], "3").into(),
+                    ("$abc", Level0, vec![3, 3], "4").into(),
+                ],
+            ),
+            Query("+/+", vec![]),
+            Query("#", vec![]),
         ]);
     }
 }

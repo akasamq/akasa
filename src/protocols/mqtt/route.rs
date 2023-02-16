@@ -3,17 +3,10 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use hashbrown::HashMap;
-use mqtt_proto::{QoS, TopicFilter, TopicName};
+use mqtt_proto::{QoS, TopicFilter, TopicName, LEVEL_SEP, MATCH_ALL_STR, MATCH_ONE_STR};
 use parking_lot::RwLock;
 
 use crate::state::ClientId;
-
-pub(crate) const MATCH_ALL: &str = "#";
-pub(crate) const MATCH_ONE: &str = "+";
-pub(crate) const LEVEL_SEP: char = '/';
-
-// FIXME: [MQTT-4.7.2-1] The Server MUST NOT match Topic Filters starting with a
-// wildcard character (# or +) with Topic Names beginning with a $ character
 
 pub struct RouteTable {
     nodes: DashMap<String, RouteNode>,
@@ -85,9 +78,18 @@ impl RouteTable {
     pub fn get_matches(&self, topic_name: &TopicName) -> Vec<Arc<RwLock<RouteContent>>> {
         let (topic_item, rest_items) = split_topic(topic_name.deref());
         let mut filters = Vec::new();
-        for item in [topic_item, MATCH_ALL, MATCH_ONE] {
-            if let Some(pair) = self.nodes.get(item) {
-                pair.value().get_matches(item, rest_items, &mut filters);
+
+        if let Some(pair) = self.nodes.get(topic_item) {
+            pair.value()
+                .get_matches(topic_item, rest_items, &mut filters);
+        }
+        // [MQTT-4.7.2-1] The Server MUST NOT match Topic Filters starting with a
+        // wildcard character (# or +) with Topic Names beginning with a $ character
+        if !topic_name.starts_with('$') {
+            for item in [MATCH_ALL_STR, MATCH_ONE_STR] {
+                if let Some(pair) = self.nodes.get(item) {
+                    pair.value().get_matches(item, rest_items, &mut filters);
+                }
             }
         }
         filters
@@ -162,13 +164,13 @@ impl RouteNode {
         topic_items: Option<&str>,
         filters: &mut Vec<Arc<RwLock<RouteContent>>>,
     ) {
-        if prev_item == MATCH_ALL {
+        if prev_item == MATCH_ALL_STR {
             if !self.content.read().is_empty() {
                 filters.push(Arc::clone(&self.content));
             }
         } else if let Some(topic_items) = topic_items {
             let (topic_item, rest_items) = split_topic(topic_items);
-            for item in [topic_item, MATCH_ALL, MATCH_ONE] {
+            for item in [topic_item, MATCH_ALL_STR, MATCH_ONE_STR] {
                 if let Some(pair) = self.nodes.get(item) {
                     pair.value().get_matches(item, rest_items, filters);
                 }
@@ -179,7 +181,7 @@ impl RouteNode {
             }
 
             // Topic name "abc" will match topic filter "abc/#", since "#" also represent parent level.
-            if let Some(pair) = self.nodes.get(MATCH_ALL) {
+            if let Some(pair) = self.nodes.get(MATCH_ALL_STR) {
                 if !pair.value().content.read().is_empty() {
                     filters.push(Arc::clone(&pair.value().content));
                 }
@@ -394,6 +396,19 @@ mod tests {
                 vec![("abc/+/ijk/+/xyz", vec![3]), ("abc/1/ijk/+/xyz", vec![4])],
             ),
             Query("abc/8/ijk/9/xyz", vec![("abc/+/ijk/+/xyz", vec![3])]),
-        ])
+        ]);
+    }
+
+    #[test]
+    fn test_special_dollor_prefix() {
+        run_actions(&[
+            Sub("$abc/+", 2),
+            Sub("+/+", 3),
+            Sub("#", 4),
+            Sub("$abc/#", 5),
+            Query("$abc/dev", vec![("$abc/+", vec![2]), ("$abc/#", vec![5])]),
+            Query("$abc/", vec![("$abc/+", vec![2]), ("$abc/#", vec![5])]),
+            Query("$abc", vec![("$abc/#", vec![5])]),
+        ]);
     }
 }

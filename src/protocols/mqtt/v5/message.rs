@@ -717,7 +717,7 @@ topic name : {}
         let current_hash = hasher.finish();
 
         if let Some(previous_hash) = session.qos2_pids.get(&pid) {
-            // hash collision is accepted here
+            // hash collision is acceptable here
             if current_hash != *previous_hash {
                 let reason_code = PubrecReasonCode::PacketIdentifierInUse;
                 let rv_packet = Pubrec {
@@ -748,7 +748,6 @@ topic name : {}
     match packet.qos_pid {
         QosPid::Level0 => {}
         QosPid::Level1(pid) => {
-            // FIXME: report packet identifier in use
             let reason_code = if matched_len > 0 {
                 PubackReasonCode::Success
             } else {
@@ -895,7 +894,6 @@ packet id : {}
         return Ok(());
     }
 
-    // FIXME: handle packet identifier in use
     let reason_codes = if !global.config.subscription_id_available
         && properties.subscription_id.is_some()
     {
@@ -989,7 +987,6 @@ packet id : {}
         packet.pid.value(),
         packet.topics,
     );
-    // FIXME: handle packet identifier in use
     let mut reason_codes = Vec::with_capacity(packet.topics.len());
     for filter in packet.topics {
         global.route_table.unsubscribe(&filter, session.client_id);
