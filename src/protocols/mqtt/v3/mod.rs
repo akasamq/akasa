@@ -1,4 +1,3 @@
-mod auth;
 mod message;
 mod packet;
 mod session;
