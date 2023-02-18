@@ -45,6 +45,9 @@ enum Commands {
         #[clap(long, default_value_t = Runtime::Glommio, value_enum)]
         runtime: Runtime,
     },
+
+    /// Generate default config to stdout
+    DefaultConfig,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -80,6 +83,9 @@ fn main() -> anyhow::Result<()> {
                 Runtime::Glommio => server::rt_glommio::start(global)?,
                 Runtime::Tokio => server::rt_tokio::start(global)?,
             }
+        }
+        Commands::DefaultConfig => {
+            println!("{}", serde_yaml::to_string(&Config::default()).unwrap());
         }
     }
     Ok(())

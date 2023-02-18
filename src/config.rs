@@ -84,11 +84,26 @@ pub enum SharedSubscriptionMode {
 
 impl Default for Config {
     fn default() -> Config {
-        Config {
-            auth_types: Vec::new(),
-            users: HashMap::new(),
-            scram_users: HashMap::new(),
-            sasl_mechanisms: HashSet::new(),
+        let config = Config {
+            auth_types: vec![AuthType::UsernamePassword],
+            users: vec![("user", "pass")]
+                .into_iter()
+                .map(|(u, p)| (u.to_owned(), p.to_owned()))
+                .collect(),
+            scram_users: vec![("user", (b"***", 4096, b"salt"))]
+                .into_iter()
+                .map(|(u, (p, i, s))| {
+                    (
+                        u.to_owned(),
+                        ScramPasswordInfo {
+                            hashed_password: p.to_vec(),
+                            iterations: i,
+                            salt: s.to_vec(),
+                        },
+                    )
+                })
+                .collect(),
+            sasl_mechanisms: vec![SaslMechanism::ScramSha256].into_iter().collect(),
             shared_subscription_mode: SharedSubscriptionMode::Random,
             max_allowed_qos: 2,
             inflight_timeout: 15,
@@ -106,7 +121,9 @@ impl Default for Config {
             shared_subscription_available: true,
             subscription_id_available: true,
             wildcard_subscription_available: true,
-        }
+        };
+        assert!(config.is_valid(), "default config");
+        config
     }
 }
 
