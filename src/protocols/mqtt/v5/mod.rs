@@ -2,4 +2,4 @@ mod message;
 mod session;
 
 pub use message::handle_connection;
-pub use session::{PubPacket, Session, SessionState, SubscriptionData, ScramStage};
+pub use session::{PubPacket, ScramStage, Session, SessionState, SubscriptionData};

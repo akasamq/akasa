@@ -20,7 +20,7 @@ use mqtt_proto::{
         Connack, Connect, ConnectReturnCode, Header, Packet, Publish, Suback, Subscribe,
         Unsubscribe,
     },
-    Pid, Protocol, QoS, QosPid, TopicFilter, TopicName,
+    Error, Pid, Protocol, QoS, QosPid, TopicFilter, TopicName,
 };
 
 use crate::config::AuthType;
@@ -34,10 +34,21 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     peer: SocketAddr,
     header: Header,
     protocol: Protocol,
+    timeout_receiver: Receiver<()>,
     executor: E,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
-    match handle_online(conn, peer, header, protocol, &executor, &global).await {
+    match handle_online(
+        conn,
+        peer,
+        header,
+        protocol,
+        timeout_receiver,
+        &executor,
+        &global,
+    )
+    .await
+    {
         Ok(Some((session, receiver))) => {
             log::info!(
                 "executor {:03}, {} go to offline, total {} clients ({} online)",
@@ -77,6 +88,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     peer: SocketAddr,
     _header: Header,
     protocol: Protocol,
+    timeout_receiver: Receiver<()>,
     executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<Option<(Session, Receiver<(ClientId, InternalMessage)>)>> {
@@ -89,14 +101,22 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     let mut receiver = None;
     let mut io_error = None;
 
-    let packet = match Connect::decode_with_protocol(&mut conn, protocol).await {
+    let packet = match Connect::decode_with_protocol(&mut conn, protocol)
+        .or(async {
+            log::info!("connection timeout: {}", peer);
+            let _ = timeout_receiver.recv_async().await;
+            Err(Error::IoError(io::ErrorKind::TimedOut, String::new()))
+        })
+        .await
+    {
         Ok(packet) => packet,
         Err(err) => {
             log::debug!("mqtt v3.x connect codec error: {}", err);
             return Err(io::ErrorKind::InvalidData.into());
         }
     };
-    // FIXME: if client not send any data for a long time, disconnect it.
+    drop(timeout_receiver);
+
     handle_connect(
         &mut session,
         &mut receiver,

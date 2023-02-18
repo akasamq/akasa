@@ -26,7 +26,8 @@ use mqtt_proto::{
         Subscribe, SubscribeReasonCode, Unsuback, UnsubackProperties, Unsubscribe,
         UnsubscribeReasonCode,
     },
-    Protocol, QoS, QosPid, TopicFilter, TopicName, MATCH_ALL_CHAR, MATCH_ONE_CHAR, SHARED_PREFIX,
+    Error, Protocol, QoS, QosPid, TopicFilter, TopicName, MATCH_ALL_CHAR, MATCH_ONE_CHAR,
+    SHARED_PREFIX,
 };
 use rand::{thread_rng, Rng};
 use scram::server::{AuthenticationStatus, ScramServer};
@@ -44,10 +45,21 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     peer: SocketAddr,
     header: Header,
     protocol: Protocol,
+    timeout_receiver: Receiver<()>,
     executor: E,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
-    match handle_online(conn, peer, header, protocol, &executor, &global).await {
+    match handle_online(
+        conn,
+        peer,
+        header,
+        protocol,
+        timeout_receiver,
+        &executor,
+        &global,
+    )
+    .await
+    {
         Ok(Some((session, receiver))) => {
             log::info!(
                 "executor {:03}, {} go to offline, total {} clients ({} online)",
@@ -105,6 +117,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     peer: SocketAddr,
     header: Header,
     protocol: Protocol,
+    timeout_receiver: Receiver<()>,
     executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<Option<(Session, Receiver<(ClientId, InternalMessage)>)>> {
@@ -117,14 +130,20 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     let mut receiver = None;
     let mut io_error = None;
 
-    let packet = match Connect::decode_with_protocol(&mut conn, header, protocol).await {
+    let packet = match Connect::decode_with_protocol(&mut conn, header, protocol)
+        .or(async {
+            log::info!("connection timeout: {}", peer);
+            let _ = timeout_receiver.recv_async().await;
+            Err(Error::IoError(io::ErrorKind::TimedOut, String::new()).into())
+        })
+        .await
+    {
         Ok(packet) => packet,
         Err(err) => {
             log::debug!("mqtt v5.x connect codec error: {}", err);
             return Err(io::ErrorKind::InvalidData.into());
         }
     };
-    // FIXME: if client not send any data for a long time, disconnect it.
     handle_connect(
         &mut session,
         &mut receiver,
@@ -136,7 +155,14 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     .await?;
 
     while session.authorizing {
-        let packet = match decode_packet(&mut session, &mut conn, global).await? {
+        let packet = match decode_packet(&mut session, &mut conn, global)
+            .or(async {
+                log::info!("connection timeout: {}", peer);
+                let _ = timeout_receiver.recv_async().await;
+                Err(Error::IoError(io::ErrorKind::TimedOut, String::new()).into())
+            })
+            .await?
+        {
             Some(packet) => packet,
             None => return Ok(None),
         };
@@ -165,6 +191,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         )
         .await?;
     }
+    drop(timeout_receiver);
 
     if !session.connected() {
         log::info!("{} not connected", session.peer());
