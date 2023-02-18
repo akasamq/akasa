@@ -189,6 +189,17 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
             return Ok(());
         }
         scram_client_first(session, properties.auth_data, conn, global).await
+    } else if properties.auth_data.is_some() {
+        log::info!("connect properties have auth data but missing auth method");
+        send_error_connack(
+            conn,
+            session,
+            false,
+            ConnectReasonCode::ProtocolError,
+            "auth method is missing",
+        )
+        .await?;
+        return Ok(());
     } else {
         session_connect(session, receiver, None, conn, executor, global).await
     }
@@ -381,10 +392,22 @@ pub(crate) async fn handle_auth<T: AsyncWrite + Unpin, E: Executor>(
                 return Ok(());
             }
 
+            // TODO: remove this later, when scram updated
+            let (authcid, authzid) = {
+                let mut parts = client_first.split(',');
+                let _n = parts.next();
+                let raw_authzid = parts.next().expect("authzid");
+                let authzid = if raw_authzid.is_empty() {
+                    None
+                } else {
+                    Some(raw_authzid[2..].to_owned())
+                };
+                let authcid = parts.next().expect("authcid")[2..].to_owned();
+                (authcid, authzid)
+            };
             session.authorizing = false;
             session.scram_stage = ScramStage::Final(Instant::now());
-            // FIXME: save authcid and authzid
-            // session.scram_auth_info = Some("TODO")
+            session.scram_auth_result = Some((authcid, authzid));
             if !session.connected {
                 log::info!("client {} AUTH success", session.client_identifier);
                 session_connect(
