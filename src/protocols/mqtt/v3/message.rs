@@ -300,14 +300,6 @@ clean session : {}
     session.username = packet.username.map(|name| Arc::clone(&name));
     session.keep_alive = packet.keep_alive;
 
-    start_keep_alive_timer(
-        session.keep_alive,
-        session.client_id,
-        &session.last_packet_time,
-        executor,
-        global,
-    )?;
-
     if let Some(last_will) = packet.last_will {
         if last_will.topic_name.starts_with('$') {
             return Err(io::ErrorKind::InvalidData.into());
@@ -342,10 +334,8 @@ clean session : {}
                 session_present = false;
             }
         }
-        AddClientReceipt::PresentV5(_) => {
-            // not allowed, so this is dead branch.
-            unreachable!();
-        }
+        // not allowed, so this is dead branch.
+        AddClientReceipt::PresentV5(_) => unreachable!(),
         AddClientReceipt::New {
             client_id,
             receiver: new_receiver,
@@ -355,6 +345,14 @@ clean session : {}
             *receiver = Some(new_receiver);
         }
     }
+
+    start_keep_alive_timer(
+        session.keep_alive,
+        session.client_id,
+        &session.last_packet_time,
+        executor,
+        global,
+    )?;
 
     log::debug!("Socket {} assgined to: {}", session.peer, session.client_id);
 
@@ -442,8 +440,6 @@ topic name : {}
         return Err(io::ErrorKind::InvalidData.into());
     }
 
-    // FIXME: handle dup flag
-
     if let QosPid::Level2(pid) = packet.qos_pid {
         let mut hasher = AHasher::default();
         packet.hash(&mut hasher);
@@ -452,7 +448,14 @@ topic name : {}
         if let Some(previous_hash) = session.qos2_pids.get(&pid) {
             // hash collision is acceptable here
             if current_hash != *previous_hash {
-                log::warn!("packet identifier in use: {}", pid.value());
+                log::info!("packet identifier in use: {}", pid.value());
+                return Err(io::ErrorKind::InvalidData.into());
+            }
+            if !packet.dup {
+                log::info!(
+                    "dup flag must be true for re-deliver packet: {}",
+                    pid.value()
+                );
                 return Err(io::ErrorKind::InvalidData.into());
             }
         } else {

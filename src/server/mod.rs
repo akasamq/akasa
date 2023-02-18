@@ -19,7 +19,7 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 ) -> io::Result<()> {
     let (packet_type, remaining_len) = decode_raw_header(&mut conn).await?;
     if packet_type != 0b00010000 {
-        log::debug!("first packet is not connect: {}", packet_type);
+        log::debug!("first packet is not CONNECT packet: {}", packet_type);
         return Err(io::ErrorKind::InvalidData.into());
     }
     let protocol = Protocol::decode_async(&mut conn).await?;

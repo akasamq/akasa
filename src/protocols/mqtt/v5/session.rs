@@ -18,9 +18,11 @@ use super::super::PendingPackets;
 
 pub struct Session {
     pub(super) peer: SocketAddr,
+    pub(super) authorizing: bool,
     pub(super) connected: bool,
     pub(super) disconnected: bool,
     pub(super) protocol: Protocol,
+    pub(super) scram_stage: ScramStage,
     pub(super) connected_time: Option<Instant>,
     // When received a disconnect or tcp connection closed
     pub(super) connection_closed_time: Option<Instant>,
@@ -37,6 +39,10 @@ pub struct Session {
 
     pub(super) client_id: ClientId,
     pub(super) client_identifier: Arc<String>,
+    pub(super) assigned_client_id: bool,
+    pub(super) server_keep_alive: bool,
+    // (username, Option<role>)
+    pub(super) scram_auth_result: Option<(String, Option<String>)>,
     pub(super) username: Option<Arc<String>>,
     pub(super) keep_alive: u16,
     pub(super) clean_start: bool,
@@ -56,7 +62,6 @@ pub struct Session {
     pub(super) request_problem_info: bool,
     pub(super) user_properties: Vec<UserProperty>,
     pub(super) auth_method: Option<Arc<String>>,
-    pub(super) auth_data: Option<Bytes>,
 }
 
 pub struct SessionState {
@@ -75,9 +80,11 @@ impl Session {
     pub fn new(config: &Config, peer: SocketAddr) -> Session {
         Session {
             peer,
+            authorizing: false,
             connected: false,
             disconnected: false,
             protocol: Protocol::V500,
+            scram_stage: ScramStage::Init,
             connected_time: None,
             connection_closed_time: None,
             last_packet_time: Arc::new(RwLock::new(Instant::now())),
@@ -89,8 +96,11 @@ impl Session {
             ),
             qos2_pids: HashMap::new(),
 
-            client_id: ClientId(u64::max_value()),
+            client_id: ClientId::max_value(),
             client_identifier: Arc::new(String::new()),
+            assigned_client_id: false,
+            server_keep_alive: false,
+            scram_auth_result: None,
             username: None,
             keep_alive: 0,
             clean_start: true,
@@ -106,7 +116,6 @@ impl Session {
             request_problem_info: true,
             user_properties: Vec::new(),
             auth_method: None,
-            auth_data: None,
         }
     }
 
@@ -131,6 +140,15 @@ impl Session {
         self.server_packet_id += 1;
         old_value
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScramStage {
+    Init,
+    // received client first and sent server first to client
+    ClientFirst { message: String, time: Instant },
+    // received client final and sent server final to client
+    Final(Instant),
 }
 
 #[derive(Clone, Debug)]

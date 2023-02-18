@@ -62,7 +62,7 @@ impl Session {
             ),
             qos2_pids: HashMap::new(),
 
-            client_id: ClientId(u64::max_value()),
+            client_id: ClientId::max_value(),
             client_identifier: Arc::new(String::new()),
             username: None,
             keep_alive: 0,

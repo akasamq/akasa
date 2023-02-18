@@ -1,6 +1,8 @@
+use std::collections::{HashMap, HashSet};
+
 use mqtt_proto::QoS;
+use scram::server::{AuthenticationProvider, PasswordInfo};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 pub const DEFAULT_MAX_PACKET_SIZE: u32 = 5 + 268_435_455;
 
@@ -9,6 +11,9 @@ pub struct Config {
     pub auth_types: Vec<AuthType>,
     // FIXME: replace it later
     pub users: HashMap<String, String>,
+    // FIXME: replace it with outter data: { username => PasswordInfo }
+    pub scram_users: HashMap<String, ScramPasswordInfo>,
+    pub sasl_mechanisms: HashSet<SaslMechanism>,
 
     pub shared_subscription_mode: SharedSubscriptionMode,
 
@@ -39,7 +44,28 @@ pub struct Config {
     pub wildcard_subscription_available: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum SaslMechanism {
+    #[serde(rename = "SCRAM-SHA-256")]
+    ScramSha256,
+
+    // TODO: Not supported yet
+    #[serde(rename = "SCRAM-SHA-256-PLUS")]
+    ScramSha256Plus,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct ScramPasswordInfo {
+    #[serde(with = "hex::serde")]
+    pub hashed_password: Vec<u8>,
+
+    pub iterations: u16,
+
+    #[serde(with = "hex::serde")]
+    pub salt: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthType {
     /// Plain username and password
     UsernamePassword,
@@ -49,7 +75,7 @@ pub enum AuthType {
     X509ClientCert,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SharedSubscriptionMode {
     Random,
     HashClientId,
@@ -61,6 +87,8 @@ impl Default for Config {
         Config {
             auth_types: Vec::new(),
             users: HashMap::new(),
+            scram_users: HashMap::new(),
+            sasl_mechanisms: HashSet::new(),
             shared_subscription_mode: SharedSubscriptionMode::Random,
             max_allowed_qos: 2,
             inflight_timeout: 15,
@@ -96,6 +124,21 @@ impl Config {
             log::error!("invalid max_packet_size, 0 is not allowed");
             return false;
         }
+        for mechanism in &self.sasl_mechanisms {
+            if mechanism != &SaslMechanism::ScramSha256 {
+                log::error!("invalid sasl_mechanism, only `SCRAM-SHA-256` is allowed");
+                return false;
+            }
+        }
+        for password_info in self.scram_users.values() {
+            if password_info.iterations < 4096 {
+                // RFC-7677: For the SCRAM-SHA-256 and SCRAM-SHA-256-PLUS SASL
+                // mechanisms, the hash iteration-count announced by a server
+                // SHOULD be at least 4096.
+                log::error!("scram_users password iterations must >= 4096 (see RFC-7677)");
+                return false;
+            }
+        }
         true
     }
 
@@ -105,6 +148,33 @@ impl Config {
             1 => QoS::Level1,
             2 => QoS::Level2,
             value => panic!("invalid Config.max_allowed_qos: {}", value),
+        }
+    }
+}
+
+impl AuthenticationProvider for &Config {
+    fn get_password_for(&self, username: &str) -> Option<PasswordInfo> {
+        self.scram_users.get(username).map(|info| {
+            PasswordInfo::new(
+                info.hashed_password.clone(),
+                info.iterations,
+                info.salt.clone(),
+            )
+        })
+    }
+
+    fn authorize(&self, authcid: &str, authzid: &str) -> bool {
+        // TODO: support role
+        authcid == authzid
+    }
+}
+
+impl SaslMechanism {
+    pub fn from_str(value: &str) -> Option<SaslMechanism> {
+        match value {
+            "SCRAM-SHA-256" => Some(SaslMechanism::ScramSha256),
+            "SCRAM-SHA-256-PLUS" => Some(SaslMechanism::ScramSha256Plus),
+            _ => None,
         }
     }
 }

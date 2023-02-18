@@ -296,11 +296,17 @@ pub enum InternalMessage {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
-pub struct ClientId(pub u64);
+pub struct ClientId(u64);
 
 impl fmt::Display for ClientId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "client#{}", self.0)
+    }
+}
+
+impl ClientId {
+    pub fn max_value() -> ClientId {
+        ClientId(u64::max_value())
     }
 }
 
