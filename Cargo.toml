@@ -35,3 +35,9 @@ scram = "0.6.0"
 
 [profile.release]
 debug = true
+
+# ==== Optimize for binary size ====
+# opt-level = 's'
+# lto = true
+# codegen-units = 1
+# strip = true

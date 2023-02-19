@@ -14,6 +14,8 @@ pub struct Config {
     // FIXME: replace it with outter data: { username => PasswordInfo }
     pub scram_users: HashMap<String, ScramPasswordInfo>,
     pub sasl_mechanisms: HashSet<SaslMechanism>,
+    /// It seems all populte MQTT server(broker) not check this.
+    pub enable_v310_client_id_length_check: bool,
 
     pub shared_subscription_mode: SharedSubscriptionMode,
 
@@ -105,6 +107,7 @@ impl Default for Config {
                 .collect(),
             sasl_mechanisms: vec![SaslMechanism::ScramSha256].into_iter().collect(),
             shared_subscription_mode: SharedSubscriptionMode::Random,
+            enable_v310_client_id_length_check: false,
             max_allowed_qos: 2,
             inflight_timeout: 15,
             max_inflight_client: 10,

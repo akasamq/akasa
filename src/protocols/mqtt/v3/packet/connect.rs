@@ -41,9 +41,12 @@ clean session : {}
         packet.keep_alive,
         packet.last_will,
     );
-    if packet.protocol == Protocol::V310
+
+    if global.config.enable_v310_client_id_length_check
+        && packet.protocol == Protocol::V310
         && (packet.client_id.is_empty() || packet.client_id.len() > 23)
     {
+        log::info!("invalid v3.1 client id length: {}", packet.client_id.len());
         let rv_packet = Connack::new(false, ConnectReturnCode::IdentifierRejected);
         write_packet(session.client_id, conn, &rv_packet.into()).await?;
         session.disconnected = true;
