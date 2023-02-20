@@ -474,7 +474,7 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
         InternalMessage::Kick { reason } => {
             log::info!(
                 "kick {}, reason: {}, offline: {}, network: {}",
-                session.client_id,
+                session.client_identifier,
                 reason,
                 session.disconnected,
                 conn.is_some(),
@@ -482,11 +482,13 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
             stop = conn.is_some();
         }
         InternalMessage::WillDelayReached { connected_time } => {
+            log::debug!("client {} will delay reached", session.client_identifier);
             if !session.connected && session.connected_time == Some(connected_time) {
                 send_will(session, global).await?;
             }
         }
         InternalMessage::SessionExpired { connected_time } => {
+            log::debug!("client {} session expired", session.client_identifier);
             if !session.connected && session.connected_time == Some(connected_time) {
                 send_will(session, global).await?;
                 global.remove_client(session.client_id, session.subscribes.keys());

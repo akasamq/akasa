@@ -53,6 +53,15 @@ clean session : {}
         return Ok(());
     }
 
+    // v3.1.1 [MQTT-3.1.3-8]
+    if packet.protocol == Protocol::V311 && packet.client_id.is_empty() && !packet.clean_session {
+        log::info!("empty v3.1.1 client id, clean session is 0");
+        let rv_packet = Connack::new(false, ConnectReturnCode::IdentifierRejected);
+        write_packet(session.client_id, conn, &rv_packet.into()).await?;
+        session.disconnected = true;
+        return Ok(());
+    }
+
     let mut return_code = ConnectReturnCode::Accepted;
     // FIXME: auth by plugin
     for auth_type in &global.config.auth_types {
