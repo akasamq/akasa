@@ -16,8 +16,8 @@ async fn do_test(config: Config, connect: Connect, connack: Connack) -> JoinHand
     let task = control.start(conn);
 
     let finished = connack.code != Accepted;
-    control.write_packet(connect.into()).await;
-    let packet = control.read_packet().await;
+    control.write_packet_v3(connect.into()).await;
+    let packet = control.read_packet_v3().await;
     assert_eq!(packet, Packet::Connack(connack));
 
     sleep(Duration::from_millis(10)).await;
@@ -32,7 +32,7 @@ async fn test_connect_malformed_packet() {
     control.write_data(b"abcdefxyzxyz123123".to_vec()).await;
 
     sleep(Duration::from_millis(10)).await;
-    assert!(control.try_read_packet().is_err());
+    assert!(control.try_read_packet_v3().is_err());
     assert!(task.is_finished());
     assert!(task.await.unwrap().is_err());
 }
@@ -52,10 +52,10 @@ async fn test_connect_invalid_first_packet() {
                 QoS::Level0,
             )],
         );
-        control.write_packet(subscribe.into()).await;
+        control.write_packet_v3(subscribe.into()).await;
 
         sleep(Duration::from_millis(10)).await;
-        assert!(control.try_read_packet().is_err());
+        assert!(control.try_read_packet_v3().is_err());
         assert!(task.is_finished());
         assert!(task.await.unwrap().is_err());
     }
@@ -70,10 +70,10 @@ async fn test_connect_invalid_first_packet() {
             Bytes::from(vec![3, 5, 55]),
         );
         publish.retain = true;
-        control.write_packet(publish.into()).await;
+        control.write_packet_v3(publish.into()).await;
 
         sleep(Duration::from_millis(10)).await;
-        assert!(control.try_read_packet().is_err());
+        assert!(control.try_read_packet_v3().is_err());
         assert!(task.is_finished());
         assert!(task.await.unwrap().is_err());
     }
@@ -188,8 +188,8 @@ async fn test_will() {
             username: None,
             password: None,
         };
-        control.write_packet(connect.into()).await;
-        assert!(control.try_read_packet().is_err());
+        control.write_packet_v3(connect.into()).await;
+        assert!(control.try_read_packet_v3().is_err());
 
         sleep(Duration::from_millis(10)).await;
         assert!(task.is_finished());

@@ -19,8 +19,8 @@ async fn test_clean_session(clean_session: bool, reconnect_clean_session: bool) 
     let mut connect = Connect::new(Arc::clone(&client_identifier), 10);
     connect.clean_session = clean_session;
     let connack = Connack::new(false, Accepted);
-    control.write_packet(connect.into()).await;
-    let packet = control.read_packet().await;
+    control.write_packet_v3(connect.into()).await;
+    let packet = control.read_packet_v3().await;
     let expected_packet = Packet::Connack(connack);
     assert_eq!(packet, expected_packet);
 
@@ -35,8 +35,8 @@ async fn test_clean_session(clean_session: bool, reconnect_clean_session: bool) 
             )],
         );
         let suback = Suback::new(sub_pk_id, vec![SubscribeReturnCode::MaxLevel1]);
-        control.write_packet(subscribe.into()).await;
-        let packet = control.read_packet().await;
+        control.write_packet_v3(subscribe.into()).await;
+        let packet = control.read_packet_v3().await;
         let expected_packet = Packet::Suback(suback);
         assert_eq!(packet, expected_packet);
 
@@ -51,19 +51,21 @@ async fn test_clean_session(clean_session: bool, reconnect_clean_session: bool) 
             TopicName::try_from("abc/1".to_owned()).unwrap(),
             Bytes::from(vec![3, 5, 55]),
         );
-        control.write_packet(publish.into()).await;
+        control.write_packet_v3(publish.into()).await;
 
-        let packet = control.read_packet().await;
+        let packet = control.read_packet_v3().await;
         let expected_packet = Packet::Puback(pub_pk_id);
         assert_eq!(packet, expected_packet);
 
-        let packet = control.read_packet().await;
+        let packet = control.read_packet_v3().await;
         let expected_packet = Packet::Publish(received_publish);
         assert_eq!(packet, expected_packet);
 
-        control.write_packet(Packet::Puback(Pid::default())).await;
+        control
+            .write_packet_v3(Packet::Puback(Pid::default()))
+            .await;
     }
-    control.write_packet(Packet::Disconnect).await;
+    control.write_packet_v3(Packet::Disconnect).await;
     sleep(Duration::from_millis(10)).await;
     assert!(task.is_finished());
 
@@ -74,8 +76,8 @@ async fn test_clean_session(clean_session: bool, reconnect_clean_session: bool) 
 
     let session_present = !(clean_session || reconnect_clean_session);
     let connack = Connack::new(session_present, Accepted);
-    control.write_packet(connect.into()).await;
-    let packet = control.read_packet().await;
+    control.write_packet_v3(connect.into()).await;
+    let packet = control.read_packet_v3().await;
     let expected_packet = Packet::Connack(connack);
     assert_eq!(packet, expected_packet);
     {
@@ -89,8 +91,8 @@ async fn test_clean_session(clean_session: bool, reconnect_clean_session: bool) 
                 )],
             );
             let suback = Suback::new(sub_pk_id, vec![SubscribeReturnCode::MaxLevel1]);
-            control.write_packet(subscribe.into()).await;
-            let packet = control.read_packet().await;
+            control.write_packet_v3(subscribe.into()).await;
+            let packet = control.read_packet_v3().await;
             let expected_packet = Packet::Suback(suback);
             assert_eq!(packet, expected_packet);
         }
@@ -111,14 +113,16 @@ async fn test_clean_session(clean_session: bool, reconnect_clean_session: bool) 
             TopicName::try_from("abc/1".to_owned()).unwrap(),
             Bytes::from(vec![3, 5, 55]),
         );
-        control.write_packet(publish.into()).await;
-        control.write_packet(Packet::Puback(received_pk_id)).await;
+        control.write_packet_v3(publish.into()).await;
+        control
+            .write_packet_v3(Packet::Puback(received_pk_id))
+            .await;
 
-        let packet = control.read_packet().await;
+        let packet = control.read_packet_v3().await;
         let expected_packet = Packet::Puback(pub_pk_id);
         assert_eq!(packet, expected_packet);
 
-        let packet = control.read_packet().await;
+        let packet = control.read_packet_v3().await;
         let expected_packet = Packet::Publish(received_publish);
         assert_eq!(packet, expected_packet);
     }
@@ -150,8 +154,8 @@ async fn test_session_take_over() {
         let mut connect = Connect::new(Arc::clone(&client_identifier), 10);
         connect.clean_session = false;
         let connack = Connack::new(false, Accepted);
-        control.write_packet(connect.into()).await;
-        let packet = control.read_packet().await;
+        control.write_packet_v3(connect.into()).await;
+        let packet = control.read_packet_v3().await;
         let expected_packet = Packet::Connack(connack);
         assert_eq!(packet, expected_packet);
 
@@ -164,8 +168,8 @@ async fn test_session_take_over() {
             )],
         );
         let suback = Suback::new(sub_pk_id, vec![SubscribeReturnCode::MaxLevel1]);
-        control.write_packet(subscribe.into()).await;
-        let packet = control.read_packet().await;
+        control.write_packet_v3(subscribe.into()).await;
+        let packet = control.read_packet_v3().await;
         let expected_packet = Packet::Suback(suback);
         assert_eq!(packet, expected_packet);
 
@@ -180,17 +184,19 @@ async fn test_session_take_over() {
             TopicName::try_from("abc/1".to_owned()).unwrap(),
             Bytes::from(vec![3, 5, 55]),
         );
-        control.write_packet(publish.into()).await;
+        control.write_packet_v3(publish.into()).await;
 
-        let packet = control.read_packet().await;
+        let packet = control.read_packet_v3().await;
         let expected_packet = Packet::Puback(pub_pk_id);
         assert_eq!(packet, expected_packet);
 
-        let packet = control.read_packet().await;
+        let packet = control.read_packet_v3().await;
         let expected_packet = Packet::Publish(received_publish);
         assert_eq!(packet, expected_packet);
 
-        control.write_packet(Packet::Puback(Pid::default())).await;
+        control
+            .write_packet_v3(Packet::Puback(Pid::default()))
+            .await;
     }
 
     sleep(Duration::from_millis(20)).await;
@@ -203,8 +209,8 @@ async fn test_session_take_over() {
         let mut connect = Connect::new(Arc::clone(&client_identifier), 10);
         connect.clean_session = false;
         let connack = Connack::new(true, Accepted);
-        control2.write_packet(connect.into()).await;
-        let packet = control2.read_packet().await;
+        control2.write_packet_v3(connect.into()).await;
+        let packet = control2.read_packet_v3().await;
         let expected_packet = Packet::Connack(connack);
         assert_eq!(packet, expected_packet);
 
@@ -219,18 +225,18 @@ async fn test_session_take_over() {
             TopicName::try_from("abc/1".to_owned()).unwrap(),
             Bytes::from(vec![3, 5, 55]),
         );
-        control2.write_packet(publish.into()).await;
+        control2.write_packet_v3(publish.into()).await;
 
-        let packet = control2.read_packet().await;
+        let packet = control2.read_packet_v3().await;
         let expected_packet = Packet::Puback(pub_pk_id);
         assert_eq!(packet, expected_packet);
 
-        let packet = control2.read_packet().await;
+        let packet = control2.read_packet_v3().await;
         let expected_packet = Packet::Publish(received_publish);
         assert_eq!(packet, expected_packet);
 
         control2
-            .write_packet(Packet::Puback(Pid::try_from(2).unwrap()))
+            .write_packet_v3(Packet::Puback(Pid::try_from(2).unwrap()))
             .await;
     }
 

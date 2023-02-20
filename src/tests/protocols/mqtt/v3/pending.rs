@@ -30,8 +30,8 @@ async fn test_pending_qos0() {
     let task1 = tokio::spawn(async move {
         let connect = Connect::new(Arc::new("client identifier 1".to_owned()), 10);
         let connack = Connack::new(false, Accepted);
-        control1.write_packet(connect.into()).await;
-        let packet = control1.read_packet().await;
+        control1.write_packet_v3(connect.into()).await;
+        let packet = control1.read_packet_v3().await;
         assert_eq!(packet, Packet::Connack(connack));
 
         rx.await.unwrap();
@@ -42,7 +42,7 @@ async fn test_pending_qos0() {
                 TopicName::try_from("xyz/0".to_owned()).unwrap(),
                 Bytes::from(vec![3, 5, 55]),
             );
-            control1.write_packet(publish.into()).await;
+            control1.write_packet_v3(publish.into()).await;
             assert!(control1.try_read_packet_is_empty());
         }
     });
@@ -51,8 +51,8 @@ async fn test_pending_qos0() {
     let mut connect = Connect::new(Arc::new("client identifier 2".to_owned()), 10);
     connect.clean_session = false;
     let connack = Connack::new(false, Accepted);
-    control2.write_packet(connect.clone().into()).await;
-    let packet = control2.read_packet().await;
+    control2.write_packet_v3(connect.clone().into()).await;
+    let packet = control2.read_packet_v3().await;
     assert_eq!(packet, Packet::Connack(connack));
 
     // subscribe to "xyz/0"
@@ -65,11 +65,11 @@ async fn test_pending_qos0() {
         )],
     );
     let suback = Suback::new(sub_pid, vec![SubscribeReturnCode::MaxLevel0]);
-    control2.write_packet(subscribe.into()).await;
-    let packet = control2.read_packet().await;
+    control2.write_packet_v3(subscribe.into()).await;
+    let packet = control2.read_packet_v3().await;
     assert_eq!(packet, Packet::Suback(suback));
 
-    control2.write_packet(Packet::Disconnect).await;
+    control2.write_packet_v3(Packet::Disconnect).await;
 
     tx.send(()).unwrap();
 
@@ -83,8 +83,8 @@ async fn test_pending_qos0() {
     let _task2 = control2.start(conn2);
 
     let connack = Connack::new(true, Accepted);
-    control2.write_packet(connect.into()).await;
-    let packet = control2.read_packet().await;
+    control2.write_packet_v3(connect.into()).await;
+    let packet = control2.read_packet_v3().await;
     assert_eq!(packet, Packet::Connack(connack));
     assert!(control2.try_read_packet_is_empty());
 }
@@ -107,8 +107,8 @@ async fn test_pending_qos1() {
     let task1 = tokio::spawn(async move {
         let connect = Connect::new(Arc::new("client identifier 1".to_owned()), 10);
         let connack = Connack::new(false, Accepted);
-        control1.write_packet(connect.into()).await;
-        let packet = control1.read_packet().await;
+        control1.write_packet_v3(connect.into()).await;
+        let packet = control1.read_packet_v3().await;
         assert_eq!(packet, Packet::Connack(connack));
 
         rx.await.unwrap();
@@ -120,8 +120,8 @@ async fn test_pending_qos1() {
                 TopicName::try_from("xyz/1".to_owned()).unwrap(),
                 Bytes::from(vec![3, 5, 55]),
             );
-            control1.write_packet(publish.into()).await;
-            let packet = control1.read_packet().await;
+            control1.write_packet_v3(publish.into()).await;
+            let packet = control1.read_packet_v3().await;
             assert_eq!(packet, Packet::Puback(pub_pid));
         }
     });
@@ -130,8 +130,8 @@ async fn test_pending_qos1() {
     let mut connect = Connect::new(Arc::new("client identifier 2".to_owned()), 10);
     connect.clean_session = false;
     let connack = Connack::new(false, Accepted);
-    control2.write_packet(connect.clone().into()).await;
-    let packet = control2.read_packet().await;
+    control2.write_packet_v3(connect.clone().into()).await;
+    let packet = control2.read_packet_v3().await;
     assert_eq!(packet, Packet::Connack(connack));
 
     // subscribe to "xyz/1"
@@ -144,11 +144,11 @@ async fn test_pending_qos1() {
         )],
     );
     let suback = Suback::new(sub_pid, vec![SubscribeReturnCode::MaxLevel1]);
-    control2.write_packet(subscribe.into()).await;
-    let packet = control2.read_packet().await;
+    control2.write_packet_v3(subscribe.into()).await;
+    let packet = control2.read_packet_v3().await;
     assert_eq!(packet, Packet::Suback(suback));
 
-    control2.write_packet(Packet::Disconnect).await;
+    control2.write_packet_v3(Packet::Disconnect).await;
 
     tx.send(()).unwrap();
 
@@ -161,8 +161,8 @@ async fn test_pending_qos1() {
     let _task2 = control2.start(conn2);
 
     let connack = Connack::new(true, Accepted);
-    control2.write_packet(connect.into()).await;
-    let packet = control2.read_packet().await;
+    control2.write_packet_v3(connect.into()).await;
+    let packet = control2.read_packet_v3().await;
     assert_eq!(packet, Packet::Connack(connack));
 
     for pub_pid in 0..4u16 {
@@ -173,7 +173,7 @@ async fn test_pending_qos1() {
             Bytes::from(vec![3, 5, 55]),
         );
         let expected_packet = Packet::Publish(publish);
-        let packet = control2.read_packet().await;
+        let packet = control2.read_packet_v3().await;
         assert_eq!(packet, expected_packet);
     }
     sleep(Duration::from_millis(20)).await;
@@ -200,8 +200,8 @@ async fn test_pending_max_inflight_qos1() {
     let task1 = tokio::spawn(async move {
         let connect = Connect::new(Arc::new("client identifier 1".to_owned()), 10);
         let connack = Connack::new(false, Accepted);
-        control1.write_packet(connect.into()).await;
-        let packet = control1.read_packet().await;
+        control1.write_packet_v3(connect.into()).await;
+        let packet = control1.read_packet_v3().await;
         let expected_packet = Packet::Connack(connack);
         assert_eq!(packet, expected_packet);
 
@@ -214,9 +214,9 @@ async fn test_pending_max_inflight_qos1() {
                 TopicName::try_from("xyz/1".to_owned()).unwrap(),
                 Bytes::from(vec![3, 5, 55]),
             );
-            control1.write_packet(publish.into()).await;
+            control1.write_packet_v3(publish.into()).await;
             let expected_packet = Packet::Puback(pub_pid);
-            let packet = control1.read_packet().await;
+            let packet = control1.read_packet_v3().await;
             assert_eq!(packet, expected_packet);
         }
     });
@@ -225,8 +225,8 @@ async fn test_pending_max_inflight_qos1() {
     let mut connect = Connect::new(Arc::new("client identifier 2".to_owned()), 10);
     connect.clean_session = false;
     let connack = Connack::new(false, Accepted);
-    control2.write_packet(connect.clone().into()).await;
-    let packet = control2.read_packet().await;
+    control2.write_packet_v3(connect.clone().into()).await;
+    let packet = control2.read_packet_v3().await;
     let expected_packet = Packet::Connack(connack);
     assert_eq!(packet, expected_packet);
 
@@ -240,8 +240,8 @@ async fn test_pending_max_inflight_qos1() {
         )],
     );
     let suback = Suback::new(sub_pid, vec![SubscribeReturnCode::MaxLevel1]);
-    control2.write_packet(subscribe.into()).await;
-    let packet = control2.read_packet().await;
+    control2.write_packet_v3(subscribe.into()).await;
+    let packet = control2.read_packet_v3().await;
     let expected_packet = Packet::Suback(suback);
     assert_eq!(packet, expected_packet);
 
@@ -259,7 +259,7 @@ async fn test_pending_max_inflight_qos1() {
             Bytes::from(vec![3, 5, 55]),
         );
         let expected_packet = Packet::Publish(publish);
-        let packet = control2.read_packet().await;
+        let packet = control2.read_packet_v3().await;
         assert_eq!(packet, expected_packet);
     }
 
@@ -269,7 +269,7 @@ async fn test_pending_max_inflight_qos1() {
 
     for pub_pid in 0..8u16 {
         let pub_pid = Pid::try_from(pub_pid + 1).unwrap();
-        control2.write_packet(Packet::Puback(pub_pid)).await;
+        control2.write_packet_v3(Packet::Puback(pub_pid)).await;
     }
     for pub_pid in 8..14u16 {
         let pub_pid = Pid::try_from(pub_pid + 1).unwrap();
@@ -279,7 +279,7 @@ async fn test_pending_max_inflight_qos1() {
             Bytes::from(vec![3, 5, 55]),
         );
         let expected_packet = Packet::Publish(publish);
-        let packet = control2.read_packet().await;
+        let packet = control2.read_packet_v3().await;
         assert_eq!(packet, expected_packet);
     }
 

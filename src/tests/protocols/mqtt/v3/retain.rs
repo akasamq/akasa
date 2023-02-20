@@ -18,8 +18,8 @@ async fn test_retain_simple() {
 
     let connect = Connect::new(Arc::new("client identifier".to_owned()), 10);
     let connack = Connack::new(false, Accepted);
-    control.write_packet(connect.into()).await;
-    let packet = control.read_packet().await;
+    control.write_packet_v3(connect.into()).await;
+    let packet = control.read_packet_v3().await;
     let expected_packet = Packet::Connack(connack);
     assert_eq!(packet, expected_packet);
 
@@ -30,8 +30,8 @@ async fn test_retain_simple() {
         Bytes::from(vec![3, 5, 55]),
     );
     publish.retain = true;
-    control.write_packet(publish.into()).await;
-    let packet = control.read_packet().await;
+    control.write_packet_v3(publish.into()).await;
+    let packet = control.read_packet_v3().await;
     let expected_packet = Packet::Puback(pub_pk_id);
     assert_eq!(packet, expected_packet);
 
@@ -49,7 +49,7 @@ async fn test_retain_simple() {
             ),
         ],
     );
-    control.write_packet(subscribe.into()).await;
+    control.write_packet_v3(subscribe.into()).await;
 
     let pub_pk_id = Pid::default();
     let mut publish = Publish::new(
@@ -58,7 +58,7 @@ async fn test_retain_simple() {
         Bytes::from(vec![3, 5, 55]),
     );
     publish.retain = true;
-    let packet = control.read_packet().await;
+    let packet = control.read_packet_v3().await;
     let expected_packet = Packet::Publish(publish);
     assert_eq!(packet, expected_packet);
 
@@ -69,7 +69,7 @@ async fn test_retain_simple() {
             SubscribeReturnCode::MaxLevel1,
         ],
     );
-    let packet = control.read_packet().await;
+    let packet = control.read_packet_v3().await;
     let expected_packet = Packet::Suback(suback);
     assert_eq!(packet, expected_packet);
 
@@ -93,8 +93,8 @@ async fn test_retain_different_clients() {
     // client 1: publish retain message
     {
         let connect1 = Connect::new(Arc::new("client identifier 1".to_owned()), 10);
-        control1.write_packet(connect1.into()).await;
-        let packet = control1.read_packet().await;
+        control1.write_packet_v3(connect1.into()).await;
+        let packet = control1.read_packet_v3().await;
         let expected_packet = Packet::Connack(connack.clone());
         assert_eq!(packet, expected_packet);
 
@@ -105,8 +105,8 @@ async fn test_retain_different_clients() {
             Bytes::from(vec![3, 5, 55]),
         );
         publish.retain = true;
-        control1.write_packet(publish.into()).await;
-        let packet = control1.read_packet().await;
+        control1.write_packet_v3(publish.into()).await;
+        let packet = control1.read_packet_v3().await;
         let expected_packet = Packet::Puback(pub_pk_id);
         assert_eq!(packet, expected_packet);
     }
@@ -114,8 +114,8 @@ async fn test_retain_different_clients() {
     // client 2: subscribe and received a retain message
     {
         let connect2 = Connect::new(Arc::new("client identifier 2".to_owned()), 10);
-        control2.write_packet(connect2.into()).await;
-        let packet = control2.read_packet().await;
+        control2.write_packet_v3(connect2.into()).await;
+        let packet = control2.read_packet_v3().await;
         let expected_packet = Packet::Connack(connack.clone());
         assert_eq!(packet, expected_packet);
 
@@ -136,7 +136,7 @@ async fn test_retain_different_clients() {
                     ),
                 ],
             );
-            control2.write_packet(subscribe.into()).await;
+            control2.write_packet_v3(subscribe.into()).await;
 
             let mut publish = Publish::new(
                 QosPid::Level1(pub_pk_id),
@@ -144,7 +144,7 @@ async fn test_retain_different_clients() {
                 Bytes::from(vec![3, 5, 55]),
             );
             publish.retain = true;
-            let packet = control2.read_packet().await;
+            let packet = control2.read_packet_v3().await;
             let expected_packet = Packet::Publish(publish);
             assert_eq!(packet, expected_packet);
 
@@ -155,7 +155,7 @@ async fn test_retain_different_clients() {
                     SubscribeReturnCode::MaxLevel1,
                 ],
             );
-            let packet = control2.read_packet().await;
+            let packet = control2.read_packet_v3().await;
             let expected_packet = Packet::Suback(suback);
             assert_eq!(packet, expected_packet);
         }

@@ -16,8 +16,8 @@ async fn test_sub_unsub_simple() {
 
     let connect = Connect::new(Arc::new("client identifier".to_owned()), 10);
     let connack = Connack::new(false, Accepted);
-    control.write_packet(connect.into()).await;
-    let packet = control.read_packet().await;
+    control.write_packet_v3(connect.into()).await;
+    let packet = control.read_packet_v3().await;
     let expected_packet = Packet::Connack(connack);
     assert_eq!(packet, expected_packet);
 
@@ -47,8 +47,8 @@ async fn test_sub_unsub_simple() {
             SubscribeReturnCode::MaxLevel2,
         ],
     );
-    control.write_packet(subscribe.into()).await;
-    let packet = control.read_packet().await;
+    control.write_packet_v3(subscribe.into()).await;
+    let packet = control.read_packet_v3().await;
     let expected_packet = Packet::Suback(suback);
     assert_eq!(packet, expected_packet);
 
@@ -60,8 +60,8 @@ async fn test_sub_unsub_simple() {
             TopicFilter::try_from("xxx/+".to_owned()).unwrap(),
         ],
     );
-    control.write_packet(unsubscribe.into()).await;
-    let packet = control.read_packet().await;
+    control.write_packet_v3(unsubscribe.into()).await;
+    let packet = control.read_packet_v3().await;
     let expected_packet = Packet::Unsuback(unsub_pk_id);
     assert_eq!(packet, expected_packet);
 
@@ -76,16 +76,16 @@ async fn test_subscribe_reject_empty_topics() {
 
     let connect = Connect::new(Arc::new("client identifier".to_owned()), 10);
     let connack = Connack::new(false, Accepted);
-    control.write_packet(connect.into()).await;
-    let packet = control.read_packet().await;
+    control.write_packet_v3(connect.into()).await;
+    let packet = control.read_packet_v3().await;
     let expected_packet = Packet::Connack(connack);
     assert_eq!(packet, expected_packet);
 
     let sub_pk_id = Pid::try_from(23).unwrap();
     let subscribe = Subscribe::new(sub_pk_id, vec![]);
-    control.write_packet(subscribe.into()).await;
+    control.write_packet_v3(subscribe.into()).await;
 
     sleep(Duration::from_millis(10)).await;
-    assert!(control.try_read_packet().is_err());
+    assert!(control.try_read_packet_v3().is_err());
     assert!(task.is_finished());
 }

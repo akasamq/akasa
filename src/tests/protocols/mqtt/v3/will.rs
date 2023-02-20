@@ -28,8 +28,8 @@ async fn test_will_publish() {
     // client 1: subscribe to "topic/1"
     {
         let connect1 = Connect::new(Arc::new("client identifier 1".to_owned()), 10);
-        control1.write_packet(connect1.into()).await;
-        let packet = control1.read_packet().await;
+        control1.write_packet_v3(connect1.into()).await;
+        let packet = control1.read_packet_v3().await;
         let expected_packet = Packet::Connack(connack.clone());
         assert_eq!(packet, expected_packet);
 
@@ -44,8 +44,8 @@ async fn test_will_publish() {
             Pid::try_from(11).unwrap(),
             vec![SubscribeReturnCode::MaxLevel1],
         );
-        control1.write_packet(subscribe.into()).await;
-        let packet = control1.read_packet().await;
+        control1.write_packet_v3(subscribe.into()).await;
+        let packet = control1.read_packet_v3().await;
         let expected_packet = Packet::Suback(suback);
         assert_eq!(packet, expected_packet);
 
@@ -61,8 +61,8 @@ async fn test_will_publish() {
             topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
             message: Bytes::from(vec![1, 2, 3, 4]),
         });
-        control2.write_packet(connect2.into()).await;
-        let packet = control2.read_packet().await;
+        control2.write_packet_v3(connect2.into()).await;
+        let packet = control2.read_packet_v3().await;
         let expected_packet = Packet::Connack(connack.clone());
         assert_eq!(packet, expected_packet);
 
@@ -80,7 +80,7 @@ async fn test_will_publish() {
         TopicName::try_from("topic/1".to_owned()).unwrap(),
         Bytes::from(vec![1, 2, 3, 4]),
     );
-    let packet = control1.read_packet().await;
+    let packet = control1.read_packet_v3().await;
     let expected_packet = Packet::Publish(publish);
     assert_eq!(packet, expected_packet);
     assert!(!task1.is_finished());
@@ -102,8 +102,8 @@ async fn test_will_disconnect_not_publish() {
     // client 1: subscribe to "topic/1"
     {
         let connect1 = Connect::new(Arc::new("client identifier 1".to_owned()), 10);
-        control1.write_packet(connect1.into()).await;
-        let packet = control1.read_packet().await;
+        control1.write_packet_v3(connect1.into()).await;
+        let packet = control1.read_packet_v3().await;
         let expected_packet = Packet::Connack(connack.clone());
         assert_eq!(packet, expected_packet);
 
@@ -118,8 +118,8 @@ async fn test_will_disconnect_not_publish() {
             Pid::try_from(11).unwrap(),
             vec![SubscribeReturnCode::MaxLevel1],
         );
-        control1.write_packet(subscribe.into()).await;
-        let packet = control1.read_packet().await;
+        control1.write_packet_v3(subscribe.into()).await;
+        let packet = control1.read_packet_v3().await;
         let expected_packet = Packet::Suback(suback);
         assert_eq!(packet, expected_packet);
 
@@ -135,12 +135,12 @@ async fn test_will_disconnect_not_publish() {
             topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
             message: Bytes::from(vec![1, 2, 3, 4]),
         });
-        control2.write_packet(connect2.into()).await;
-        let packet = control2.read_packet().await;
+        control2.write_packet_v3(connect2.into()).await;
+        let packet = control2.read_packet_v3().await;
         let expected_packet = Packet::Connack(connack.clone());
         assert_eq!(packet, expected_packet);
 
-        control2.write_packet(Packet::Disconnect).await;
+        control2.write_packet_v3(Packet::Disconnect).await;
         sleep(Duration::from_millis(10)).await;
         assert!(task2.is_finished());
         assert!(task2.await.unwrap().is_ok())
