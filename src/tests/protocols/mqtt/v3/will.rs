@@ -16,7 +16,7 @@ use crate::tests::utils::MockConn;
 async fn test_will_publish() {
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
-        Config::default(),
+        Config::new_allow_anonymous(),
     ));
     let (conn1, mut control1) = MockConn::new_with_global(111, Arc::clone(&global));
     let task1 = control1.start(conn1);
@@ -90,7 +90,7 @@ async fn test_will_publish() {
 async fn test_will_disconnect_not_publish() {
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
-        Config::default(),
+        Config::new_allow_anonymous(),
     ));
     let (conn1, mut control1) = MockConn::new_with_global(111, Arc::clone(&global));
     let task1 = control1.start(conn1);

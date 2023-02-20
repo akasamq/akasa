@@ -47,7 +47,11 @@ enum Commands {
     },
 
     /// Generate default config to stdout
-    DefaultConfig,
+    DefaultConfig {
+        /// Allow anonymous user connect
+        #[clap(long)]
+        allow_anonymous: bool,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -84,8 +88,13 @@ fn main() -> anyhow::Result<()> {
                 Runtime::Tokio => server::rt_tokio::start(global)?,
             }
         }
-        Commands::DefaultConfig => {
-            println!("{}", serde_yaml::to_string(&Config::default()).unwrap());
+        Commands::DefaultConfig { allow_anonymous } => {
+            let config = if allow_anonymous {
+                Config::new_allow_anonymous()
+            } else {
+                Config::default()
+            };
+            println!("{}", serde_yaml::to_string(&config).expect("serde yaml"));
         }
     }
     Ok(())

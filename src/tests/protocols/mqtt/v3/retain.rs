@@ -13,7 +13,7 @@ use crate::tests::utils::MockConn;
 
 #[tokio::test]
 async fn test_retain_simple() {
-    let (conn, mut control) = MockConn::new(3333, Config::default());
+    let (conn, mut control) = MockConn::new(3333, Config::new_allow_anonymous());
     let task = control.start(conn);
 
     let connect = Connect::new(Arc::new("client identifier".to_owned()), 10);
@@ -81,7 +81,7 @@ async fn test_retain_simple() {
 async fn test_retain_different_clients() {
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
-        Config::default(),
+        Config::new_allow_anonymous(),
     ));
     let (conn1, mut control1) = MockConn::new_with_global(111, Arc::clone(&global));
     let task1 = control1.start(conn1);

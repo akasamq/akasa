@@ -305,6 +305,11 @@ impl fmt::Display for ClientId {
 }
 
 impl ClientId {
+    #[cfg(test)]
+    pub fn new(value: u64) -> ClientId {
+        ClientId(value)
+    }
+
     pub fn max_value() -> ClientId {
         ClientId(u64::max_value())
     }

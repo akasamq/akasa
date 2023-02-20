@@ -42,9 +42,9 @@ clean session : {}
         packet.last_will,
     );
 
-    if global.config.enable_v310_client_id_length_check
-        && packet.protocol == Protocol::V310
-        && (packet.client_id.is_empty() || packet.client_id.len() > 23)
+    if packet.protocol == Protocol::V310
+        && (packet.client_id.is_empty()
+            || global.config.check_v310_client_id_length && packet.client_id.len() > 23)
     {
         log::info!("invalid v3.1 client id length: {}", packet.client_id.len());
         let rv_packet = Connack::new(false, ConnectReturnCode::IdentifierRejected);
@@ -74,7 +74,10 @@ clean session : {}
                     return_code = ConnectReturnCode::BadUserNameOrPassword;
                 }
             }
-            _ => panic!("auth method not supported: {:?}", auth_type),
+            _ => {
+                log::error!("auth method not supported: {:?}", auth_type);
+                return Err(io::ErrorKind::InvalidData.into());
+            }
         }
     }
     // FIXME: permission check and return "not authorized"

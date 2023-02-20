@@ -305,14 +305,14 @@ mod tests {
                 Sub(filter, id) => {
                     table.subscribe(
                         &TopicFilter::try_from(filter.to_owned()).unwrap(),
-                        ClientId(id),
+                        ClientId::new(id),
                         QoS::Level0,
                     );
                 }
                 UnSub(filter, id) => {
                     table.unsubscribe(
                         &TopicFilter::try_from(filter.to_owned()).unwrap(),
-                        ClientId(id),
+                        ClientId::new(id),
                     );
                 }
                 Query(name, expected) => {
@@ -322,7 +322,7 @@ mod tests {
                             (
                                 k.to_string(),
                                 v.into_iter()
-                                    .map(|v| (ClientId(v), QoS::Level0))
+                                    .map(|v| (ClientId::new(v), QoS::Level0))
                                     .collect::<HashMap<_, _>>(),
                             )
                         })

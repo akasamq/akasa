@@ -16,7 +16,7 @@ use crate::tests::utils::MockConn;
 async fn test_pending_qos0() {
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
-        Config::default(),
+        Config::new_allow_anonymous(),
     ));
     let (conn1, mut control1) = MockConn::new_with_global(111, Arc::clone(&global));
     let _task1 = control1.start(conn1);
@@ -93,7 +93,7 @@ async fn test_pending_qos0() {
 async fn test_pending_qos1() {
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
-        Config::default(),
+        Config::new_allow_anonymous(),
     ));
     let (conn1, mut control1) = MockConn::new_with_global(111, Arc::clone(&global));
     let _task1 = control1.start(conn1);
@@ -182,7 +182,7 @@ async fn test_pending_qos1() {
 
 #[tokio::test]
 async fn test_pending_max_inflight_qos1() {
-    let mut config = Config::default();
+    let mut config = Config::new_allow_anonymous();
     config.max_inflight_client = 8;
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),

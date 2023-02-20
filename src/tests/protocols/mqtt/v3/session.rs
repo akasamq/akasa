@@ -12,7 +12,7 @@ use crate::state::GlobalState;
 use crate::tests::utils::MockConn;
 
 async fn test_clean_session(clean_session: bool, reconnect_clean_session: bool) {
-    let (conn, mut control) = MockConn::new(3333, Config::default());
+    let (conn, mut control) = MockConn::new(3333, Config::new_allow_anonymous());
     let task = control.start(conn);
 
     let client_identifier = Arc::new("client identifier".to_owned());
@@ -139,7 +139,7 @@ async fn test_session_persist() {
 async fn test_session_take_over() {
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
-        Config::default(),
+        Config::new_allow_anonymous(),
     ));
     let client_identifier = Arc::new("client identifier".to_owned());
 

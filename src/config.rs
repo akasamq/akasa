@@ -15,7 +15,7 @@ pub struct Config {
     pub scram_users: HashMap<String, ScramPasswordInfo>,
     pub sasl_mechanisms: HashSet<SaslMechanism>,
     /// It seems all populte MQTT server(broker) not check this.
-    pub enable_v310_client_id_length_check: bool,
+    pub check_v310_client_id_length: bool,
 
     pub shared_subscription_mode: SharedSubscriptionMode,
 
@@ -107,7 +107,7 @@ impl Default for Config {
                 .collect(),
             sasl_mechanisms: vec![SaslMechanism::ScramSha256].into_iter().collect(),
             shared_subscription_mode: SharedSubscriptionMode::Random,
-            enable_v310_client_id_length_check: false,
+            check_v310_client_id_length: false,
             max_allowed_qos: 2,
             inflight_timeout: 15,
             max_inflight_client: 10,
@@ -131,6 +131,13 @@ impl Default for Config {
 }
 
 impl Config {
+    pub fn new_allow_anonymous() -> Config {
+        Config {
+            auth_types: Vec::new(),
+            ..Default::default()
+        }
+    }
+
     /// Check if the config is valid
     pub fn is_valid(&self) -> bool {
         if self.max_allowed_qos > 2 {

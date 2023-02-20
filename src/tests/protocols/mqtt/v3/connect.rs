@@ -27,7 +27,7 @@ async fn do_test(config: Config, connect: Connect, connack: Connack) -> JoinHand
 
 #[tokio::test]
 async fn test_connect_malformed_packet() {
-    let (conn, mut control) = MockConn::new(3333, Config::default());
+    let (conn, mut control) = MockConn::new(3333, Config::new_allow_anonymous());
     let task = control.start(conn);
     control.write_data(b"abcdefxyzxyz123123".to_vec()).await;
 
@@ -41,7 +41,7 @@ async fn test_connect_malformed_packet() {
 async fn test_connect_invalid_first_packet() {
     // subscribe
     {
-        let (conn, mut control) = MockConn::new(3333, Config::default());
+        let (conn, mut control) = MockConn::new(3333, Config::new_allow_anonymous());
         let task = control.start(conn);
 
         let sub_pk_id = Pid::try_from(23).unwrap();
@@ -61,7 +61,7 @@ async fn test_connect_invalid_first_packet() {
     }
     // publish
     {
-        let (conn, mut control) = MockConn::new(3333, Config::default());
+        let (conn, mut control) = MockConn::new(3333, Config::new_allow_anonymous());
         let task = control.start(conn);
 
         let mut publish = Publish::new(
@@ -80,7 +80,7 @@ async fn test_connect_invalid_first_packet() {
 }
 
 #[tokio::test]
-async fn test_connect_v31() {
+async fn test_connect_v310() {
     // connect accepted
     {
         let connect = Connect {
@@ -88,7 +88,7 @@ async fn test_connect_v31() {
             ..Connect::new(Arc::new("client_anonymous".to_owned()), 10)
         };
         let connack = Connack::new(false, Accepted);
-        do_test(Config::default(), connect, connack).await;
+        do_test(Config::new_allow_anonymous(), connect, connack).await;
     }
     // connect identifier rejected: empty identifier
     {
@@ -97,16 +97,27 @@ async fn test_connect_v31() {
             ..Connect::new(Arc::new("".to_owned()), 10)
         };
         let connack = Connack::new(false, IdentifierRejected);
-        do_test(Config::default(), connect, connack).await;
+        do_test(Config::new_allow_anonymous(), connect, connack).await;
     }
-    // connect identifier rejected: identifier too large
+    // connect identifier rejected: identifier too large (default don't check length)
+    {
+        let connect = Connect {
+            protocol: Protocol::V310,
+            ..Connect::new(Arc::new("a".repeat(24)), 10)
+        };
+        let connack = Connack::new(false, Accepted);
+        do_test(Config::new_allow_anonymous(), connect, connack).await;
+    }
+    // connect identifier rejected: identifier too large (check length)
     {
         let connect = Connect {
             protocol: Protocol::V310,
             ..Connect::new(Arc::new("a".repeat(24)), 10)
         };
         let connack = Connack::new(false, IdentifierRejected);
-        do_test(Config::default(), connect, connack).await;
+        let mut config = Config::new_allow_anonymous();
+        config.check_v310_client_id_length = true;
+        do_test(config, connect, connack).await;
     }
 }
 
@@ -116,7 +127,7 @@ async fn test_connect_v311() {
     {
         let connect = Connect::new(Arc::new("".to_owned()), 30);
         let connack = Connack::new(false, Accepted);
-        do_test(Config::default(), connect, connack).await;
+        do_test(Config::new_allow_anonymous(), connect, connack).await;
     }
 }
 
@@ -126,14 +137,14 @@ async fn test_connect_keepalive() {
     {
         let connect = Connect::new(Arc::new("client identifier".to_owned()), 0);
         let connack = Connack::new(false, Accepted);
-        do_test(Config::default(), connect, connack).await;
+        do_test(Config::new_allow_anonymous(), connect, connack).await;
     }
 
     // connect accepted: non-zero keep_alive
     {
         let connect = Connect::new(Arc::new("client identifier".to_owned()), 22);
         let connack = Connack::new(false, Accepted);
-        do_test(Config::default(), connect, connack).await;
+        do_test(Config::new_allow_anonymous(), connect, connack).await;
     }
 }
 
@@ -156,12 +167,12 @@ async fn test_will() {
             password: None,
         };
         let connack = Connack::new(false, Accepted);
-        do_test(Config::default(), connect, connack).await;
+        do_test(Config::new_allow_anonymous(), connect, connack).await;
     }
 
     // connect accepted: with invalid will topic (start with "$")
     {
-        let (conn, mut control) = MockConn::new(3333, Config::default());
+        let (conn, mut control) = MockConn::new(3333, Config::new_allow_anonymous());
         let task = control.start(conn);
         let connect = Connect {
             protocol: Protocol::V311,
@@ -190,14 +201,15 @@ async fn test_will() {
 async fn test_connect_auth() {
     // allow anonymous
     {
-        let config = Config::default();
+        let mut config = Config::new_allow_anonymous();
+        config.auth_types = Vec::new();
         let connect = Connect::new(Arc::new("client_anonymous".to_owned()), 10);
         let connack = Connack::new(false, Accepted);
         do_test(config, connect, connack).await;
     }
     // empty username/password
     {
-        let mut config = Config::default();
+        let mut config = Config::new_allow_anonymous();
         config.auth_types = vec![AuthType::UsernamePassword];
         config.users = [("user".to_owned(), "pass".to_owned())]
             .into_iter()
@@ -208,7 +220,7 @@ async fn test_connect_auth() {
     }
     // wrong username/password
     {
-        let mut config = Config::default();
+        let mut config = Config::new_allow_anonymous();
         config.auth_types = vec![AuthType::UsernamePassword];
         config.users = [("user".to_owned(), "pass".to_owned())]
             .into_iter()
@@ -221,7 +233,7 @@ async fn test_connect_auth() {
     }
     // right username/password
     {
-        let mut config = Config::default();
+        let mut config = Config::new_allow_anonymous();
         config.auth_types = vec![AuthType::UsernamePassword];
         config.users = [("user".to_owned(), "pass".to_owned())]
             .into_iter()

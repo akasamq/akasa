@@ -11,7 +11,7 @@ use crate::tests::utils::MockConn;
 
 #[tokio::test]
 async fn test_sub_unsub_simple() {
-    let (conn, mut control) = MockConn::new(3333, Config::default());
+    let (conn, mut control) = MockConn::new(3333, Config::new_allow_anonymous());
     let task = control.start(conn);
 
     let connect = Connect::new(Arc::new("client identifier".to_owned()), 10);
@@ -71,7 +71,7 @@ async fn test_sub_unsub_simple() {
 
 #[tokio::test]
 async fn test_subscribe_reject_empty_topics() {
-    let (conn, mut control) = MockConn::new(3333, Config::default());
+    let (conn, mut control) = MockConn::new(3333, Config::new_allow_anonymous());
     let task = control.start(conn);
 
     let connect = Connect::new(Arc::new("client identifier".to_owned()), 10);

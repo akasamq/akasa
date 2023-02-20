@@ -16,7 +16,7 @@ use crate::tests::utils::MockConn;
 async fn test_publish_qos0() {
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
-        Config::default(),
+        Config::new_allow_anonymous(),
     ));
 
     // publisher
@@ -122,7 +122,7 @@ async fn test_publish_qos0() {
 async fn test_publish_qos1() {
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
-        Config::default(),
+        Config::new_allow_anonymous(),
     ));
 
     // publisher
@@ -237,7 +237,7 @@ async fn test_publish_qos1() {
 async fn test_publish_qos2() {
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
-        Config::default(),
+        Config::new_allow_anonymous(),
     ));
 
     // publisher
