@@ -1,131 +1,52 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::Bytes;
-use mqtt_proto::v3::*;
 use mqtt_proto::*;
 use tokio::time::sleep;
-use ConnectReturnCode::*;
 
 use crate::config::Config;
 use crate::state::GlobalState;
 use crate::tests::utils::MockConn;
 
-async fn test_clean_session(clean_session: bool, reconnect_clean_session: bool) {
-    let (conn, mut control) = MockConn::new(3333, Config::new_allow_anonymous());
-    let task = control.start(conn);
+use super::ControlV3;
 
-    let client_identifier = Arc::new("client identifier".to_owned());
-    let mut connect = Connect::new(Arc::clone(&client_identifier), 10);
-    connect.clean_session = clean_session;
-    let connack = Connack::new(false, Accepted);
-    control.write_packet_v3(connect.into()).await;
-    let packet = control.read_packet_v3().await;
-    let expected_packet = Packet::Connack(connack);
-    assert_eq!(packet, expected_packet);
+async fn test_clean_session(clean_session: bool, reconnect_clean_session: bool) {
+    let (task, mut control) = MockConn::start(3333, Config::new_allow_anonymous());
+
+    let client_id = "client id";
+    control.connect(client_id, clean_session, false).await;
 
     // for increase the server_packet_id field
-    {
-        let sub_pk_id = Pid::try_from(11).unwrap();
-        let subscribe = Subscribe::new(
-            sub_pk_id,
-            vec![(
-                TopicFilter::try_from("abc/1".to_owned()).unwrap(),
-                QoS::Level1,
-            )],
-        );
-        let suback = Suback::new(sub_pk_id, vec![SubscribeReturnCode::MaxLevel1]);
-        control.write_packet_v3(subscribe.into()).await;
-        let packet = control.read_packet_v3().await;
-        let expected_packet = Packet::Suback(suback);
-        assert_eq!(packet, expected_packet);
-
-        let pub_pk_id = Pid::try_from(12).unwrap();
-        let publish = Publish::new(
-            QosPid::Level1(pub_pk_id),
-            TopicName::try_from("abc/1".to_owned()).unwrap(),
-            Bytes::from(vec![3, 5, 55]),
-        );
-        let received_publish = Publish::new(
-            QosPid::Level1(Pid::default()),
-            TopicName::try_from("abc/1".to_owned()).unwrap(),
-            Bytes::from(vec![3, 5, 55]),
-        );
-        control.write_packet_v3(publish.into()).await;
-
-        let packet = control.read_packet_v3().await;
-        let expected_packet = Packet::Puback(pub_pk_id);
-        assert_eq!(packet, expected_packet);
-
-        let packet = control.read_packet_v3().await;
-        let expected_packet = Packet::Publish(received_publish);
-        assert_eq!(packet, expected_packet);
-
-        control
-            .write_packet_v3(Packet::Puback(Pid::default()))
-            .await;
-    }
-    control.write_packet_v3(Packet::Disconnect).await;
+    control.subscribe(11, vec![("abc/1", QoS::Level1)]).await;
+    control
+        .send_publish(QoS::Level1, 12, "abc/1", vec![3, 5, 55], |_| ())
+        .await;
+    control.recv_puback(12).await;
+    control
+        .recv_publish(QoS::Level1, 1, "abc/1", vec![3, 5, 55], |_| ())
+        .await;
+    control.disconnect().await;
     sleep(Duration::from_millis(10)).await;
     assert!(task.is_finished());
 
-    let (conn, mut control) = MockConn::new_with_global(4444, control.global);
-    let _task = control.start(conn);
-    let mut connect = Connect::new(Arc::clone(&client_identifier), 10);
-    connect.clean_session = reconnect_clean_session;
-
+    let (_task, mut control) = MockConn::start_with_global(4444, control.global);
     let session_present = !(clean_session || reconnect_clean_session);
-    let connack = Connack::new(session_present, Accepted);
-    control.write_packet_v3(connect.into()).await;
-    let packet = control.read_packet_v3().await;
-    let expected_packet = Packet::Connack(connack);
-    assert_eq!(packet, expected_packet);
-    {
-        if !session_present {
-            let sub_pk_id = Pid::try_from(11).unwrap();
-            let subscribe = Subscribe::new(
-                sub_pk_id,
-                vec![(
-                    TopicFilter::try_from("abc/1".to_owned()).unwrap(),
-                    QoS::Level1,
-                )],
-            );
-            let suback = Suback::new(sub_pk_id, vec![SubscribeReturnCode::MaxLevel1]);
-            control.write_packet_v3(subscribe.into()).await;
-            let packet = control.read_packet_v3().await;
-            let expected_packet = Packet::Suback(suback);
-            assert_eq!(packet, expected_packet);
-        }
-
-        let pub_pk_id = Pid::try_from(12).unwrap();
-        let publish = Publish::new(
-            QosPid::Level1(pub_pk_id),
-            TopicName::try_from("abc/1".to_owned()).unwrap(),
-            Bytes::from(vec![3, 5, 55]),
-        );
-        let received_pk_id = if clean_session || reconnect_clean_session {
-            Pid::default()
-        } else {
-            Pid::default() + 1
-        };
-        let received_publish = Publish::new(
-            QosPid::Level1(received_pk_id),
-            TopicName::try_from("abc/1".to_owned()).unwrap(),
-            Bytes::from(vec![3, 5, 55]),
-        );
-        control.write_packet_v3(publish.into()).await;
-        control
-            .write_packet_v3(Packet::Puback(received_pk_id))
-            .await;
-
-        let packet = control.read_packet_v3().await;
-        let expected_packet = Packet::Puback(pub_pk_id);
-        assert_eq!(packet, expected_packet);
-
-        let packet = control.read_packet_v3().await;
-        let expected_packet = Packet::Publish(received_publish);
-        assert_eq!(packet, expected_packet);
+    control
+        .connect(client_id, reconnect_clean_session, session_present)
+        .await;
+    if !session_present {
+        control.subscribe(11, vec![("abc/1", QoS::Level1)]).await;
     }
+
+    let received_pid = if session_present { 2 } else { 1 };
+    control
+        .send_publish(QoS::Level1, 12, "abc/1", vec![3, 5, 55], |_| ())
+        .await;
+    control.recv_puback(12).await;
+    control
+        .recv_publish(QoS::Level1, received_pid, "abc/1", vec![3, 5, 55], |_| ())
+        .await;
+    control.send_puback(received_pid).await;
 }
 
 #[tokio::test]
@@ -145,101 +66,36 @@ async fn test_session_take_over() {
         "127.0.0.1:1883".parse().unwrap(),
         Config::new_allow_anonymous(),
     ));
-    let client_identifier = Arc::new("client identifier".to_owned());
+    let client_id = "client id";
 
-    let (conn, mut control) = MockConn::new_with_global(111, Arc::clone(&global));
-    let task = control.start(conn);
+    let (task, mut control) = MockConn::start_with_global(111, Arc::clone(&global));
     // client first connection
     {
-        let mut connect = Connect::new(Arc::clone(&client_identifier), 10);
-        connect.clean_session = false;
-        let connack = Connack::new(false, Accepted);
-        control.write_packet_v3(connect.into()).await;
-        let packet = control.read_packet_v3().await;
-        let expected_packet = Packet::Connack(connack);
-        assert_eq!(packet, expected_packet);
-
-        let sub_pk_id = Pid::try_from(11).unwrap();
-        let subscribe = Subscribe::new(
-            sub_pk_id,
-            vec![(
-                TopicFilter::try_from("abc/1".to_owned()).unwrap(),
-                QoS::Level1,
-            )],
-        );
-        let suback = Suback::new(sub_pk_id, vec![SubscribeReturnCode::MaxLevel1]);
-        control.write_packet_v3(subscribe.into()).await;
-        let packet = control.read_packet_v3().await;
-        let expected_packet = Packet::Suback(suback);
-        assert_eq!(packet, expected_packet);
-
-        let pub_pk_id = Pid::try_from(12).unwrap();
-        let publish = Publish::new(
-            QosPid::Level1(pub_pk_id),
-            TopicName::try_from("abc/1".to_owned()).unwrap(),
-            Bytes::from(vec![3, 5, 55]),
-        );
-        let received_publish = Publish::new(
-            QosPid::Level1(Pid::default()),
-            TopicName::try_from("abc/1".to_owned()).unwrap(),
-            Bytes::from(vec![3, 5, 55]),
-        );
-        control.write_packet_v3(publish.into()).await;
-
-        let packet = control.read_packet_v3().await;
-        let expected_packet = Packet::Puback(pub_pk_id);
-        assert_eq!(packet, expected_packet);
-
-        let packet = control.read_packet_v3().await;
-        let expected_packet = Packet::Publish(received_publish);
-        assert_eq!(packet, expected_packet);
-
+        control.connect(client_id, false, false).await;
+        control.subscribe(11, vec![("abc/1", QoS::Level1)]).await;
         control
-            .write_packet_v3(Packet::Puback(Pid::default()))
+            .publish(QoS::Level1, 12, "abc/1", vec![3, 5, 55], |_| ())
             .await;
+        control
+            .recv_publish(QoS::Level1, 1, "abc/1", vec![3, 5, 55], |_| ())
+            .await;
+        control.send_puback(1).await;
     }
-
     sleep(Duration::from_millis(20)).await;
     assert!(!task.is_finished());
 
-    let (conn2, mut control2) = MockConn::new_with_global(222, Arc::clone(&global));
-    let task2 = control2.start(conn2);
+    let (task2, mut control2) = MockConn::start_with_global(222, Arc::clone(&global));
     // client second connection
     {
-        let mut connect = Connect::new(Arc::clone(&client_identifier), 10);
-        connect.clean_session = false;
-        let connack = Connack::new(true, Accepted);
-        control2.write_packet_v3(connect.into()).await;
-        let packet = control2.read_packet_v3().await;
-        let expected_packet = Packet::Connack(connack);
-        assert_eq!(packet, expected_packet);
-
-        let pub_pk_id = Pid::try_from(12).unwrap();
-        let publish = Publish::new(
-            QosPid::Level1(pub_pk_id),
-            TopicName::try_from("abc/1".to_owned()).unwrap(),
-            Bytes::from(vec![3, 5, 55]),
-        );
-        let received_publish = Publish::new(
-            QosPid::Level1(Pid::try_from(2).unwrap()),
-            TopicName::try_from("abc/1".to_owned()).unwrap(),
-            Bytes::from(vec![3, 5, 55]),
-        );
-        control2.write_packet_v3(publish.into()).await;
-
-        let packet = control2.read_packet_v3().await;
-        let expected_packet = Packet::Puback(pub_pk_id);
-        assert_eq!(packet, expected_packet);
-
-        let packet = control2.read_packet_v3().await;
-        let expected_packet = Packet::Publish(received_publish);
-        assert_eq!(packet, expected_packet);
-
+        control2.connect(client_id, false, true).await;
         control2
-            .write_packet_v3(Packet::Puback(Pid::try_from(2).unwrap()))
+            .publish(QoS::Level1, 12, "abc/1", vec![3, 5, 55], |_| ())
             .await;
+        control2
+            .recv_publish(QoS::Level1, 2, "abc/1", vec![3, 5, 55], |_| ())
+            .await;
+        control2.send_puback(2).await;
     }
-
     sleep(Duration::from_millis(20)).await;
     assert!(task.is_finished());
     assert!(!task2.is_finished());

@@ -10,7 +10,7 @@ use futures_lite::{
     io::{AsyncRead, AsyncWrite},
     FutureExt,
 };
-use mqtt_proto::{v3, v5};
+use mqtt_proto::v5;
 use tokio::{
     sync::mpsc::{channel, error::TryRecvError, Receiver, Sender},
     task::JoinHandle,
@@ -21,8 +21,8 @@ use crate::server::{handle_accept, rt_tokio::TokioExecutor};
 use crate::state::GlobalState;
 
 pub struct MockConnControl {
-    chan_in: Sender<Vec<u8>>,
-    chan_out: Receiver<Vec<u8>>,
+    pub chan_in: Sender<Vec<u8>>,
+    pub chan_out: Receiver<Vec<u8>>,
     pub global: Arc<GlobalState>,
 }
 
@@ -58,6 +58,21 @@ impl MockConn {
         let global = Arc::new(GlobalState::new(bind, config));
         Self::new_with_global(port, global)
     }
+
+    pub fn start_with_global(
+        port: u16,
+        global: Arc<GlobalState>,
+    ) -> (JoinHandle<io::Result<()>>, MockConnControl) {
+        let (conn, control) = Self::new_with_global(port, global);
+        let task = control.start(conn);
+        (task, control)
+    }
+
+    pub fn start(port: u16, config: Config) -> (JoinHandle<io::Result<()>>, MockConnControl) {
+        let (conn, control) = Self::new(port, config);
+        let task = control.start(conn);
+        (task, control)
+    }
 }
 
 impl MockConnControl {
@@ -70,21 +85,6 @@ impl MockConnControl {
 
     pub fn try_read_packet_is_empty(&mut self) -> bool {
         self.chan_out.try_recv() == Err(TryRecvError::Empty)
-    }
-
-    pub fn try_read_packet_v3(&mut self) -> Result<v3::Packet, String> {
-        self.chan_out
-            .try_recv()
-            .map(|data| v3::Packet::decode(&data).unwrap().unwrap())
-            .map_err(|err| err.to_string())
-    }
-    pub async fn read_packet_v3(&mut self) -> v3::Packet {
-        let data = self.chan_out.recv().await.unwrap();
-        v3::Packet::decode(&data).unwrap().unwrap()
-    }
-    pub async fn write_packet_v3(&self, packet: v3::Packet) {
-        self.write_data(packet.encode().unwrap().as_slice().to_vec())
-            .await;
     }
 
     pub fn try_read_packet_v5(&mut self) -> Result<v5::Packet, String> {
