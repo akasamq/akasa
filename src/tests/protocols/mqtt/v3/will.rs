@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::state::GlobalState;
 use crate::tests::utils::MockConn;
 
-use super::ControlV3;
+use super::ClientV3;
 
 #[tokio::test]
 async fn test_will_publish() {
@@ -19,14 +19,14 @@ async fn test_will_publish() {
         "127.0.0.1:1883".parse().unwrap(),
         Config::new_allow_anonymous(),
     ));
-    let (task1, mut control1) = MockConn::start_with_global(111, Arc::clone(&global));
-    let (task2, mut control2) = MockConn::start_with_global(222, global);
+    let (task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
+    let (task2, mut client2) = MockConn::start_with_global(222, global);
 
     // client 1: subscribe to "topic/1"
     {
-        control1.connect("client id 1", true, false).await;
-        control1.subscribe(11, vec![("topic/1", QoS::Level1)]).await;
-        assert!(control1.try_read_packet_is_empty());
+        client1.connect("client id 1", true, false).await;
+        client1.subscribe(11, vec![("topic/1", QoS::Level1)]).await;
+        assert!(client1.try_read_packet_is_empty());
     }
     // client 2: connect with will topic "topic/1" and unexpected disconnect
     {
@@ -39,10 +39,10 @@ async fn test_will_publish() {
                 message: Bytes::from(vec![1, 2, 3, 4]),
             });
         };
-        control2
+        client2
             .connect_with("client id 2", update_connect, |_| ())
             .await;
-        control2.write_data(b"".to_vec()).await;
+        client2.write_data(b"".to_vec()).await;
         sleep(Duration::from_millis(10)).await;
         assert!(task2.is_finished());
         assert_eq!(
@@ -51,7 +51,7 @@ async fn test_will_publish() {
         );
     }
 
-    control1
+    client1
         .recv_publish(QoS::Level1, 1, "topic/1", vec![1, 2, 3, 4], |_| ())
         .await;
     assert!(!task1.is_finished());
@@ -63,14 +63,14 @@ async fn test_will_disconnect_not_publish() {
         "127.0.0.1:1883".parse().unwrap(),
         Config::new_allow_anonymous(),
     ));
-    let (task1, mut control1) = MockConn::start_with_global(111, Arc::clone(&global));
-    let (task2, mut control2) = MockConn::start_with_global(222, global);
+    let (task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
+    let (task2, mut client2) = MockConn::start_with_global(222, global);
 
     // client 1: subscribe to "topic/1"
     {
-        control1.connect("client id 1", true, false).await;
-        control1.subscribe(11, vec![("topic/1", QoS::Level1)]).await;
-        assert!(control1.try_read_packet_is_empty());
+        client1.connect("client id 1", true, false).await;
+        client1.subscribe(11, vec![("topic/1", QoS::Level1)]).await;
+        assert!(client1.try_read_packet_is_empty());
     }
     // client 2: connect with will topic "topic/1" and normal disconnect
     {
@@ -83,17 +83,17 @@ async fn test_will_disconnect_not_publish() {
                 message: Bytes::from(vec![1, 2, 3, 4]),
             });
         };
-        control2
+        client2
             .connect_with("client id 2", update_connect, |_| ())
             .await;
 
-        control2.write_packet(Packet::Disconnect).await;
+        client2.write_packet(Packet::Disconnect).await;
         sleep(Duration::from_millis(10)).await;
         assert!(task2.is_finished());
         assert!(task2.await.unwrap().is_ok())
     }
 
     sleep(Duration::from_millis(10)).await;
-    assert!(control1.try_read_packet_is_empty());
+    assert!(client1.try_read_packet_is_empty());
     assert!(!task1.is_finished());
 }

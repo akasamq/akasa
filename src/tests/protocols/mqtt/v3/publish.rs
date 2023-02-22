@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::state::GlobalState;
 use crate::tests::utils::MockConn;
 
-use super::{build_publish, ControlV3};
+use super::{build_publish, ClientV3};
 
 #[tokio::test]
 async fn test_publish_qos0() {
@@ -20,32 +20,32 @@ async fn test_publish_qos0() {
     ));
 
     // publisher
-    let (_task0, mut control0) = MockConn::start_with_global(100, Arc::clone(&global));
+    let (_task0, mut client0) = MockConn::start_with_global(100, Arc::clone(&global));
 
     // subscriber
-    let (_task1, control1) = MockConn::start_with_global(111, Arc::clone(&global));
-    let (_task2, control2) = MockConn::start_with_global(222, Arc::clone(&global));
-    let (_task3, control3) = MockConn::start_with_global(333, Arc::clone(&global));
-    let (_task4, control4) = MockConn::start_with_global(444, Arc::clone(&global));
+    let (_task1, client1) = MockConn::start_with_global(111, Arc::clone(&global));
+    let (_task2, client2) = MockConn::start_with_global(222, Arc::clone(&global));
+    let (_task3, client3) = MockConn::start_with_global(333, Arc::clone(&global));
+    let (_task4, client4) = MockConn::start_with_global(444, Arc::clone(&global));
 
     // Publisher connect
-    control0.connect("publisher", true, false).await;
+    client0.connect("publisher", true, false).await;
 
     let (tx, mut rx) = mpsc::channel(4);
     let mut tasks = Vec::new();
-    for (topic, mut control) in [
-        ("xyz/0", control1),
-        ("xyz/+", control2),
-        ("#", control3),
+    for (topic, mut client) in [
+        ("xyz/0", client1),
+        ("xyz/+", client2),
+        ("#", client3),
         // will not match
-        ("xxx/bbb", control4),
+        ("xxx/bbb", client4),
     ] {
         let tx = tx.clone();
         let task = tokio::spawn(async move {
-            control
+            client
                 .connect(format!("subscriber: {}", topic), true, false)
                 .await;
-            control.subscribe(2, vec![(topic, QoS::Level0)]).await;
+            client.subscribe(2, vec![(topic, QoS::Level0)]).await;
 
             // Subscribe is ready
             tx.send(()).await.unwrap();
@@ -53,13 +53,13 @@ async fn test_publish_qos0() {
 
             if topic != "xxx/bbb" {
                 for last_byte in 0..14u8 {
-                    control
+                    client
                         .recv_publish(QoS::Level0, 0, "xyz/0", vec![3, 5, 55, last_byte], |_| ())
                         .await;
                 }
             }
             sleep(Duration::from_millis(100)).await;
-            assert!(control.try_read_packet_is_empty());
+            assert!(client.try_read_packet_is_empty());
         });
         tasks.push(task);
     }
@@ -70,12 +70,12 @@ async fn test_publish_qos0() {
     }
 
     for last_byte in 0..14u8 {
-        control0
+        client0
             .send_publish(QoS::Level0, 0, "xyz/0", [3, 5, 55, last_byte], |_| ())
             .await;
     }
     sleep(Duration::from_millis(20)).await;
-    assert!(control0.try_read_packet_is_empty());
+    assert!(client0.try_read_packet_is_empty());
 
     for task in tasks {
         assert!(task.await.is_ok());
@@ -90,32 +90,32 @@ async fn test_publish_qos1() {
     ));
 
     // publisher
-    let (_task0, mut control0) = MockConn::start_with_global(100, Arc::clone(&global));
+    let (_task0, mut client0) = MockConn::start_with_global(100, Arc::clone(&global));
 
     // subscriber
-    let (_task1, control1) = MockConn::start_with_global(111, Arc::clone(&global));
-    let (_task2, control2) = MockConn::start_with_global(222, Arc::clone(&global));
-    let (_task3, control3) = MockConn::start_with_global(333, Arc::clone(&global));
-    let (_task4, control4) = MockConn::start_with_global(444, Arc::clone(&global));
+    let (_task1, client1) = MockConn::start_with_global(111, Arc::clone(&global));
+    let (_task2, client2) = MockConn::start_with_global(222, Arc::clone(&global));
+    let (_task3, client3) = MockConn::start_with_global(333, Arc::clone(&global));
+    let (_task4, client4) = MockConn::start_with_global(444, Arc::clone(&global));
 
     // Publisher connect
-    control0.connect("publisher", true, false).await;
+    client0.connect("publisher", true, false).await;
 
     let (tx, mut rx) = mpsc::channel(4);
     let mut tasks = Vec::new();
-    for (topic, mut control) in [
-        ("xyz/1", control1),
-        ("xyz/+", control2),
-        ("#", control3),
+    for (topic, mut client) in [
+        ("xyz/1", client1),
+        ("xyz/+", client2),
+        ("#", client3),
         // will not match
-        ("xxx/bbb", control4),
+        ("xxx/bbb", client4),
     ] {
         let tx = tx.clone();
         let task = tokio::spawn(async move {
-            control
+            client
                 .connect(format!("subscriber: {}", topic), true, false)
                 .await;
-            control.subscribe(2, vec![(topic, QoS::Level1)]).await;
+            client.subscribe(2, vec![(topic, QoS::Level1)]).await;
 
             // Subscribe is ready
             tx.send(()).await.unwrap();
@@ -124,7 +124,7 @@ async fn test_publish_qos1() {
 
             if topic != "xxx/bbb" {
                 for pub_pid in 1..15u16 {
-                    control
+                    client
                         .recv_publish(
                             QoS::Level1,
                             pub_pid,
@@ -133,11 +133,11 @@ async fn test_publish_qos1() {
                             |_| (),
                         )
                         .await;
-                    control.send_puback(pub_pid).await;
+                    client.send_puback(pub_pid).await;
                 }
             }
             sleep(Duration::from_millis(100)).await;
-            assert!(control.try_read_packet_is_empty());
+            assert!(client.try_read_packet_is_empty());
         });
         tasks.push(task);
     }
@@ -148,7 +148,7 @@ async fn test_publish_qos1() {
     }
 
     for pub_pid in 1..15u16 {
-        control0
+        client0
             .publish(
                 QoS::Level1,
                 pub_pid,
@@ -160,7 +160,7 @@ async fn test_publish_qos1() {
     }
 
     sleep(Duration::from_millis(20)).await;
-    assert!(control0.try_read_packet_is_empty());
+    assert!(client0.try_read_packet_is_empty());
 
     for task in tasks {
         assert!(task.await.is_ok());
@@ -175,32 +175,32 @@ async fn test_publish_qos2() {
     ));
 
     // publisher
-    let (_task0, mut control0) = MockConn::start_with_global(100, Arc::clone(&global));
+    let (_task0, mut client0) = MockConn::start_with_global(100, Arc::clone(&global));
 
     // subscriber
-    let (_task1, control1) = MockConn::start_with_global(111, Arc::clone(&global));
-    let (_task2, control2) = MockConn::start_with_global(222, Arc::clone(&global));
-    let (_task3, control3) = MockConn::start_with_global(333, Arc::clone(&global));
-    let (_task4, control4) = MockConn::start_with_global(444, Arc::clone(&global));
+    let (_task1, client1) = MockConn::start_with_global(111, Arc::clone(&global));
+    let (_task2, client2) = MockConn::start_with_global(222, Arc::clone(&global));
+    let (_task3, client3) = MockConn::start_with_global(333, Arc::clone(&global));
+    let (_task4, client4) = MockConn::start_with_global(444, Arc::clone(&global));
 
     // Publisher connect
-    control0.connect("publisher", true, false).await;
+    client0.connect("publisher", true, false).await;
 
     let (tx, mut rx) = mpsc::channel(4);
     let mut tasks = Vec::new();
-    for (topic, mut control) in [
-        ("xyz/2", control1),
-        ("xyz/+", control2),
-        ("#", control3),
+    for (topic, mut client) in [
+        ("xyz/2", client1),
+        ("xyz/+", client2),
+        ("#", client3),
         // will not match
-        ("xxx/bbb", control4),
+        ("xxx/bbb", client4),
     ] {
         let tx = tx.clone();
         let task = tokio::spawn(async move {
-            control
+            client
                 .connect(format!("subscriber: {}", topic), true, false)
                 .await;
-            control.subscribe(2, vec![(topic, QoS::Level2)]).await;
+            client.subscribe(2, vec![(topic, QoS::Level2)]).await;
 
             // Subscribe is ready
             tx.send(()).await.unwrap();
@@ -211,23 +211,19 @@ async fn test_publish_qos2() {
                 let mut pub_pid = 1;
                 let mut rel_pid = 1;
                 while pub_pid < 15 || rel_pid < 15 {
-                    let packet = control.read_packet().await;
+                    let packet = client.read_packet().await;
                     match packet {
                         Packet::Publish(publish) => {
-                            let expected = build_publish(
-                                QoS::Level2,
-                                pub_pid,
-                                "xyz/2",
-                                vec![3, 5, 55, pub_pid as u8],
-                                |_| (),
-                            );
+                            let data = vec![3, 5, 55, pub_pid as u8];
+                            let expected =
+                                build_publish(QoS::Level2, pub_pid, "xyz/2", data, |_| ());
                             assert_eq!(publish, expected);
-                            control.send_pubrec(pub_pid).await;
+                            client.send_pubrec(pub_pid).await;
                             pub_pid += 1;
                         }
                         Packet::Pubrel(pid) => {
                             assert_eq!(pid.value(), rel_pid);
-                            control.send_pubcomp(rel_pid).await;
+                            client.send_pubcomp(rel_pid).await;
                             rel_pid += 1;
                         }
                         pkt => panic!("invalid packet from server: {:?}", pkt),
@@ -235,7 +231,7 @@ async fn test_publish_qos2() {
                 }
             }
             sleep(Duration::from_millis(100)).await;
-            assert!(control.try_read_packet_is_empty());
+            assert!(client.try_read_packet_is_empty());
         });
         tasks.push(task);
     }
@@ -246,19 +242,14 @@ async fn test_publish_qos2() {
     }
 
     for pub_pid in 1..15u16 {
-        control0
-            .publish(
-                QoS::Level2,
-                pub_pid,
-                "xyz/2",
-                vec![3, 5, 55, pub_pid as u8],
-                |_| (),
-            )
+        let data = vec![3, 5, 55, pub_pid as u8];
+        client0
+            .publish(QoS::Level2, pub_pid, "xyz/2", data, |_| ())
             .await;
     }
 
     sleep(Duration::from_millis(20)).await;
-    assert!(control0.try_read_packet_is_empty());
+    assert!(client0.try_read_packet_is_empty());
 
     for task in tasks {
         assert!(task.await.is_ok());

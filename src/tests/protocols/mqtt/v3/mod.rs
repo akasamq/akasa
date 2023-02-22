@@ -18,7 +18,7 @@ use tokio::{sync::mpsc::error::TryRecvError, time::sleep};
 use crate::tests::utils::MockConnControl;
 
 #[async_trait]
-trait ControlV3 {
+trait ClientV3 {
     fn try_read_packet(&mut self) -> Result<Packet, TryRecvError>;
     async fn read_packet(&mut self) -> Packet;
     async fn write_packet(&self, packet: Packet);
@@ -83,7 +83,7 @@ trait ControlV3 {
 }
 
 #[async_trait]
-impl ControlV3 for MockConnControl {
+impl ClientV3 for MockConnControl {
     fn try_read_packet(&mut self) -> Result<Packet, TryRecvError> {
         self.chan_out
             .try_recv()

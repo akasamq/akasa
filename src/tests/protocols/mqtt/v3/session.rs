@@ -8,45 +8,45 @@ use crate::config::Config;
 use crate::state::GlobalState;
 use crate::tests::utils::MockConn;
 
-use super::ControlV3;
+use super::ClientV3;
 
 async fn test_clean_session(clean_session: bool, reconnect_clean_session: bool) {
-    let (task, mut control) = MockConn::start(3333, Config::new_allow_anonymous());
+    let (task, mut client) = MockConn::start(3333, Config::new_allow_anonymous());
 
     let client_id = "client id";
-    control.connect(client_id, clean_session, false).await;
+    client.connect(client_id, clean_session, false).await;
 
     // for increase the server_packet_id field
-    control.subscribe(11, vec![("abc/1", QoS::Level1)]).await;
-    control
+    client.subscribe(11, vec![("abc/1", QoS::Level1)]).await;
+    client
         .send_publish(QoS::Level1, 12, "abc/1", vec![3, 5, 55], |_| ())
         .await;
-    control.recv_puback(12).await;
-    control
+    client.recv_puback(12).await;
+    client
         .recv_publish(QoS::Level1, 1, "abc/1", vec![3, 5, 55], |_| ())
         .await;
-    control.disconnect().await;
+    client.disconnect().await;
     sleep(Duration::from_millis(10)).await;
     assert!(task.is_finished());
 
-    let (_task, mut control) = MockConn::start_with_global(4444, control.global);
+    let (_task, mut client) = MockConn::start_with_global(4444, client.global);
     let session_present = !(clean_session || reconnect_clean_session);
-    control
+    client
         .connect(client_id, reconnect_clean_session, session_present)
         .await;
     if !session_present {
-        control.subscribe(11, vec![("abc/1", QoS::Level1)]).await;
+        client.subscribe(11, vec![("abc/1", QoS::Level1)]).await;
     }
 
     let received_pid = if session_present { 2 } else { 1 };
-    control
+    client
         .send_publish(QoS::Level1, 12, "abc/1", vec![3, 5, 55], |_| ())
         .await;
-    control.recv_puback(12).await;
-    control
+    client.recv_puback(12).await;
+    client
         .recv_publish(QoS::Level1, received_pid, "abc/1", vec![3, 5, 55], |_| ())
         .await;
-    control.send_puback(received_pid).await;
+    client.send_puback(received_pid).await;
 }
 
 #[tokio::test]
@@ -68,33 +68,33 @@ async fn test_session_take_over() {
     ));
     let client_id = "client id";
 
-    let (task, mut control) = MockConn::start_with_global(111, Arc::clone(&global));
+    let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
     // client first connection
     {
-        control.connect(client_id, false, false).await;
-        control.subscribe(11, vec![("abc/1", QoS::Level1)]).await;
-        control
+        client.connect(client_id, false, false).await;
+        client.subscribe(11, vec![("abc/1", QoS::Level1)]).await;
+        client
             .publish(QoS::Level1, 12, "abc/1", vec![3, 5, 55], |_| ())
             .await;
-        control
+        client
             .recv_publish(QoS::Level1, 1, "abc/1", vec![3, 5, 55], |_| ())
             .await;
-        control.send_puback(1).await;
+        client.send_puback(1).await;
     }
     sleep(Duration::from_millis(20)).await;
     assert!(!task.is_finished());
 
-    let (task2, mut control2) = MockConn::start_with_global(222, Arc::clone(&global));
+    let (task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));
     // client second connection
     {
-        control2.connect(client_id, false, true).await;
-        control2
+        client2.connect(client_id, false, true).await;
+        client2
             .publish(QoS::Level1, 12, "abc/1", vec![3, 5, 55], |_| ())
             .await;
-        control2
+        client2
             .recv_publish(QoS::Level1, 2, "abc/1", vec![3, 5, 55], |_| ())
             .await;
-        control2.send_puback(2).await;
+        client2.send_puback(2).await;
     }
     sleep(Duration::from_millis(20)).await;
     assert!(task.is_finished());

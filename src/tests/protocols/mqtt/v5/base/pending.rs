@@ -1,18 +1,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::Bytes;
 use mqtt_proto::v5::*;
 use mqtt_proto::*;
 use tokio::sync::oneshot;
 use tokio::time::sleep;
-use ConnectReasonCode::*;
 
 use crate::config::Config;
 use crate::state::GlobalState;
 use crate::tests::utils::MockConn;
 
-use super::assert_connack;
+use super::super::ClientV5;
 
 #[tokio::test]
 async fn test_pending_qos0() {
@@ -20,64 +18,31 @@ async fn test_pending_qos0() {
         "127.0.0.1:1883".parse().unwrap(),
         Config::new_allow_anonymous(),
     ));
-    let (conn1, mut control1) = MockConn::new_with_global(111, Arc::clone(&global));
-    let _task1 = control1.start(conn1);
-
-    let (conn2, mut control2) = MockConn::new_with_global(222, Arc::clone(&global));
-    let _task2 = control2.start(conn2);
+    let (_task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
+    let (_task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));
 
     let (tx, rx) = oneshot::channel();
 
     // client 1: publisher
     let task1 = tokio::spawn(async move {
-        let connect = Connect::new(Arc::new("client identifier 1".to_owned()), 10);
-        let connack = Connack::new(false, Success);
-        control1.write_packet_v5(connect.into()).await;
-        let packet = control1.read_packet_v5().await;
-        assert_connack!(packet, connack);
+        client1.connect("client id 1", true, false).await;
 
         rx.await.unwrap();
         for _ in 0..4 {
             sleep(Duration::from_millis(100)).await;
-            let publish = Publish::new(
-                QosPid::Level0,
-                TopicName::try_from("xyz/0".to_owned()).unwrap(),
-                Bytes::from(vec![3, 5, 55]),
-            );
-            control1.write_packet_v5(publish.into()).await;
-            assert!(control1.try_read_packet_is_empty());
+            client1
+                .send_publish(QoS::Level0, 0, "xyz/0", vec![3, 5, 55], |_| ())
+                .await;
+            assert!(client1.try_read_packet_is_empty());
         }
     });
 
     // client 2: subscriber
-    let mut connect = Connect::new(Arc::new("client identifier 2".to_owned()), 10);
-    connect.clean_start = false;
-    connect.properties = ConnectProperties {
-        session_expiry_interval: Some(60),
-        ..Default::default()
-    };
-    let connack = Connack::new(false, Success);
-    control2.write_packet_v5(connect.clone().into()).await;
-    let packet = control2.read_packet_v5().await;
-    assert_connack!(packet, connack);
-
+    client2.connect("client id 2", false, false).await;
     // subscribe to "xyz/0"
-    let sub_pid = Pid::try_from(2).unwrap();
-    let subscribe = Subscribe::new(
-        sub_pid,
-        vec![(
-            TopicFilter::try_from("xyz/0".to_owned()).unwrap(),
-            SubscriptionOptions::new(QoS::Level0),
-        )],
-    );
-    let suback = Suback::new(sub_pid, vec![SubscribeReasonCode::GrantedQoS0]);
-    control2.write_packet_v5(subscribe.into()).await;
-    let packet = control2.read_packet_v5().await;
-    assert_eq!(packet, Packet::Suback(suback));
-
-    control2
-        .write_packet_v5(Disconnect::new_normal().into())
-        .await;
+    let sub_topics = vec![("xyz/0", SubscriptionOptions::new(QoS::Level0))];
+    client2.subscribe(2, sub_topics).await;
+    client2.disconnect_normal().await;
 
     tx.send(()).unwrap();
 
@@ -87,14 +52,9 @@ async fn test_pending_qos0() {
     assert!(task1.await.is_ok());
 
     // reconnect
-    let (conn2, mut control2) = MockConn::new_with_global(444, global);
-    let _task2 = control2.start(conn2);
-
-    let connack = Connack::new(true, Success);
-    control2.write_packet_v5(connect.into()).await;
-    let packet = control2.read_packet_v5().await;
-    assert_connack!(packet, connack);
-    assert!(control2.try_read_packet_is_empty());
+    let (_task2, mut client2) = MockConn::start_with_global(444, global);
+    client2.connect("client id 2", false, true).await;
+    assert!(client2.try_read_packet_is_empty());
 }
 
 #[tokio::test]
@@ -103,66 +63,28 @@ async fn test_pending_qos1() {
         "127.0.0.1:1883".parse().unwrap(),
         Config::new_allow_anonymous(),
     ));
-    let (conn1, mut control1) = MockConn::new_with_global(111, Arc::clone(&global));
-    let _task1 = control1.start(conn1);
-
-    let (conn2, mut control2) = MockConn::new_with_global(222, Arc::clone(&global));
-    let _task2 = control2.start(conn2);
+    let (_task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
+    let (_task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));
 
     let (tx, rx) = oneshot::channel();
 
     // client 1: publisher
     let task1 = tokio::spawn(async move {
-        let connect = Connect::new(Arc::new("client identifier 1".to_owned()), 10);
-        let connack = Connack::new(false, Success);
-        control1.write_packet_v5(connect.into()).await;
-        let packet = control1.read_packet_v5().await;
-        assert_connack!(packet, connack);
-
+        client1.connect("client id 1", true, false).await;
         rx.await.unwrap();
-        for pub_pid in 0..4u16 {
+        for pub_pid in 1..5u16 {
             sleep(Duration::from_millis(100)).await;
-            let pub_pid = Pid::try_from(pub_pid + 1).unwrap();
-            let publish = Publish::new(
-                QosPid::Level1(pub_pid),
-                TopicName::try_from("xyz/1".to_owned()).unwrap(),
-                Bytes::from(vec![3, 5, 55]),
-            );
-            control1.write_packet_v5(publish.into()).await;
-            let packet = control1.read_packet_v5().await;
-            assert_eq!(packet, Puback::new_success(pub_pid).into());
+            client1
+                .publish(QoS::Level1, pub_pid, "xyz/1", vec![3, 5, 55], |_| ())
+                .await;
         }
     });
 
     // client 2: subscriber
-    let mut connect = Connect::new(Arc::new("client identifier 2".to_owned()), 10);
-    connect.clean_start = false;
-    connect.properties = ConnectProperties {
-        session_expiry_interval: Some(60),
-        ..Default::default()
-    };
-    let connack = Connack::new(false, Success);
-    control2.write_packet_v5(connect.clone().into()).await;
-    let packet = control2.read_packet_v5().await;
-    assert_connack!(packet, connack);
-
-    // subscribe to "xyz/1"
-    let sub_pid = Pid::try_from(2).unwrap();
-    let subscribe = Subscribe::new(
-        sub_pid,
-        vec![(
-            TopicFilter::try_from("xyz/1".to_owned()).unwrap(),
-            SubscriptionOptions::new(QoS::Level1),
-        )],
-    );
-    let suback = Suback::new(sub_pid, vec![SubscribeReasonCode::GrantedQoS1]);
-    control2.write_packet_v5(subscribe.into()).await;
-    let packet = control2.read_packet_v5().await;
-    assert_eq!(packet, Packet::Suback(suback));
-
-    control2
-        .write_packet_v5(Disconnect::new_normal().into())
-        .await;
+    client2.connect("client id 2", false, false).await;
+    let sub_topics = vec![("xyz/1", SubscriptionOptions::new(QoS::Level1))];
+    client2.subscribe(2, sub_topics).await;
+    client2.disconnect_normal().await;
 
     tx.send(()).unwrap();
 
@@ -171,27 +93,17 @@ async fn test_pending_qos1() {
     assert!(task1.await.is_ok());
 
     // reconnect
-    let (conn2, mut control2) = MockConn::new_with_global(444, global);
-    let _task2 = control2.start(conn2);
+    let (_task2, mut client2) = MockConn::start_with_global(444, global);
 
-    let connack = Connack::new(true, Success);
-    control2.write_packet_v5(connect.into()).await;
-    let packet = control2.read_packet_v5().await;
-    assert_connack!(packet, connack);
+    client2.connect("client id 2", false, true).await;
 
-    for pub_pid in 0..4u16 {
-        let pub_pid = Pid::try_from(pub_pid + 1).unwrap();
-        let publish = Publish::new(
-            QosPid::Level1(pub_pid),
-            TopicName::try_from("xyz/1".to_owned()).unwrap(),
-            Bytes::from(vec![3, 5, 55]),
-        );
-        let expected_packet = Packet::Publish(publish);
-        let packet = control2.read_packet_v5().await;
-        assert_eq!(packet, expected_packet);
+    for pub_pid in 1..5u16 {
+        client2
+            .recv_publish(QoS::Level1, pub_pid, "xyz/1", vec![3, 5, 55], |_| ())
+            .await;
     }
     sleep(Duration::from_millis(20)).await;
-    assert!(control2.try_read_packet_is_empty());
+    assert!(client2.try_read_packet_is_empty());
 }
 
 #[tokio::test]
@@ -202,64 +114,26 @@ async fn test_pending_max_inflight_qos1() {
         "127.0.0.1:1883".parse().unwrap(),
         config.clone(),
     ));
-    let (conn1, mut control1) = MockConn::new_with_global(111, Arc::clone(&global));
-    let _task1 = control1.start(conn1);
-
-    let (conn2, mut control2) = MockConn::new_with_global(222, Arc::clone(&global));
-    let _task2 = control2.start(conn2);
+    let (_task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
+    let (_task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));
 
     let (tx, rx) = oneshot::channel();
 
     // client 1: publisher
     let task1 = tokio::spawn(async move {
-        let connect = Connect::new(Arc::new("client identifier 1".to_owned()), 10);
-        let connack = Connack::new(false, Success);
-        control1.write_packet_v5(connect.into()).await;
-        let packet = control1.read_packet_v5().await;
-        assert_connack!(packet, connack);
-
+        client1.connect("client id 1", true, false).await;
         rx.await.unwrap();
-        for pub_pid in 0..14u16 {
-            let pub_pid = Pid::try_from(pub_pid + 1).unwrap();
-            sleep(Duration::from_millis(100)).await;
-            let publish = Publish::new(
-                QosPid::Level1(pub_pid),
-                TopicName::try_from("xyz/1".to_owned()).unwrap(),
-                Bytes::from(vec![3, 5, 55]),
-            );
-            control1.write_packet_v5(publish.into()).await;
-            let expected_packet = Puback::new_success(pub_pid).into();
-            let packet = control1.read_packet_v5().await;
-            assert_eq!(packet, expected_packet);
+        for pub_pid in 1..15u16 {
+            client1
+                .publish(QoS::Level1, pub_pid, "xyz/1", vec![3, 5, 55], |_| ())
+                .await;
         }
     });
 
     // client 2: subscriber
-    let mut connect = Connect::new(Arc::new("client identifier 2".to_owned()), 10);
-    connect.clean_start = false;
-    connect.properties = ConnectProperties {
-        session_expiry_interval: Some(60),
-        ..Default::default()
-    };
-    let connack = Connack::new(false, Success);
-    control2.write_packet_v5(connect.clone().into()).await;
-    let packet = control2.read_packet_v5().await;
-    assert_connack!(packet, connack);
-
-    // subscribe to "xyz/1"
-    let sub_pid = Pid::try_from(2).unwrap();
-    let subscribe = Subscribe::new(
-        sub_pid,
-        vec![(
-            TopicFilter::try_from("xyz/1".to_owned()).unwrap(),
-            SubscriptionOptions::new(QoS::Level1),
-        )],
-    );
-    let suback = Suback::new(sub_pid, vec![SubscribeReasonCode::GrantedQoS1]);
-    control2.write_packet_v5(subscribe.into()).await;
-    let packet = control2.read_packet_v5().await;
-    let expected_packet = Packet::Suback(suback);
-    assert_eq!(packet, expected_packet);
+    client2.connect("client id 2", false, false).await;
+    let sub_topics = vec![("xyz/1", SubscriptionOptions::new(QoS::Level1))];
+    client2.subscribe(2, sub_topics).await;
 
     tx.send(()).unwrap();
 
@@ -267,40 +141,25 @@ async fn test_pending_max_inflight_qos1() {
     sleep(Duration::from_millis(100)).await;
     assert!(task1.await.is_ok());
 
-    for pub_pid in 0..8u16 {
-        let pub_pid = Pid::try_from(pub_pid + 1).unwrap();
-        let publish = Publish::new(
-            QosPid::Level1(pub_pid),
-            TopicName::try_from("xyz/1".to_owned()).unwrap(),
-            Bytes::from(vec![3, 5, 55]),
-        );
-        let expected_packet = Packet::Publish(publish);
-        let packet = control2.read_packet_v5().await;
-        assert_eq!(packet, expected_packet);
+    for pub_pid in 1..9u16 {
+        client2
+            .recv_publish(QoS::Level1, pub_pid, "xyz/1", vec![3, 5, 55], |_| ())
+            .await;
     }
 
     // Reach max inflight, we can not receive more publish packet
     sleep(Duration::from_millis(20)).await;
-    assert!(control2.try_read_packet_is_empty());
+    assert!(client2.try_read_packet_is_empty());
 
-    for pub_pid in 0..8u16 {
-        let pub_pid = Pid::try_from(pub_pid + 1).unwrap();
-        control2
-            .write_packet_v5(Puback::new_success(pub_pid).into())
-            .await;
+    for pub_pid in 1..9u16 {
+        client2.send_puback(pub_pid).await;
     }
-    for pub_pid in 8..14u16 {
-        let pub_pid = Pid::try_from(pub_pid + 1).unwrap();
-        let publish = Publish::new(
-            QosPid::Level1(pub_pid),
-            TopicName::try_from("xyz/1".to_owned()).unwrap(),
-            Bytes::from(vec![3, 5, 55]),
-        );
-        let expected_packet = Packet::Publish(publish);
-        let packet = control2.read_packet_v5().await;
-        assert_eq!(packet, expected_packet);
+    for pub_pid in 9..15u16 {
+        client2
+            .recv_publish(QoS::Level1, pub_pid, "xyz/1", vec![3, 5, 55], |_| ())
+            .await;
     }
 
     sleep(Duration::from_millis(20)).await;
-    assert!(control2.try_read_packet_is_empty());
+    assert!(client2.try_read_packet_is_empty());
 }
