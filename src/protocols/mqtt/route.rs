@@ -31,43 +31,6 @@ pub struct SharedClients {
     index: HashMap<ClientId, usize>,
 }
 
-impl SharedClients {
-    pub fn get_one_by_u64(&self, number: u64) -> (ClientId, QoS) {
-        // Empty SharedClients MUST already removed from parent data structure immediately.
-        debug_assert!(!self.items.is_empty());
-        let idx = number as usize % self.items.len();
-        self.items[idx]
-    }
-
-    fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-
-    fn insert(&mut self, item: (ClientId, QoS)) {
-        if let Some(idx) = self.index.get(&item.0) {
-            self.items[*idx].1 = item.1;
-        } else {
-            self.index.insert(item.0, self.items.len());
-            self.items.push(item);
-        }
-    }
-
-    fn remove(&mut self, item_key: &ClientId) {
-        if let Some(idx) = self.index.remove(item_key) {
-            if self.items.len() == 1 {
-                self.items.clear();
-            } else {
-                let last_client_id = self.items.last().expect("shared items").0;
-                self.items.swap_remove(idx);
-                self.index.insert(last_client_id, idx);
-                if self.items.capacity() >= 16 && self.items.capacity() >= (self.items.len() << 2) {
-                    self.items.shrink_to(self.items.len() << 1);
-                }
-            }
-        }
-    }
-}
-
 impl RouteTable {
     pub fn new() -> RouteTable {
         RouteTable {
@@ -208,13 +171,14 @@ impl RouteNode {
             if content.topic_filter.is_none() {
                 content.topic_filter = Some(topic_filter.clone());
             }
-            content.clients.insert(id, qos);
             if let Some(name) = group {
                 content
                     .groups
                     .entry(name)
                     .or_insert_with(SharedClients::default)
                     .insert((id, qos));
+            } else {
+                content.clients.insert(id, qos);
             }
         }
     }
@@ -238,7 +202,6 @@ impl RouteNode {
             return remove_parent;
         } else {
             let mut content = self.content.write();
-            content.clients.remove(&id);
             if let Some(name) = group {
                 if let Some(shared_clients) = content.groups.get_mut(name) {
                     shared_clients.remove(&id);
@@ -246,6 +209,8 @@ impl RouteNode {
                         content.groups.remove(name);
                     }
                 }
+            } else {
+                content.clients.remove(&id);
             }
             if content.is_empty() {
                 content.topic_filter = None;
@@ -261,6 +226,43 @@ impl RouteNode {
 impl RouteContent {
     pub fn is_empty(&self) -> bool {
         self.clients.is_empty() && self.groups.is_empty()
+    }
+}
+
+impl SharedClients {
+    pub fn get_one_by_u64(&self, number: u64) -> (ClientId, QoS) {
+        // Empty SharedClients MUST already removed from parent data structure immediately.
+        debug_assert!(!self.items.is_empty());
+        let idx = number as usize % self.items.len();
+        self.items[idx]
+    }
+
+    fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    fn insert(&mut self, item: (ClientId, QoS)) {
+        if let Some(idx) = self.index.get(&item.0) {
+            self.items[*idx].1 = item.1;
+        } else {
+            self.index.insert(item.0, self.items.len());
+            self.items.push(item);
+        }
+    }
+
+    fn remove(&mut self, item_key: &ClientId) {
+        if let Some(idx) = self.index.remove(item_key) {
+            if self.items.len() == 1 {
+                self.items.clear();
+            } else {
+                let last_client_id = self.items.last().expect("shared items").0;
+                self.items.swap_remove(idx);
+                self.index.insert(last_client_id, idx);
+                if self.items.capacity() >= 16 && self.items.capacity() >= (self.items.len() << 2) {
+                    self.items.shrink_to(self.items.len() << 1);
+                }
+            }
+        }
     }
 }
 
@@ -411,4 +413,6 @@ mod tests {
             Query("$abc", vec![("$abc/#", vec![5])]),
         ]);
     }
+
+    // FIXME: add shared subscription tests
 }

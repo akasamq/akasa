@@ -200,7 +200,7 @@ async fn test_publish_qos2() {
                 let mut pub_pid = 1;
                 let mut rel_pid = 1;
                 while pub_pid < 15 || rel_pid < 15 {
-                    let packet = client.read_packet_v5().await;
+                    let packet = client.read_packet().await;
                     match packet {
                         Packet::Publish(publish) => {
                             let data = vec![3, 5, 55, pub_pid as u8];

@@ -39,6 +39,6 @@ async fn test_subscribe_reject_empty_topics() {
     client.send_subscribe::<&str>(23, vec![]).await;
 
     sleep(Duration::from_millis(10)).await;
-    assert!(client.try_read_packet_v5().is_err());
+    assert!(client.try_read_packet().is_err());
     assert!(task.is_finished());
 }

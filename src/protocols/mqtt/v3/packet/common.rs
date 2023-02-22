@@ -89,7 +89,7 @@ pub(crate) async fn send_publish<'a>(
         }
     }
 
-    for (sender_client_id, subscribe_filter, subscribe_qos, sender) in senders {
+    for (receiver_client_id, subscribe_filter, subscribe_qos, sender) in senders {
         let publish = InternalMessage::PublishV3 {
             retain: msg.retain,
             qos: msg.qos,
@@ -101,7 +101,7 @@ pub(crate) async fn send_publish<'a>(
         if let Err(err) = sender.send_async((session.client_id, publish)).await {
             log::error!(
                 "send publish to connection {} failed: {}",
-                sender_client_id,
+                receiver_client_id,
                 err
             );
         }

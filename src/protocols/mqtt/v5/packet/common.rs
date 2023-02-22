@@ -25,6 +25,8 @@ use crate::state::{ClientId, GlobalState, InternalMessage};
 
 use super::super::{PubPacket, Session};
 
+// TODO: move RecvPublish/SendPublish/recv_publish/send_publish to publish.rs
+
 pub(crate) struct RecvPublish<'a> {
     pub topic_name: &'a TopicName,
     pub qos: QoS,
@@ -141,8 +143,8 @@ pub(crate) async fn send_publish<'a>(
         }
     }
 
-    for (sender_client_id, subscribe_filter, subscribe_qos, sender) in senders {
-        let msg = InternalMessage::PublishV5 {
+    for (receiver_client_id, subscribe_filter, subscribe_qos, sender) in senders {
+        let publish = InternalMessage::PublishV5 {
             retain: msg.retain,
             qos: msg.qos,
             topic_name: msg.topic_name.clone(),
@@ -151,10 +153,10 @@ pub(crate) async fn send_publish<'a>(
             subscribe_qos,
             properties: msg.properties.clone(),
         };
-        if let Err(err) = sender.send_async((session.client_id, msg)).await {
+        if let Err(err) = sender.send_async((session.client_id, publish)).await {
             log::info!(
                 "send publish to connection {} failed: {}",
-                sender_client_id,
+                receiver_client_id,
                 err
             );
         }
@@ -371,7 +373,7 @@ pub(crate) async fn write_packet<T: AsyncWrite + Unpin>(
     conn: &mut T,
     packet: &Packet,
 ) -> io::Result<()> {
-    log::debug!("write to {:?} with packet: {:#?}", client_id, packet);
+    log::debug!("write to {} with packet: {:#?}", client_id, packet);
     packet.encode_async(conn).await.map_err(|err| match err {
         ErrorV5::Common(err) => io::Error::from(err),
         _ => io::ErrorKind::InvalidData.into(),
