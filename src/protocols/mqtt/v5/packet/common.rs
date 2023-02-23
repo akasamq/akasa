@@ -1,12 +1,10 @@
 use std::borrow::Cow;
 use std::cmp;
-use std::hash::Hasher;
 use std::io;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Instant;
 
-use ahash::AHasher;
 use bytes::Bytes;
 use futures_lite::io::AsyncWrite;
 use mqtt_proto::{
@@ -118,20 +116,14 @@ pub(crate) async fn send_publish<'a>(
             }
         }
         for (group_name, shared_clients) in &content.groups {
-            let number: u64 = match global.config.shared_subscription_mode {
-                SharedSubscriptionMode::Random => thread_rng().gen(),
+            let (client_id, subscribe_qos) = match global.config.shared_subscription_mode {
+                SharedSubscriptionMode::Random => shared_clients.get_by_number(thread_rng().gen()),
                 SharedSubscriptionMode::HashClientId => {
-                    let mut hasher = AHasher::default();
-                    hasher.write(session.client_identifier.as_bytes());
-                    hasher.finish()
+                    shared_clients.get_by_hash(&session.client_identifier)
                 }
-                SharedSubscriptionMode::HashTopicName => {
-                    let mut hasher = AHasher::default();
-                    hasher.write(msg.topic_name.as_bytes());
-                    hasher.finish()
-                }
+                SharedSubscriptionMode::HashTopicName => shared_clients.get_by_hash(msg.topic_name),
             };
-            let (client_id, subscribe_qos) = shared_clients.get_one_by_u64(number);
+            // TODO: optimize this alloc later
             let full_filter = TopicFilter::try_from(format!(
                 "{}{}/{}",
                 SHARED_PREFIX, group_name, subscribe_filter

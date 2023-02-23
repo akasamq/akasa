@@ -1,6 +1,8 @@
+use std::hash::Hash;
 use std::ops::Deref;
 use std::sync::Arc;
 
+use ahash::RandomState;
 use dashmap::DashMap;
 use hashbrown::HashMap;
 use mqtt_proto::{QoS, TopicFilter, TopicName, LEVEL_SEP, MATCH_ALL_STR, MATCH_ONE_STR};
@@ -17,7 +19,7 @@ struct RouteNode {
     nodes: Arc<DashMap<String, RouteNode>>,
 }
 
-#[derive(Eq, PartialEq, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct RouteContent {
     /// Returned RouteContent always have topic_filter
     pub topic_filter: Option<TopicFilter>,
@@ -25,8 +27,9 @@ pub struct RouteContent {
     pub groups: HashMap<String, SharedClients>,
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SharedClients {
+    hash_builder: RandomState,
     items: Vec<(ClientId, QoS)>,
     index: HashMap<ClientId, usize>,
 }
@@ -230,7 +233,12 @@ impl RouteContent {
 }
 
 impl SharedClients {
-    pub fn get_one_by_u64(&self, number: u64) -> (ClientId, QoS) {
+    pub fn get_by_hash<T: Hash>(&self, data: T) -> (ClientId, QoS) {
+        let number = self.hash_builder.hash_one(data);
+        self.get_by_number(number)
+    }
+
+    pub fn get_by_number(&self, number: u64) -> (ClientId, QoS) {
         // Empty SharedClients MUST already removed from parent data structure immediately.
         debug_assert!(!self.items.is_empty());
         let idx = number as usize % self.items.len();
