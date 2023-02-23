@@ -1,6 +1,6 @@
+use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
-use std::io::Write;
 
 use mqtt_proto::v3::*;
 use mqtt_proto::*;

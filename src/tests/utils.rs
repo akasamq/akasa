@@ -105,8 +105,11 @@ impl AsyncRead for MockConn {
                     if let Ok(pkt_opt) = v3::Packet::decode(&v) {
                         log::info!("[{}] send v3: {:?}", peer, pkt_opt.unwrap());
                     } else {
-                        let pkt = v5::Packet::decode(&v).unwrap().unwrap();
-                        log::info!("[{}] send v5: {:?}", peer, pkt);
+                        if let Ok(pkt_opt) = v5::Packet::decode(&v) {
+                            log::info!("[{}] send v5: {:?}", peer, pkt_opt.unwrap());
+                        } else {
+                            log::info!("[{}] sent invalid packet: {:?}", peer, v);
+                        }
                     };
                     v
                 }
