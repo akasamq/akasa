@@ -36,8 +36,8 @@ pub struct MockConn {
 impl MockConn {
     pub fn new_with_global(port: u16, global: Arc<GlobalState>) -> (MockConn, MockConnControl) {
         // NOTE: if the channel size is small, some tests will fail
-        let (in_tx, in_rx) = channel(256);
-        let (out_tx, out_rx) = channel(256);
+        let (in_tx, in_rx) = channel(1);
+        let (out_tx, out_rx) = channel(1);
         let conn = MockConn {
             bind: global.bind,
             peer: format!("127.0.0.1:{}", port).parse().unwrap(),
@@ -125,6 +125,7 @@ impl AsyncWrite for MockConn {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         let fut = self.chan_out.send(buf.to_vec());
+        cx.waker().wake_by_ref();
         Box::pin(fut)
             .poll(cx)
             .map_ok(|_| buf.len())
