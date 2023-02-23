@@ -91,11 +91,6 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<Option<(Session, Receiver<(ClientId, InternalMessage)>)>> {
-    enum Msg {
-        Socket(()),
-        Internal((ClientId, InternalMessage)),
-    }
-
     let mut session = Session::new(&global.config, peer);
     let mut receiver = None;
     let mut io_error = None;
@@ -141,55 +136,51 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 
     while !session.disconnected() {
         // Online client logic
-        let recv_data = async {
-            handle_packet(&mut session, &mut conn, executor, global)
-                .await
-                .map(Msg::Socket)
-        };
-        let recv_msg = async {
-            receiver
-                .recv_async()
-                .await
-                .map(Msg::Internal)
-                .map_err(|_| io::ErrorKind::BrokenPipe.into())
-        };
-        match recv_data.or(recv_msg).await {
-            Ok(Msg::Socket(())) => {}
-            Ok(Msg::Internal((sender, msg))) => {
-                let is_kick = matches!(msg, InternalMessage::Kick { .. });
-                match handle_internal(
-                    &mut session,
-                    &receiver,
-                    sender,
-                    msg,
-                    Some(&mut conn),
-                    global,
-                )
-                .await
-                {
-                    Ok(true) => {
-                        if is_kick && !session.disconnected() {
-                            // Offline client logic
-                            io_error = Some(io::ErrorKind::BrokenPipe.into());
-                        }
-                        // Been occupied by newly connected client or kicked out after disconnected
-                        break;
-                    }
-                    Ok(false) => {}
-                    // Currently, this error can only happend when write data to connection
-                    Err(err) => {
-                        // An error in online mode should also check clean_session value
-                        io_error = Some(err);
-                        break;
-                    }
+        tokio::select! {
+            result = handle_packet(&mut session, &mut conn, executor, global) => {
+                if let Err(err) = result {
+                    // An error in online mode should also check clean_session value
+                    io_error = Some(err);
+                    break;
                 }
             }
-            Err(err) => {
-                // An error in online mode should also check clean_session value
-                io_error = Some(err);
-                break;
+            result = receiver.recv_async() => match result {
+                Ok((sender, msg)) => {
+                    let is_kick = matches!(msg, InternalMessage::Kick { .. });
+                    match handle_internal(
+                        &mut session,
+                        &receiver,
+                        sender,
+                        msg,
+                        Some(&mut conn),
+                        global,
+                    )
+                        .await
+                    {
+                        Ok(true) => {
+                            if is_kick && !session.disconnected() {
+                                // Offline client logic
+                                io_error = Some(io::ErrorKind::BrokenPipe.into());
+                            }
+                            // Been occupied by newly connected client or kicked out after disconnected
+                            break;
+                        }
+                        Ok(false) => {}
+                        // Currently, this error can only happend when write data to connection
+                        Err(err) => {
+                            // An error in online mode should also check clean_session value
+                            io_error = Some(err);
+                            break;
+                        }
+                    }
+                }
+                Err(_) => {
+                    // An error in online mode should also check clean_session value
+                    io_error = Some(io::ErrorKind::BrokenPipe.into());
+                    break;
+                }
             }
-        }
+        };
     }
 
     if !session.disconnected() {

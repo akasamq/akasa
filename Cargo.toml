@@ -35,6 +35,8 @@ scram = "0.6.0"
 
 [dev-dependencies]
 async-trait = "0.1.64"
+futures-sink = "0.3.26"
+tokio-util = "0.7.7"
 
 [profile.release]
 debug = true

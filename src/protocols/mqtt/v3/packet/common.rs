@@ -153,17 +153,6 @@ pub(crate) async fn recv_publish<'a, T: AsyncWrite + Unpin>(
 }
 
 #[inline]
-pub(super) async fn write_packet<T: AsyncWrite + Unpin>(
-    client_id: ClientId,
-    conn: &mut T,
-    packet: &Packet,
-) -> io::Result<()> {
-    log::debug!("write to {:?} with packet: {:#?}", client_id, packet);
-    packet.encode_async(conn).await?;
-    Ok(())
-}
-
-#[inline]
 pub(super) async fn handle_pendings<T: AsyncWrite + Unpin>(
     session: &mut Session,
     conn: &mut T,
@@ -197,5 +186,17 @@ pub(super) async fn handle_pendings<T: AsyncWrite + Unpin>(
             PendingPacketStatus::Complete => unreachable!(),
         }
     }
+    Ok(())
+}
+
+#[inline]
+pub(super) async fn write_packet<T: AsyncWrite + Unpin>(
+    client_id: ClientId,
+    conn: &mut T,
+    packet: &Packet,
+) -> io::Result<()> {
+    log::debug!("write to {}: {:?}", client_id, packet);
+    packet.encode_async(conn).await?;
+    log::debug!("write to {}: {:?} FINISHED!!!", client_id, packet);
     Ok(())
 }

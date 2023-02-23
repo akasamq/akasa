@@ -133,6 +133,7 @@ topic name : {}
                 return Ok(());
             }
         } else {
+            // FIXME: check qos2_pids limit
             session.qos2_pids.insert(pid, current_hash);
         }
     }

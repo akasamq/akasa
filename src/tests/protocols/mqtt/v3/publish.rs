@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
+use std::io::Write;
 
 use mqtt_proto::v3::*;
 use mqtt_proto::*;
@@ -169,6 +170,9 @@ async fn test_publish_qos1() {
 
 #[tokio::test]
 async fn test_publish_qos2() {
+    env_logger::builder()
+        .format(|buf, record| writeln!(buf, "{}\t: {}", record.level(), record.args()))
+        .init();
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
         Config::new_allow_anonymous(),
@@ -214,6 +218,7 @@ async fn test_publish_qos2() {
                     let packet = client.read_packet().await;
                     match packet {
                         Packet::Publish(publish) => {
+                            log::warn!("PUBLISH received: qos_pid={:?}", publish.qos_pid);
                             let data = vec![3, 5, 55, pub_pid as u8];
                             let expected =
                                 build_publish(QoS::Level2, pub_pid, "xyz/2", data, |_| ());
@@ -222,6 +227,7 @@ async fn test_publish_qos2() {
                             pub_pid += 1;
                         }
                         Packet::Pubrel(pid) => {
+                            log::warn!("PUREL received: pid={:?}", pid);
                             assert_eq!(pid.value(), rel_pid);
                             client.send_pubcomp(rel_pid).await;
                             rel_pid += 1;

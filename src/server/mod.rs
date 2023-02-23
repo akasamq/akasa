@@ -27,12 +27,13 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     // If the client don't send enough data in 5 seconds, disconnect it.
     let (timeout_sender, timeout_receiver) = bounded(1);
     executor.spawn_sleep(Duration::from_secs(CONNECT_TIMEOUT_SECS), async move {
-        let _ = timeout_sender.send_async(()).await;
+        if timeout_sender.send_async(()).await.is_ok() {
+            log::info!("connection timeout: {}", peer);
+        }
     });
 
     let (packet_type, remaining_len) = decode_raw_header(&mut conn)
         .or(async {
-            log::info!("connection timeout: {}", peer);
             let _ = timeout_receiver.recv_async().await;
             Err(Error::IoError(io::ErrorKind::TimedOut, String::new()))
         })
@@ -43,7 +44,6 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     }
     let protocol = Protocol::decode_async(&mut conn)
         .or(async {
-            log::info!("connection timeout: {}", peer);
             let _ = timeout_receiver.recv_async().await;
             Err(Error::IoError(io::ErrorKind::TimedOut, String::new()))
         })

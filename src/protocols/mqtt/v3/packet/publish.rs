@@ -61,6 +61,7 @@ topic name : {}
                 return Err(io::ErrorKind::InvalidData.into());
             }
         } else {
+            // FIXME: check qos2_pids limit
             session.qos2_pids.insert(pid, current_hash);
         }
     }

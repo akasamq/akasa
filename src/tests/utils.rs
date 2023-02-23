@@ -6,14 +6,14 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use futures_lite::{
-    io::{AsyncRead, AsyncWrite},
-    FutureExt,
-};
+use futures_lite::io::{AsyncRead, AsyncWrite};
+use futures_sink::Sink;
+use mqtt_proto::{v3, v5};
 use tokio::{
     sync::mpsc::{channel, error::TryRecvError, Receiver, Sender},
     task::JoinHandle,
 };
+use tokio_util::sync::PollSender;
 
 use crate::config::Config;
 use crate::server::{handle_accept, rt_tokio::TokioExecutor};
@@ -30,21 +30,19 @@ pub struct MockConn {
     pub peer: SocketAddr,
     data_in: Vec<u8>,
     chan_in: Receiver<Vec<u8>>,
-    chan_out: Sender<Vec<u8>>,
+    chan_out: PollSender<Vec<u8>>,
 }
 
 impl MockConn {
     pub fn new_with_global(port: u16, global: Arc<GlobalState>) -> (MockConn, MockConnControl) {
-        // FIXME: if the channel size is small, some tests will fail
-        //   (cased by wrong implementation of poll_write)
-        let (in_tx, in_rx) = channel(512);
-        let (out_tx, out_rx) = channel(512);
+        let (in_tx, in_rx) = channel(128);
+        let (out_tx, out_rx) = channel(1);
         let conn = MockConn {
             bind: global.bind,
             peer: format!("127.0.0.1:{}", port).parse().unwrap(),
             data_in: Vec::new(),
             chan_in: in_rx,
-            chan_out: out_tx,
+            chan_out: PollSender::new(out_tx),
         };
         let control = MockConnControl {
             chan_in: in_tx,
@@ -99,10 +97,19 @@ impl AsyncRead for MockConn {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
+        let peer = self.peer.clone();
         if self.data_in.is_empty() {
             self.data_in = match self.chan_in.poll_recv(cx) {
                 Poll::Pending => return Poll::Pending,
-                Poll::Ready(Some(v)) => v,
+                Poll::Ready(Some(v)) => {
+                    if let Ok(pkt_opt) = v3::Packet::decode(&v) {
+                        log::info!("[{}] send v3: {:?}", peer, pkt_opt.unwrap());
+                    } else {
+                        let pkt = v5::Packet::decode(&v).unwrap().unwrap();
+                        log::info!("[{}] send v5: {:?}", peer, pkt);
+                    };
+                    v
+                }
                 Poll::Ready(None) => {
                     return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)))
                 }
@@ -121,15 +128,39 @@ impl AsyncRead for MockConn {
 
 impl AsyncWrite for MockConn {
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        let fut = self.chan_out.send(buf.to_vec());
-        Box::pin(fut)
-            .poll(cx)
-            .map_ok(|_| buf.len())
-            .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))
+        let peer = self.peer.clone();
+        if let Ok(pkt_opt) = v3::Packet::decode(buf) {
+            log::info!("[{}] recv v3: {:?}", peer, pkt_opt.unwrap());
+        } else {
+            let pkt = v5::Packet::decode(buf).unwrap().unwrap();
+            log::info!("[{}] recv v5: {:?}", peer, pkt);
+        };
+        let mut sink = Pin::new(&mut self.chan_out);
+        match sink.as_mut().poll_ready(cx) {
+            Poll::Ready(Ok(())) => {
+                log::info!("send to [{}]", peer);
+                if let Err(_) = sink.as_mut().start_send(buf.to_vec()) {
+                    return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)));
+                }
+                match sink.as_mut().poll_flush(cx) {
+                    Poll::Ready(Ok(())) => {}
+                    Poll::Pending => {}
+                    Poll::Ready(Err(_)) => {
+                        return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)));
+                    }
+                }
+                Poll::Ready(Ok(buf.len()))
+            }
+            Poll::Ready(Err(_)) => Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe))),
+            Poll::Pending => {
+                log::info!("[{}] Pending", peer);
+                Poll::Pending
+            }
+        }
     }
 
     fn poll_write_vectored(
@@ -154,11 +185,17 @@ impl AsyncWrite for MockConn {
         Poll::Ready(Ok(nwritten))
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.chan_out)
+            .as_mut()
+            .poll_flush(cx)
+            .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))
     }
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.poll_flush(cx)
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.chan_out)
+            .as_mut()
+            .poll_close(cx)
+            .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))
     }
 }
