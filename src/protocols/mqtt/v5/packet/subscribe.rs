@@ -14,7 +14,10 @@ use mqtt_proto::{
 use crate::state::GlobalState;
 
 use super::super::{Session, SubscriptionData};
-use super::common::{recv_publish, send_error_disconnect, write_packet, RecvPublish};
+use super::{
+    common::{send_error_disconnect, write_packet},
+    publish::{recv_publish, RecvPublish},
+};
 
 #[inline]
 pub(crate) async fn handle_subscribe<T: AsyncWrite + Unpin>(

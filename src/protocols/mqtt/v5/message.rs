@@ -20,13 +20,13 @@ use crate::state::{ClientId, Executor, GlobalState, InternalMessage};
 use super::super::PendingPackets;
 use super::{
     packet::{
-        common::{
-            after_handle_packet, recv_publish, send_error_connack, send_publish, RecvPublish,
-            SendPublish,
-        },
+        common::{after_handle_packet, send_error_connack},
         connect::{handle_auth, handle_connect, handle_disconnect},
         pingreq::handle_pingreq,
-        publish::{handle_puback, handle_pubcomp, handle_publish, handle_pubrec, handle_pubrel},
+        publish::{
+            handle_puback, handle_pubcomp, handle_publish, handle_pubrec, handle_pubrel,
+            recv_publish, send_publish, RecvPublish, SendPublish,
+        },
         subscribe::{handle_subscribe, handle_unsubscribe},
     },
     Session, SessionState,
