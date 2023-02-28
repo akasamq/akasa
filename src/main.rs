@@ -42,7 +42,11 @@ enum Commands {
         config: PathBuf,
 
         /// Async runtime
+        #[cfg(target_os = "linux")]
         #[clap(long, default_value_t = Runtime::Glommio, value_enum)]
+        runtime: Runtime,
+        #[cfg(not(target_os = "linux"))]
+        #[clap(long, default_value_t = Runtime::Tokio, value_enum)]
         runtime: Runtime,
     },
 
@@ -56,6 +60,7 @@ enum Commands {
 
 #[derive(ValueEnum, Clone, Debug)]
 enum Runtime {
+    #[cfg(target_os = "linux")]
     Glommio,
     Tokio,
 }
@@ -84,6 +89,7 @@ fn main() -> anyhow::Result<()> {
             log::info!("Listen on {}", bind);
             let global = Arc::new(GlobalState::new(bind, config));
             match runtime {
+                #[cfg(target_os = "linux")]
                 Runtime::Glommio => server::rt_glommio::start(global)?,
                 Runtime::Tokio => server::rt_tokio::start(global)?,
             }

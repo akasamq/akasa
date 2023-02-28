@@ -4,7 +4,6 @@
 use std::cmp;
 use std::collections::VecDeque;
 use std::fmt::Debug;
-use std::io;
 use std::time::SystemTime;
 
 use mqtt_proto::{Pid, QoS};
@@ -27,15 +26,15 @@ impl<P: Debug> PendingPackets<P> {
         }
     }
 
-    pub fn push_back(&mut self, pid: Pid, packet: P) -> io::Result<()> {
+    /// Push a packet into queue, return if the queue is full.
+    pub fn push_back(&mut self, pid: Pid, packet: P) -> bool {
         if self.packets.len() >= self.max_packets {
             log::error!(
                 "drop packet {:?}, due to too many packets in the queue: {}",
                 packet,
                 self.packets.len()
             );
-            // FIXME: use proper error type
-            return Err(io::Error::from(io::ErrorKind::InvalidData));
+            return true;
         }
         self.packets.push_back(PendingPacketStatus::New {
             added_at: get_unix_ts(),
@@ -44,7 +43,7 @@ impl<P: Debug> PendingPackets<P> {
             packet,
             dup: false,
         });
-        Ok(())
+        false
     }
 
     pub fn pubrec(&mut self, target_pid: Pid) -> bool {

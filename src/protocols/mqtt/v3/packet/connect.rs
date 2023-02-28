@@ -1,7 +1,6 @@
 use std::io;
 use std::sync::Arc;
 
-use flume::Receiver;
 use futures_lite::io::AsyncWrite;
 use mqtt_proto::{
     v3::{Connack, Connect, ConnectReturnCode},
@@ -10,14 +9,14 @@ use mqtt_proto::{
 
 use crate::config::AuthType;
 use crate::protocols::mqtt::start_keep_alive_timer;
-use crate::state::{AddClientReceipt, ClientId, Executor, GlobalState, InternalMessage};
+use crate::state::{AddClientReceipt, ClientReceiver, Executor, GlobalState};
 
 use super::super::Session;
-use super::common::{after_handle_packet, write_packet};
+use super::common::write_packet;
 
 pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     session: &mut Session,
-    receiver: &mut Option<Receiver<(ClientId, InternalMessage)>>,
+    receiver: &mut Option<ClientReceiver>,
     packet: Connect,
     conn: &mut T,
     executor: &E,
@@ -168,7 +167,6 @@ clean session : {}
     let rv_packet = Connack::new(session_present, return_code);
     write_packet(session.client_id, conn, &rv_packet.into()).await?;
     session.connected = true;
-    after_handle_packet(session, conn).await?;
     Ok(())
 }
 

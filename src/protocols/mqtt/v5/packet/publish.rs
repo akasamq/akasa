@@ -1,15 +1,13 @@
 use std::cmp;
 use std::hash::{Hash, Hasher};
-use std::io;
 use std::ops::Deref;
 use std::sync::Arc;
 
 use ahash::AHasher;
 use bytes::Bytes;
-use futures_lite::io::AsyncWrite;
 use mqtt_proto::{
     v5::{
-        DisconnectReasonCode, Puback, PubackProperties, PubackReasonCode, Pubcomp,
+        DisconnectReasonCode, Packet, Puback, PubackProperties, PubackReasonCode, Pubcomp,
         PubcompProperties, PubcompReasonCode, Publish, PublishProperties, Pubrec, PubrecProperties,
         PubrecReasonCode, Pubrel, PubrelProperties, PubrelReasonCode,
     },
@@ -19,18 +17,17 @@ use rand::{thread_rng, Rng};
 
 use crate::config::SharedSubscriptionMode;
 use crate::protocols::mqtt::retain::RetainContent;
-use crate::state::{GlobalState, InternalMessage};
+use crate::state::{GlobalState, NormalMessage};
 
 use super::super::{PubPacket, Session};
-use super::common::{handle_pendings, send_error_disconnect, write_packet};
+use super::common::build_error_disconnect;
 
 #[inline]
-pub(crate) async fn handle_publish<T: AsyncWrite + Unpin>(
+pub(crate) fn handle_publish(
     session: &mut Session,
     packet: Publish,
-    conn: &mut T,
     global: &Arc<GlobalState>,
-) -> io::Result<()> {
+) -> Result<Option<Packet>, Packet> {
     log::debug!(
         r#"{} received a publish packet:
 topic name : {}
@@ -49,45 +46,44 @@ topic name : {}
             "publish to topic name start with '$' is not allowed: {}",
             packet.topic_name
         );
-        send_error_disconnect(
-            conn,
+        let err_pkt = build_error_disconnect(
             session,
             DisconnectReasonCode::TopicNameInvalid,
             "publish to topic name start with '$' is not allowed",
-        )
-        .await?;
-        return Ok(());
+        );
+        return Err(err_pkt);
     }
     if packet.qos_pid == QosPid::Level0 && packet.dup {
         log::debug!("invalid dup flag in qos0 message");
-        return Err(io::ErrorKind::InvalidData.into());
+        let err_pkt = build_error_disconnect(
+            session,
+            DisconnectReasonCode::ProtocolError,
+            "invalid dup flag in qos0 message",
+        );
+        return Err(err_pkt);
     }
 
     let properties = &packet.properties;
     let mut topic_name = packet.topic_name.clone();
     if let Some(alias) = properties.topic_alias {
         if alias == 0 || alias > global.config.topic_alias_max {
-            send_error_disconnect(
-                conn,
+            let err_pkt = build_error_disconnect(
                 session,
                 DisconnectReasonCode::TopicAliasInvalid,
                 "topic alias too large or is 0",
-            )
-            .await?;
-            return Ok(());
+            );
+            return Err(err_pkt);
         }
         if packet.topic_name.is_empty() {
             if let Some(name) = session.topic_aliases.get(&alias) {
                 topic_name = name.clone();
             } else {
-                send_error_disconnect(
-                    conn,
+                let err_pkt = build_error_disconnect(
                     session,
                     DisconnectReasonCode::ProtocolError,
                     "topic alias not found",
-                )
-                .await?;
-                return Ok(());
+                );
+                return Err(err_pkt);
             }
         } else {
             session
@@ -96,14 +92,12 @@ topic name : {}
         }
     }
     if properties.subscription_id.is_some() {
-        send_error_disconnect(
-            conn,
+        let err_pkt = build_error_disconnect(
             session,
             DisconnectReasonCode::ProtocolError,
             "subscription identifier can't in publish",
-        )
-        .await?;
-        return Ok(());
+        );
+        return Err(err_pkt);
     }
 
     if let QosPid::Level2(pid) = packet.qos_pid {
@@ -121,22 +115,19 @@ topic name : {}
                     reason_code,
                     properties: PubrecProperties::default(),
                 };
-                write_packet(session.client_id, conn, &rv_packet.into()).await?;
-                return Ok(());
+                return Ok(Some(rv_packet.into()));
             }
             if !packet.dup {
                 log::info!(
                     "dup flag must be true for re-deliver packet: {}",
                     pid.value()
                 );
-                send_error_disconnect(
-                    conn,
+                let err_pkt = build_error_disconnect(
                     session,
                     DisconnectReasonCode::ProtocolError,
                     "dup flag must be true for re-deliver packet",
-                )
-                .await?;
-                return Ok(());
+                );
+                return Err(err_pkt);
             }
         } else {
             // FIXME: check qos2_pids limit
@@ -154,10 +145,9 @@ topic name : {}
             properties,
         },
         global,
-    )
-    .await;
+    );
     match packet.qos_pid {
-        QosPid::Level0 => {}
+        QosPid::Level0 => Ok(None),
         QosPid::Level1(pid) => {
             let reason_code = if matched_len > 0 {
                 PubackReasonCode::Success
@@ -169,7 +159,7 @@ topic name : {}
                 reason_code,
                 properties: PubackProperties::default(),
             };
-            write_packet(session.client_id, conn, &rv_packet.into()).await?
+            Ok(Some(rv_packet.into()))
         }
         QosPid::Level2(pid) => {
             let reason_code = if matched_len > 0 {
@@ -182,35 +172,23 @@ topic name : {}
                 reason_code,
                 properties: PubrecProperties::default(),
             };
-            write_packet(session.client_id, conn, &rv_packet.into()).await?
+            Ok(Some(rv_packet.into()))
         }
     }
-    Ok(())
 }
 
 #[inline]
-pub(crate) async fn handle_puback<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    packet: Puback,
-    _conn: &mut T,
-    _global: &Arc<GlobalState>,
-) -> io::Result<()> {
+pub(crate) fn handle_puback(session: &mut Session, packet: Puback) {
     log::debug!(
         "{} received a puback packet: id={}",
         session.client_id,
         packet.pid.value(),
     );
     let _matched = session.pending_packets.complete(packet.pid, QoS::Level1);
-    Ok(())
 }
 
 #[inline]
-pub(crate) async fn handle_pubrec<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    packet: Pubrec,
-    conn: &mut T,
-    _global: &Arc<GlobalState>,
-) -> io::Result<()> {
+pub(crate) fn handle_pubrec(session: &mut Session, packet: Pubrec) -> Packet {
     log::debug!(
         "{} received a pubrec  packet: id={}",
         session.client_id,
@@ -221,22 +199,16 @@ pub(crate) async fn handle_pubrec<T: AsyncWrite + Unpin>(
     } else {
         PubrelReasonCode::PacketIdentifierNotFound
     };
-    let rv_packet = Pubrel {
+    Pubrel {
         pid: packet.pid,
         reason_code,
         properties: PubrelProperties::default(),
-    };
-    write_packet(session.client_id, conn, &rv_packet.into()).await?;
-    Ok(())
+    }
+    .into()
 }
 
 #[inline]
-pub(crate) async fn handle_pubrel<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    packet: Pubrel,
-    conn: &mut T,
-    _global: &Arc<GlobalState>,
-) -> io::Result<()> {
+pub(crate) fn handle_pubrel(session: &mut Session, packet: Pubrel) -> Packet {
     log::debug!(
         "{} received a pubrel  packet: id={}",
         session.client_id,
@@ -247,35 +219,29 @@ pub(crate) async fn handle_pubrel<T: AsyncWrite + Unpin>(
     } else {
         PubcompReasonCode::PacketIdentifierNotFound
     };
-    let rv_packet = Pubcomp {
+    Pubcomp {
         pid: packet.pid,
         reason_code,
         properties: PubcompProperties::default(),
-    };
-    write_packet(session.client_id, conn, &rv_packet.into()).await?;
-    Ok(())
+    }
+    .into()
 }
 
 #[inline]
-pub(crate) async fn handle_pubcomp<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    packet: Pubcomp,
-    _conn: &mut T,
-    _global: &Arc<GlobalState>,
-) -> io::Result<()> {
+pub(crate) fn handle_pubcomp(session: &mut Session, packet: Pubcomp) {
     log::debug!(
         "{} received a pubcomp packet: id={}",
         session.client_id,
         packet.pid.value()
     );
     let _matched = session.pending_packets.complete(packet.pid, QoS::Level2);
-    Ok(())
 }
 
 // ====================
 // ==== Utils code ====
 // ====================
 
+#[derive(Debug)]
 pub(crate) struct RecvPublish<'a> {
     pub topic_name: &'a TopicName,
     pub qos: QoS,
@@ -288,6 +254,7 @@ pub(crate) struct RecvPublish<'a> {
     pub subscribe_qos: QoS,
 }
 
+#[derive(Debug)]
 pub(crate) struct SendPublish<'a> {
     pub topic_name: &'a TopicName,
     pub retain: bool,
@@ -296,11 +263,11 @@ pub(crate) struct SendPublish<'a> {
     pub properties: &'a PublishProperties,
 }
 
-// Received a publish message from client or will, then publish the message to
+// TODO: change to broadcast_publish()
 // matched clients, return the matched subscriptions length.
-pub(crate) async fn send_publish<'a>(
+pub(crate) fn send_publish(
     session: &mut Session,
-    msg: SendPublish<'a>,
+    msg: SendPublish,
     global: &Arc<GlobalState>,
 ) -> usize {
     if msg.retain {
@@ -352,9 +319,7 @@ pub(crate) async fn send_publish<'a>(
                     continue;
                 }
             }
-            if let Some(sender) = global.get_client_sender(client_id) {
-                senders.push((*client_id, subscribe_filter.clone(), *subscribe_qos, sender));
-            }
+            senders.push((*client_id, subscribe_filter.clone(), *subscribe_qos));
         }
         for (group_name, shared_clients) in &content.groups {
             let (client_id, subscribe_qos) = match global.config.shared_subscription_mode {
@@ -365,19 +330,16 @@ pub(crate) async fn send_publish<'a>(
                 SharedSubscriptionMode::HashTopicName => shared_clients.get_by_hash(msg.topic_name),
             };
             // TODO: optimize this alloc later
-            let full_filter = TopicFilter::try_from(format!(
-                "{}{}/{}",
-                SHARED_PREFIX, group_name, subscribe_filter
-            ))
-            .expect("full topic filter");
-            if let Some(sender) = global.get_client_sender(&client_id) {
-                senders.push((client_id, full_filter, subscribe_qos, sender));
-            }
+            let full_filter =
+                TopicFilter::try_from(format!("{SHARED_PREFIX}{group_name}/{subscribe_filter}"))
+                    .expect("full topic filter");
+            senders.push((client_id, full_filter, subscribe_qos));
         }
     }
 
-    for (receiver_client_id, subscribe_filter, subscribe_qos, sender) in senders {
-        let publish = InternalMessage::PublishV5 {
+    session.broadcast_packets_cnt += senders.len();
+    for (receiver_client_id, subscribe_filter, subscribe_qos) in senders {
+        let publish = NormalMessage::PublishV5 {
             retain: msg.retain,
             qos: msg.qos,
             topic_name: msg.topic_name.clone(),
@@ -386,28 +348,25 @@ pub(crate) async fn send_publish<'a>(
             subscribe_qos,
             properties: msg.properties.clone(),
         };
-        if let Err(err) = sender.send_async((session.client_id, publish)).await {
-            log::info!(
-                "send publish to connection {} failed: {}",
-                receiver_client_id,
-                err
-            );
-        }
+        session
+            .broadcast_packets
+            .entry(receiver_client_id)
+            .or_default()
+            .push_back(publish);
     }
     matched_len
 }
 
 // Got a publish message from retain message or subscribed topic, then send the publish message to client.
-pub(crate) async fn recv_publish<'a, T: AsyncWrite + Unpin>(
+pub(crate) fn recv_publish(
     session: &mut Session,
-    msg: RecvPublish<'a>,
-    conn: Option<&mut T>,
-) -> io::Result<()> {
+    msg: RecvPublish,
+) -> Option<(QoS, Option<Packet>)> {
     let subscription_id = if let Some(sub) = session.subscribes.get(msg.subscribe_filter) {
         sub.id
     } else {
         // the client already unsubscribed.
-        return Ok(());
+        return None;
     };
 
     // TODO: detect costly topic name and enable topic alias
@@ -422,7 +381,8 @@ pub(crate) async fn recv_publish<'a, T: AsyncWrite + Unpin>(
     if final_qos != QoS::Level0 {
         let pid = session.incr_server_packet_id();
         session.pending_packets.clean_complete();
-        if let Err(err) = session.pending_packets.push_back(
+        // TODO: proper handle this error
+        let _is_full = session.pending_packets.push_back(
             pid,
             PubPacket {
                 topic_name: msg.topic_name.clone(),
@@ -431,14 +391,9 @@ pub(crate) async fn recv_publish<'a, T: AsyncWrite + Unpin>(
                 payload: msg.payload.clone(),
                 properties,
             },
-        ) {
-            // TODO: proper handle this error
-            log::warn!("push pending packets error: {}", err);
-        }
-        if let Some(conn) = conn {
-            handle_pendings(session, conn).await?;
-        }
-    } else if let Some(conn) = conn {
+        );
+        Some((final_qos, None))
+    } else if !session.disconnected() {
         let rv_packet = Publish {
             dup: false,
             qos_pid: QosPid::Level0,
@@ -447,8 +402,8 @@ pub(crate) async fn recv_publish<'a, T: AsyncWrite + Unpin>(
             payload: msg.payload.clone(),
             properties,
         };
-        write_packet(session.client_id, conn, &rv_packet.into()).await?;
+        Some((final_qos, Some(rv_packet.into())))
+    } else {
+        None
     }
-
-    Ok(())
 }

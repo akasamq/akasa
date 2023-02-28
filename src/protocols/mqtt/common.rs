@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
 
-use crate::state::{ClientId, Executor, GlobalState, InternalMessage};
+use crate::state::{ClientId, ControlMessage, Executor, GlobalState};
 
 pub(crate) fn start_keep_alive_timer<E: Executor>(
     keep_alive: u16,
@@ -31,11 +31,11 @@ pub(crate) fn start_keep_alive_timer<E: Executor>(
                     }
                 }
                 // timeout, kick it out
-                if let Some(sender) = global.get_client_sender(&client_id) {
-                    let msg = InternalMessage::Kick {
+                if let Some(sender) = global.get_client_control_sender(&client_id) {
+                    let msg = ControlMessage::Kick {
                         reason: "timeout".to_owned(),
                     };
-                    if let Err(err) = sender.send_async((client_id, msg)).await {
+                    if let Err(err) = sender.send_async(msg).await {
                         log::warn!(
                             "send timeout kick message to {:?} error: {:?}",
                             client_id,

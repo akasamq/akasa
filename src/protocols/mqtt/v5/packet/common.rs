@@ -17,25 +17,19 @@ use crate::state::ClientId;
 
 use super::super::Session;
 
-// TODO: move RecvPublish/SendPublish/recv_publish/send_publish to publish.rs
 #[inline]
-pub(crate) async fn after_handle_packet<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    conn: &mut T,
-) -> io::Result<()> {
+pub(crate) fn after_handle_packet(session: &mut Session) -> Vec<Packet> {
     *session.last_packet_time.write() = Instant::now();
-    handle_pendings(session, conn).await?;
-    Ok(())
+    handle_pendings(session)
 }
 
 #[inline]
-pub(crate) async fn send_error_connack<'a, T: AsyncWrite + Unpin, R: Into<Cow<'a, str>>>(
-    conn: &'a mut T,
+pub(crate) fn build_error_connack<'a, R: Into<Cow<'a, str>>>(
     session: &'a mut Session,
     session_present: bool,
     reason_code: ConnectReasonCode,
     reason_string: R,
-) -> io::Result<()> {
+) -> Packet {
     let reason_string = if session.request_problem_info {
         Some(Arc::new(reason_string.into().into_owned()))
     } else {
@@ -51,10 +45,10 @@ pub(crate) async fn send_error_connack<'a, T: AsyncWrite + Unpin, R: Into<Cow<'a
     }
     .into();
     if session.request_problem_info {
-        let encode_len = rv_packet.encode_len().map_err(|_| {
-            log::warn!("connack packet size too large");
-            io::Error::from(io::ErrorKind::InvalidData)
-        })? as u32;
+        // NOTE: the reason string is given by server, so it's safe here.
+        let encode_len = rv_packet
+            .encode_len()
+            .expect("connack packet size too large") as u32;
         if encode_len > session.max_packet_size {
             rv_packet = Connack {
                 session_present,
@@ -64,18 +58,16 @@ pub(crate) async fn send_error_connack<'a, T: AsyncWrite + Unpin, R: Into<Cow<'a
             .into();
         }
     }
-    write_packet(session.client_id, conn, &rv_packet).await?;
     session.disconnected = true;
-    Ok(())
+    rv_packet
 }
 
 #[inline]
-pub(crate) async fn send_error_disconnect<'a, T: AsyncWrite + Unpin, R: Into<Cow<'a, str>>>(
-    conn: &'a mut T,
+pub(crate) fn build_error_disconnect<'a, R: Into<Cow<'a, str>>>(
     session: &'a mut Session,
     reason_code: DisconnectReasonCode,
     reason_string: R,
-) -> io::Result<()> {
+) -> Packet {
     let reason_string = if session.request_problem_info {
         Some(Arc::new(reason_string.into().into_owned()))
     } else {
@@ -90,11 +82,10 @@ pub(crate) async fn send_error_disconnect<'a, T: AsyncWrite + Unpin, R: Into<Cow
     }
     .into();
     if session.request_problem_info {
-        let encode_len = rv_packet.encode_len().map_err(|_| {
-            // not likely to happen
-            log::warn!("disconnect packet too large");
-            io::Error::from(io::ErrorKind::InvalidData)
-        })? as u32;
+        // NOTE: the reason string is given by server, so it's safe here.
+        let encode_len = rv_packet
+            .encode_len()
+            .expect("disconnect packet size too large") as u32;
         if encode_len > session.max_packet_size {
             rv_packet = Disconnect {
                 reason_code,
@@ -103,17 +94,14 @@ pub(crate) async fn send_error_disconnect<'a, T: AsyncWrite + Unpin, R: Into<Cow
             .into();
         }
     }
-    write_packet(session.client_id, conn, &rv_packet).await?;
     session.disconnected = true;
-    Ok(())
+    rv_packet
 }
 
 #[inline]
-pub(crate) async fn handle_pendings<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    conn: &mut T,
-) -> io::Result<()> {
+pub(crate) fn handle_pendings(session: &mut Session) -> Vec<Packet> {
     session.pending_packets.clean_complete();
+    let mut packets = Vec::new();
     let mut expired_packets = Vec::new();
     let mut start_idx = 0;
     while let Some((idx, packet_status)) = session.pending_packets.get_ready_packet(start_idx) {
@@ -152,7 +140,7 @@ pub(crate) async fn handle_pendings<T: AsyncWrite + Unpin>(
                     properties,
                 };
                 *dup = true;
-                write_packet(session.client_id, conn, &rv_packet.into()).await?;
+                packets.push(rv_packet.into());
             }
             PendingPacketStatus::Pubrec { pid, .. } => {
                 let rv_packet = Pubrel {
@@ -160,7 +148,7 @@ pub(crate) async fn handle_pendings<T: AsyncWrite + Unpin>(
                     reason_code: PubrelReasonCode::Success,
                     properties: PubrelProperties::default(),
                 };
-                write_packet(session.client_id, conn, &rv_packet.into()).await?;
+                packets.push(rv_packet.into());
             }
             PendingPacketStatus::Complete => unreachable!(),
         }
@@ -172,7 +160,7 @@ pub(crate) async fn handle_pendings<T: AsyncWrite + Unpin>(
     if !expired_packets.is_empty() {
         session.pending_packets.clean_complete();
     }
-    Ok(())
+    packets
 }
 
 #[inline]

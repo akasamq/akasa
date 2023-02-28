@@ -1,9 +1,10 @@
+use std::collections::VecDeque;
+use std::mem;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
 use bytes::Bytes;
-use flume::Receiver;
 use hashbrown::HashMap;
 use mqtt_proto::{
     v5::{LastWill, PublishProperties, SubscriptionOptions, UserProperty, VarByteInt},
@@ -12,10 +13,11 @@ use mqtt_proto::{
 use parking_lot::RwLock;
 
 use crate::config::Config;
-use crate::state::{ClientId, InternalMessage};
+use crate::state::{ClientId, ClientReceiver, NormalMessage};
 
 use super::super::PendingPackets;
 
+// FIXME: move OnlineLoop local data to Session
 pub struct Session {
     pub(super) peer: SocketAddr,
     pub(super) authorizing: bool,
@@ -47,10 +49,14 @@ pub struct Session {
     pub(super) keep_alive: u16,
     pub(super) clean_start: bool,
     pub(super) last_will: Option<LastWill>,
-    // Topic aliases are connection only data (not session state)
-    pub(super) topic_aliases: HashMap<u16, TopicName>,
     // The Subscription Identifiers are part of the Session State in the Server
     pub(super) subscribes: HashMap<TopicFilter, SubscriptionData>,
+    // Topic aliases are connection only data (not session state)
+    pub(super) topic_aliases: HashMap<u16, TopicName>,
+
+    pub(super) broadcast_packets_max: usize,
+    pub(super) broadcast_packets_cnt: usize,
+    pub(super) broadcast_packets: HashMap<ClientId, VecDeque<NormalMessage>>,
 
     // properties
     pub(super) session_expiry_interval: u32,
@@ -66,8 +72,11 @@ pub struct Session {
 
 pub struct SessionState {
     pub client_id: ClientId,
-    pub receiver: Receiver<(ClientId, InternalMessage)>,
+    pub receiver: ClientReceiver,
     pub protocol: Protocol,
+
+    pub broadcast_packets_cnt: usize,
+    pub broadcast_packets: HashMap<ClientId, VecDeque<NormalMessage>>,
 
     // For record packet id send from server to client
     pub server_packet_id: Pid,
@@ -107,6 +116,9 @@ impl Session {
             last_will: None,
             subscribes: HashMap::new(),
             topic_aliases: HashMap::new(),
+            broadcast_packets_max: 10,
+            broadcast_packets_cnt: 0,
+            broadcast_packets: HashMap::new(),
 
             session_expiry_interval: 0,
             receive_max: config.max_inflight_client,
@@ -116,6 +128,30 @@ impl Session {
             request_problem_info: true,
             user_properties: Vec::new(),
             auth_method: None,
+        }
+    }
+
+    pub fn build_state(&mut self, receiver: ClientReceiver) -> SessionState {
+        let mut broadcast_packets = HashMap::new();
+        let mut pending_packets = PendingPackets::new(0, 0, 0);
+        let mut qos2_pids = HashMap::new();
+        let mut subscribes = HashMap::new();
+        mem::swap(&mut self.broadcast_packets, &mut broadcast_packets);
+        mem::swap(&mut self.pending_packets, &mut pending_packets);
+        mem::swap(&mut self.qos2_pids, &mut qos2_pids);
+        mem::swap(&mut self.subscribes, &mut subscribes);
+        SessionState {
+            client_id: self.client_id,
+            receiver,
+            protocol: self.protocol,
+
+            broadcast_packets_cnt: self.broadcast_packets_cnt,
+            broadcast_packets,
+
+            server_packet_id: self.server_packet_id,
+            pending_packets,
+            qos2_pids,
+            subscribes,
         }
     }
 

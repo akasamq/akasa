@@ -13,7 +13,7 @@ use mqtt_proto::{
 };
 
 use crate::protocols::mqtt::RetainContent;
-use crate::state::{GlobalState, InternalMessage};
+use crate::state::{GlobalState, NormalMessage};
 
 use super::super::{PubPacket, Session};
 use super::common::{handle_pendings, write_packet};
@@ -219,7 +219,7 @@ pub(crate) async fn send_publish<'a>(
     for content in matches {
         let content = content.read();
         for (client_id, subscribe_qos) in &content.clients {
-            if let Some(sender) = global.get_client_sender(client_id) {
+            if let Some(sender) = global.get_client_normal_sender(client_id) {
                 let subscribe_filter = content.topic_filter.clone().unwrap();
                 senders.push((*client_id, subscribe_filter, *subscribe_qos, sender));
             }
@@ -227,7 +227,7 @@ pub(crate) async fn send_publish<'a>(
     }
 
     for (receiver_client_id, subscribe_filter, subscribe_qos, sender) in senders {
-        let publish = InternalMessage::PublishV3 {
+        let publish = NormalMessage::PublishV3 {
             retain: msg.retain,
             qos: msg.qos,
             topic_name: msg.topic_name.clone(),
@@ -260,7 +260,7 @@ pub(crate) async fn recv_publish<'a, T: AsyncWrite + Unpin>(
     if final_qos != QoS::Level0 {
         let pid = session.incr_server_packet_id();
         session.pending_packets.clean_complete();
-        if let Err(err) = session.pending_packets.push_back(
+        if session.pending_packets.push_back(
             pid,
             PubPacket {
                 topic_name: msg.topic_name.clone(),
@@ -269,8 +269,7 @@ pub(crate) async fn recv_publish<'a, T: AsyncWrite + Unpin>(
                 payload: msg.payload.clone(),
             },
         ) {
-            // TODO: proper handle this error
-            log::warn!("push pending packets error: {}", err);
+            // TODO: pending messages queue is full
         }
         if let Some(conn) = conn {
             handle_pendings(session, conn).await?;

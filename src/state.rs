@@ -27,7 +27,7 @@ pub struct GlobalState {
     // MQTT client identifier => client internal id
     client_identifier_map: DashMap<String, ClientId>,
     // All clients (online/offline clients)
-    clients: DashMap<ClientId, Sender<(ClientId, InternalMessage)>>,
+    clients: DashMap<ClientId, ClientSender>,
 
     pub bind: SocketAddr,
     pub config: Config,
@@ -37,6 +37,18 @@ pub struct GlobalState {
 
     /// MQTT retain table
     pub retain_table: RetainTable,
+}
+
+#[derive(Clone)]
+pub struct ClientSender {
+    pub normal: Sender<(ClientId, NormalMessage)>,
+    pub control: Sender<ControlMessage>,
+}
+
+#[derive(Clone)]
+pub struct ClientReceiver {
+    pub normal: Receiver<(ClientId, NormalMessage)>,
+    pub control: Receiver<ControlMessage>,
 }
 
 impl GlobalState {
@@ -95,11 +107,21 @@ impl GlobalState {
         }
     }
 
-    pub fn get_client_sender(
+    pub fn get_client_normal_sender(
         &self,
         client_id: &ClientId,
-    ) -> Option<Sender<(ClientId, InternalMessage)>> {
-        self.clients.get(client_id).map(|pair| pair.value().clone())
+    ) -> Option<Sender<(ClientId, NormalMessage)>> {
+        self.clients
+            .get(client_id)
+            .map(|pair| pair.value().normal.clone())
+    }
+    pub fn get_client_control_sender(
+        &self,
+        client_id: &ClientId,
+    ) -> Option<Sender<ControlMessage>> {
+        self.clients
+            .get(client_id)
+            .map(|pair| pair.value().control.clone())
     }
 
     // Client connected
@@ -111,7 +133,7 @@ impl GlobalState {
     ) -> AddClientReceipt {
         let mut round = 0;
         loop {
-            let (old_id, internal_sender) = {
+            let control_sender = {
                 let mut next_client_id = self.next_client_id.lock();
                 self.online_clients.fetch_add(1, Ordering::AcqRel);
                 let client_id_opt: Option<ClientId> = self
@@ -122,8 +144,7 @@ impl GlobalState {
                     if let Some(mut pair) = self.client_id_map.get_mut(&old_id) {
                         pair.value_mut().1 = true;
                     }
-                    let internal_sender = self.clients.get(&old_id).unwrap().value().clone();
-                    (old_id, internal_sender)
+                    self.get_client_control_sender(&old_id).unwrap()
                 } else {
                     let client_id = *next_client_id;
                     self.client_id_map
@@ -132,26 +153,34 @@ impl GlobalState {
                         .insert(client_identifier.to_string(), client_id);
                     // FIXME: if some one subscribe topic "#" and never receive the message it will block all sender clients.
                     //   Suggestion: Add QoS0 message to pending queue
-                    let (sender, receiver) = bounded(8);
+                    let (control_sender, control_receiver) = bounded(1);
+                    let (normal_sender, normal_receiver) = bounded(8);
+                    let sender = ClientSender {
+                        normal: normal_sender,
+                        control: control_sender,
+                    };
                     self.clients.insert(client_id, sender);
                     next_client_id.0 += 1;
                     return AddClientReceipt::New {
                         client_id,
-                        receiver,
+                        receiver: ClientReceiver {
+                            control: control_receiver,
+                            normal: normal_receiver,
+                        },
                     };
                 }
             };
 
             // NOTE: only one retry is allowed
-            debug_assert!(round == 0, "add client round: {}", round);
+            debug_assert!(round == 0, "add client round: {round}");
             if round > 0 {
                 log::error!("add client round: {}, which is more than 0", round);
             }
 
             if protocol < Protocol::V500 {
                 let (sender, receiver) = bounded(1);
-                if internal_sender
-                    .send_async((old_id, InternalMessage::OnlineV3 { sender }))
+                if control_sender
+                    .send_async(ControlMessage::OnlineV3 { sender })
                     .await
                     .is_err()
                 {
@@ -163,8 +192,8 @@ impl GlobalState {
                 return AddClientReceipt::PresentV3(session_state);
             } else {
                 let (sender, receiver) = bounded(1);
-                if internal_sender
-                    .send_async((old_id, InternalMessage::OnlineV5 { sender }))
+                if control_sender
+                    .send_async(ControlMessage::OnlineV5 { sender })
                     .await
                     .is_err()
                 {
@@ -255,7 +284,7 @@ impl<T: Executor> Executor for Arc<T> {
 }
 
 #[derive(Clone)]
-pub enum InternalMessage {
+pub enum ControlMessage {
     /// The v3.x client of the session connected, send the keept session to the connection loop
     OnlineV3 {
         sender: Sender<mqtt::v3::SessionState>,
@@ -264,6 +293,20 @@ pub enum InternalMessage {
     OnlineV5 {
         sender: Sender<mqtt::v5::SessionState>,
     },
+    /// Kick client out (disconnect the client)
+    Kick {
+        reason: String,
+    },
+    SessionExpired {
+        connected_time: Instant,
+    },
+    WillDelayReached {
+        connected_time: Instant,
+    },
+}
+
+#[derive(Clone)]
+pub enum NormalMessage {
     /// A publish message matched
     PublishV3 {
         retain: bool,
@@ -282,16 +325,6 @@ pub enum InternalMessage {
         // [MQTTv5.0-3.8.4] keyword: downgraded
         subscribe_qos: QoS,
         properties: PublishProperties,
-    },
-    /// Kick client out (disconnect the client)
-    Kick {
-        reason: String,
-    },
-    WillDelayReached {
-        connected_time: Instant,
-    },
-    SessionExpired {
-        connected_time: Instant,
     },
 }
 
@@ -320,6 +353,6 @@ pub enum AddClientReceipt {
     PresentV5(mqtt::v5::SessionState),
     New {
         client_id: ClientId,
-        receiver: Receiver<(ClientId, InternalMessage)>,
+        receiver: ClientReceiver,
     },
 }

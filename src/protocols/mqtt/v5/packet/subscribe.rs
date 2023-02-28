@@ -1,11 +1,9 @@
 use std::cmp;
-use std::io;
 use std::sync::Arc;
 
-use futures_lite::io::AsyncWrite;
 use mqtt_proto::{
     v5::{
-        DisconnectReasonCode, RetainHandling, Suback, SubackProperties, Subscribe,
+        DisconnectReasonCode, Packet, RetainHandling, Suback, SubackProperties, Subscribe,
         SubscribeReasonCode, Unsuback, UnsubackProperties, Unsubscribe, UnsubscribeReasonCode,
     },
     QoS, MATCH_ALL_CHAR, MATCH_ONE_CHAR,
@@ -15,17 +13,16 @@ use crate::state::GlobalState;
 
 use super::super::{Session, SubscriptionData};
 use super::{
-    common::{send_error_disconnect, write_packet},
+    common::{build_error_disconnect, handle_pendings},
     publish::{recv_publish, RecvPublish},
 };
 
 #[inline]
-pub(crate) async fn handle_subscribe<T: AsyncWrite + Unpin>(
+pub(crate) fn handle_subscribe(
     session: &mut Session,
     packet: Subscribe,
-    conn: &mut T,
     global: &Arc<GlobalState>,
-) -> io::Result<()> {
+) -> Result<Vec<Packet>, Packet> {
     log::debug!(
         r#"{} received a subscribe packet:
 packet id : {}
@@ -37,15 +34,15 @@ packet id : {}
 
     let properties = packet.properties;
     if properties.subscription_id.map(|id| id.value()) == Some(0) {
-        send_error_disconnect(
-            conn,
+        let err_pkt = build_error_disconnect(
             session,
             DisconnectReasonCode::ProtocolError,
             "Subscription identifier value=0 is not allowed",
-        )
-        .await?;
-        return Ok(());
+        );
+        return Err(err_pkt);
     }
+
+    let mut rv_packets = Vec::new();
 
     let reason_codes = if !global.config.subscription_id_available
         && properties.subscription_id.is_some()
@@ -86,11 +83,12 @@ packet id : {}
                         RetainHandling::DoNotSend => false,
                     };
                 if send_retain {
+                    let mut process_pendings = false;
                     for msg in global.retain_table.get_matches(&filter) {
                         if sub_opts.no_local && msg.client_identifier == session.client_identifier {
                             continue;
                         }
-                        recv_publish(
+                        if let Some((final_qos, packet_opt)) = recv_publish(
                             session,
                             RecvPublish {
                                 topic_name: &msg.topic_name,
@@ -101,9 +99,17 @@ packet id : {}
                                 subscribe_qos: granted_qos,
                                 properties: msg.properties.as_ref(),
                             },
-                            Some(conn),
-                        )
-                        .await?;
+                        ) {
+                            if let Some(packet) = packet_opt {
+                                rv_packets.push(packet);
+                            }
+                            if final_qos != QoS::Level0 {
+                                process_pendings = true;
+                            }
+                        }
+                    }
+                    if process_pendings {
+                        rv_packets.extend(handle_pendings(session));
                     }
                 }
             }
@@ -121,17 +127,16 @@ packet id : {}
         topics: reason_codes,
         properties: SubackProperties::default(),
     };
-    write_packet(session.client_id, conn, &rv_packet.into()).await?;
-    Ok(())
+    rv_packets.push(rv_packet.into());
+    Ok(rv_packets)
 }
 
 #[inline]
-pub(crate) async fn handle_unsubscribe<T: AsyncWrite + Unpin>(
+pub(crate) fn handle_unsubscribe(
     session: &mut Session,
     packet: Unsubscribe,
-    conn: &mut T,
     global: &Arc<GlobalState>,
-) -> io::Result<()> {
+) -> Packet {
     log::debug!(
         r#"{} received a unsubscribe packet:
 packet id : {}
@@ -150,11 +155,10 @@ packet id : {}
         };
         reason_codes.push(reason_code);
     }
-    let rv_packet = Unsuback {
+    Unsuback {
         pid: packet.pid,
         properties: UnsubackProperties::default(),
         topics: reason_codes,
-    };
-    write_packet(session.client_id, conn, &rv_packet.into()).await?;
-    Ok(())
+    }
+    .into()
 }

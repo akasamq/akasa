@@ -174,7 +174,7 @@ impl Config {
             0 => QoS::Level0,
             1 => QoS::Level1,
             2 => QoS::Level2,
-            value => panic!("invalid Config.max_allowed_qos: {}", value),
+            value => panic!("invalid Config.max_allowed_qos: {value}"),
         }
     }
 }

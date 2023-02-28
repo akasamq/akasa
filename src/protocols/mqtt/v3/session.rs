@@ -3,13 +3,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bytes::Bytes;
-use flume::Receiver;
 use hashbrown::HashMap;
 use mqtt_proto::{v3::LastWill, Pid, Protocol, QoS, TopicFilter, TopicName};
 use parking_lot::RwLock;
 
 use crate::config::Config;
-use crate::state::{ClientId, InternalMessage};
+use crate::state::{ClientId, ClientReceiver};
 
 use super::super::PendingPackets;
 
@@ -37,7 +36,7 @@ pub struct Session {
 pub struct SessionState {
     pub client_id: ClientId,
     pub protocol: Protocol,
-    pub receiver: Receiver<(ClientId, InternalMessage)>,
+    pub receiver: ClientReceiver,
 
     // For record packet id send from server to client
     pub server_packet_id: Pid,

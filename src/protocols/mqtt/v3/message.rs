@@ -14,7 +14,9 @@ use mqtt_proto::{
     Error, Protocol,
 };
 
-use crate::state::{ClientId, Executor, GlobalState, InternalMessage};
+use crate::state::{
+    ClientId, ClientReceiver, ControlMessage, Executor, GlobalState, NormalMessage,
+};
 
 use super::super::PendingPackets;
 use super::{
@@ -93,7 +95,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     timeout_receiver: Receiver<()>,
     executor: &E,
     global: &Arc<GlobalState>,
-) -> io::Result<Option<(Session, Receiver<(ClientId, InternalMessage)>)>> {
+) -> io::Result<Option<(Session, ClientReceiver)>> {
     let mut session = Session::new(&global.config, peer);
     let mut receiver = None;
     let mut io_error = None;
@@ -146,17 +148,15 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
                     io_error = Some(err);
                     break;
                 }
-            }
-            result = receiver.recv_async() => match result {
-                Ok((sender, msg)) => {
-                    let is_kick = matches!(msg, InternalMessage::Kick { .. });
-                    match handle_internal(
+            },
+            result = receiver.control.recv_async() => match result {
+                Ok(msg) => {
+                    let is_kick = matches!(msg, ControlMessage::Kick { .. });
+                    match handle_control(
                         &mut session,
                         &receiver,
-                        sender,
                         msg,
                         Some(&mut conn),
-                        global,
                     )
                         .await
                     {
@@ -182,7 +182,20 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
                     io_error = Some(io::ErrorKind::BrokenPipe.into());
                     break;
                 }
-            }
+            },
+            result = receiver.normal.recv_async() => match result {
+                Ok((sender, msg)) => {
+                    if let Err(err) = handle_normal(&mut session, sender, msg, Some(&mut conn)).await {
+                        // An error in online mode should also check clean_session value
+                        io_error = Some(err);
+                        break;
+                    }
+                }
+                Err(_) => {
+                    io_error = Some(io::ErrorKind::BrokenPipe.into());
+                    break;
+                }
+            },
         };
     }
 
@@ -204,26 +217,19 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     Ok(None)
 }
 
-async fn handle_offline(
-    mut session: Session,
-    receiver: Receiver<(ClientId, InternalMessage)>,
-    global: Arc<GlobalState>,
-) {
+async fn handle_offline(mut session: Session, receiver: ClientReceiver, _global: Arc<GlobalState>) {
     let mut conn: Option<Vec<u8>> = None;
     loop {
-        let (sender, msg) = match receiver.recv_async().await {
+        // FIXME: handle control messages
+        let (sender, msg) = match receiver.normal.recv_async().await {
             Ok((sender, msg)) => (sender, msg),
             Err(err) => {
                 log::warn!("offline client receive internal message error: {:?}", err);
                 break;
             }
         };
-        match handle_internal(&mut session, &receiver, sender, msg, conn.as_mut(), &global).await {
-            Ok(true) => {
-                // Been occupied by newly connected client
-                break;
-            }
-            Ok(false) => {}
+        match handle_normal(&mut session, sender, msg, conn.as_mut()).await {
+            Ok(()) => {}
             Err(err) => {
                 // An error in offline mode should immediately return it
                 log::error!("offline client error: {:?}", err);
@@ -295,20 +301,18 @@ async fn handle_will<T: AsyncWrite + Unpin>(
 
 /// return if the offline client loop should stop
 #[inline]
-async fn handle_internal<T: AsyncWrite + Unpin>(
+async fn handle_control<T: AsyncWrite + Unpin>(
     session: &mut Session,
-    receiver: &Receiver<(ClientId, InternalMessage)>,
-    sender: ClientId,
-    msg: InternalMessage,
+    receiver: &ClientReceiver,
+    msg: ControlMessage,
     conn: Option<&mut T>,
-    _global: &Arc<GlobalState>,
 ) -> io::Result<bool> {
     // FIXME: call receiver.try_recv() to clear the channel, if the pending
     // queue is full, set a marker to the global state so that the sender stop
     // sending qos0 messages to this client.
     let mut stop = false;
     match msg {
-        InternalMessage::OnlineV3 { sender } => {
+        ControlMessage::OnlineV3 { sender } => {
             let mut pending_packets = PendingPackets::new(0, 0, 0);
             let mut qos2_pids = HashMap::new();
             let mut subscribes = HashMap::new();
@@ -330,10 +334,36 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
                 log::info!("the connection want take over current session already ended");
             }
         }
-        InternalMessage::OnlineV5 { .. } => {
+        ControlMessage::OnlineV5 { .. } => {
             log::info!("take over v3.x by v5.x client is not allowed");
         }
-        InternalMessage::PublishV3 {
+        ControlMessage::Kick { reason } => {
+            log::info!(
+                "kick {}, reason: {}, offline: {}, network: {}",
+                session.client_id,
+                reason,
+                session.disconnected,
+                conn.is_some(),
+            );
+            stop = conn.is_some();
+        }
+        ControlMessage::WillDelayReached { .. } | ControlMessage::SessionExpired { .. } => {
+            unreachable!();
+        }
+    }
+    Ok(stop)
+}
+
+/// return if the offline client loop should stop
+#[inline]
+async fn handle_normal<T: AsyncWrite + Unpin>(
+    session: &mut Session,
+    sender: ClientId,
+    msg: NormalMessage,
+    conn: Option<&mut T>,
+) -> io::Result<()> {
+    match msg {
+        NormalMessage::PublishV3 {
             ref topic_name,
             qos,
             retain,
@@ -360,7 +390,7 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
             )
             .await?;
         }
-        InternalMessage::PublishV5 {
+        NormalMessage::PublishV5 {
             ref topic_name,
             qos,
             retain,
@@ -388,19 +418,6 @@ async fn handle_internal<T: AsyncWrite + Unpin>(
             )
             .await?;
         }
-        InternalMessage::Kick { reason } => {
-            log::info!(
-                "kick {}, reason: {}, offline: {}, network: {}",
-                session.client_id,
-                reason,
-                session.disconnected,
-                conn.is_some(),
-            );
-            stop = conn.is_some();
-        }
-        InternalMessage::WillDelayReached { .. } | InternalMessage::SessionExpired { .. } => {
-            unreachable!();
-        }
     }
-    Ok(stop)
+    Ok(())
 }
