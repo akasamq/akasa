@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-use std::mem;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -11,13 +9,12 @@ use mqtt_proto::{
     Pid, Protocol, QoS, TopicFilter, TopicName,
 };
 
-use flume::r#async::SendSink;
 use parking_lot::RwLock;
 
 use crate::config::Config;
-use crate::state::{ClientId, ClientReceiver, NormalMessage};
+use crate::state::{ClientId, ClientReceiver};
 
-use super::super::PendingPackets;
+use super::super::{BroadcastPackets, PendingPackets};
 
 // FIXME: move OnlineLoop local data to Session
 pub struct Session {
@@ -133,42 +130,6 @@ impl Session {
         }
     }
 
-    pub fn build_state(&mut self, receiver: ClientReceiver) -> SessionState {
-        let mut broadcast_packets = HashMap::new();
-        let mut pending_packets = PendingPackets::new(0, 0, 0);
-        let mut qos2_pids = HashMap::new();
-        let mut subscribes = HashMap::new();
-        mem::swap(&mut self.broadcast_packets, &mut broadcast_packets);
-        mem::swap(&mut self.pending_packets, &mut pending_packets);
-        mem::swap(&mut self.qos2_pids, &mut qos2_pids);
-        mem::swap(&mut self.subscribes, &mut subscribes);
-        SessionState {
-            client_id: self.client_id,
-            receiver,
-            protocol: self.protocol,
-
-            broadcast_packets_cnt: self.broadcast_packets_cnt,
-            broadcast_packets,
-
-            server_packet_id: self.server_packet_id,
-            pending_packets,
-            qos2_pids,
-            subscribes,
-        }
-    }
-
-    pub fn peer(&self) -> &SocketAddr {
-        &self.peer
-    }
-    pub fn connected(&self) -> bool {
-        self.connected
-    }
-    pub fn disconnected(&self) -> bool {
-        self.disconnected
-    }
-    pub fn client_id(&self) -> ClientId {
-        self.client_id
-    }
     pub fn subscribes(&self) -> &HashMap<TopicFilter, SubscriptionData> {
         &self.subscribes
     }
@@ -208,10 +169,4 @@ pub struct PubPacket {
     pub retain: bool,
     pub payload: Bytes,
     pub properties: PublishProperties,
-}
-
-pub struct BroadcastPackets {
-    pub sink: SendSink<'static, (ClientId, NormalMessage)>,
-    pub msgs: VecDeque<NormalMessage>,
-    pub flushed: bool,
 }

@@ -16,10 +16,10 @@ use mqtt_proto::{
 use rand::{thread_rng, Rng};
 
 use crate::config::SharedSubscriptionMode;
-use crate::protocols::mqtt::retain::RetainContent;
+use crate::protocols::mqtt::{BroadcastPackets, RetainContent};
 use crate::state::{GlobalState, NormalMessage};
 
-use super::super::{BroadcastPackets, PubPacket, Session};
+use super::super::{PubPacket, Session};
 use super::common::build_error_disconnect;
 
 #[inline]
@@ -403,7 +403,7 @@ pub(crate) fn recv_publish(
             },
         );
         Some((final_qos, None))
-    } else if !session.disconnected() {
+    } else if !session.disconnected {
         let rv_packet = Publish {
             dup: false,
             qos_pid: QosPid::Level0,

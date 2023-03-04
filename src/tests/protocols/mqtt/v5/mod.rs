@@ -102,7 +102,7 @@ impl ClientV5 for MockConnControl {
         Packet::decode(&data).unwrap().unwrap()
     }
     async fn write_packet(&self, packet: Packet) {
-        self.write_data(packet.encode().unwrap().as_slice().to_vec())
+        self.write_data(packet.encode().unwrap().as_ref().to_vec())
             .await;
     }
 
