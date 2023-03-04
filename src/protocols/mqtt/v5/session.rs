@@ -10,6 +10,8 @@ use mqtt_proto::{
     v5::{LastWill, PublishProperties, SubscriptionOptions, UserProperty, VarByteInt},
     Pid, Protocol, QoS, TopicFilter, TopicName,
 };
+
+use flume::r#async::SendSink;
 use parking_lot::RwLock;
 
 use crate::config::Config;
@@ -56,7 +58,7 @@ pub struct Session {
 
     pub(super) broadcast_packets_max: usize,
     pub(super) broadcast_packets_cnt: usize,
-    pub(super) broadcast_packets: HashMap<ClientId, VecDeque<NormalMessage>>,
+    pub(super) broadcast_packets: HashMap<ClientId, BroadcastPackets>,
 
     // properties
     pub(super) session_expiry_interval: u32,
@@ -76,7 +78,7 @@ pub struct SessionState {
     pub protocol: Protocol,
 
     pub broadcast_packets_cnt: usize,
-    pub broadcast_packets: HashMap<ClientId, VecDeque<NormalMessage>>,
+    pub broadcast_packets: HashMap<ClientId, BroadcastPackets>,
 
     // For record packet id send from server to client
     pub server_packet_id: Pid,
@@ -206,4 +208,10 @@ pub struct PubPacket {
     pub retain: bool,
     pub payload: Bytes,
     pub properties: PublishProperties,
+}
+
+pub struct BroadcastPackets {
+    pub sink: SendSink<'static, (ClientId, NormalMessage)>,
+    pub msgs: VecDeque<NormalMessage>,
+    pub flushed: bool,
 }

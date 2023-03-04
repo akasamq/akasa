@@ -123,7 +123,7 @@ async fn test_pending_max_inflight_qos1() {
     let task1 = tokio::spawn(async move {
         client1.connect("client id 1", true, false).await;
         rx.await.unwrap();
-        for pub_pid in 1..15u16 {
+        for pub_pid in 1..17u16 {
             client1
                 .publish(QoS::Level1, pub_pid, "xyz/1", vec![3, 5, 55], |_| ())
                 .await;
@@ -132,6 +132,7 @@ async fn test_pending_max_inflight_qos1() {
 
     // client 2: subscriber
     client2.connect("client id 2", false, false).await;
+
     let sub_topics = vec![("xyz/1", SubscriptionOptions::new(QoS::Level1))];
     client2.subscribe(2, sub_topics).await;
 
@@ -153,10 +154,9 @@ async fn test_pending_max_inflight_qos1() {
 
     for pub_pid in 1..9u16 {
         client2.send_puback(pub_pid).await;
-    }
-    for pub_pid in 9..15u16 {
+        // If connection not receive packets, server forbid send more packets
         client2
-            .recv_publish(QoS::Level1, pub_pid, "xyz/1", vec![3, 5, 55], |_| ())
+            .recv_publish(QoS::Level1, pub_pid + 8, "xyz/1", vec![3, 5, 55], |_| ())
             .await;
     }
 

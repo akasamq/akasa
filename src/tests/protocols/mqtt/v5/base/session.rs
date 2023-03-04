@@ -82,10 +82,10 @@ async fn test_session_take_over() {
             .subscribe(11, vec![("abc/1", SubscriptionOptions::new(QoS::Level1))])
             .await;
         client
-            .publish(QoS::Level1, 12, "abc/1", vec![3, 5, 55], |_| ())
+            .publish(QoS::Level1, 12, "abc/1", "first", |_| ())
             .await;
         client
-            .recv_publish(QoS::Level1, 1, "abc/1", vec![3, 5, 55], |_| ())
+            .recv_publish(QoS::Level1, 1, "abc/1", "first", |_| ())
             .await;
         client.send_puback(1).await;
     }
@@ -97,10 +97,10 @@ async fn test_session_take_over() {
     {
         client2.connect(client_id, false, true).await;
         client2
-            .publish(QoS::Level1, 12, "abc/1", vec![3, 5, 55], |_| ())
+            .publish(QoS::Level1, 13, "abc/1", "second", |_| ())
             .await;
         client2
-            .recv_publish(QoS::Level1, 2, "abc/1", vec![3, 5, 55], |_| ())
+            .recv_publish(QoS::Level1, 2, "abc/1", "second", |_| ())
             .await;
         client2.send_puback(2).await;
     }

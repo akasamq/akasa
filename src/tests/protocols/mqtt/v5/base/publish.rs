@@ -123,7 +123,7 @@ async fn test_publish_qos1() {
 
             if topic != "xxx/bbb" {
                 for pub_pid in 1..15u16 {
-                    let data = vec![3, 5, 55, pub_pid as u8];
+                    let data = vec![b'0' + pub_pid as u8];
                     client
                         .recv_publish(QoS::Level1, pub_pid, "xyz/1", data, |_| ())
                         .await;
@@ -142,7 +142,7 @@ async fn test_publish_qos1() {
     }
 
     for pub_pid in 1..15u16 {
-        let data = vec![3, 5, 55, pub_pid as u8];
+        let data = vec![b'0' + pub_pid as u8];
         client0
             .send_publish(QoS::Level1, pub_pid, "xyz/1", data, |_| ())
             .await;

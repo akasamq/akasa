@@ -220,20 +220,40 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 async fn handle_offline(mut session: Session, receiver: ClientReceiver, _global: Arc<GlobalState>) {
     let mut conn: Option<Vec<u8>> = None;
     loop {
-        // FIXME: handle control messages
-        let (sender, msg) = match receiver.normal.recv_async().await {
-            Ok((sender, msg)) => (sender, msg),
-            Err(err) => {
-                log::warn!("offline client receive internal message error: {:?}", err);
-                break;
-            }
-        };
-        match handle_normal(&mut session, sender, msg, conn.as_mut()).await {
-            Ok(()) => {}
-            Err(err) => {
-                // An error in offline mode should immediately return it
-                log::error!("offline client error: {:?}", err);
-                break;
+        tokio::select! {
+            result = receiver.control.recv_async() => match result {
+                Ok(msg) => match handle_control(&mut session, &receiver, msg, conn.as_mut()).await {
+                    Ok(true) => {
+                        // Been occupied by newly connected client
+                        break;
+                    }
+                    Ok(false) => {}
+                    Err(err) => {
+                        // An error in offline mode should immediately return it
+                        log::error!("offline client error: {:?}", err);
+                        break;
+                    }
+                }
+                Err(err) => {
+                    log::warn!("offline client receive control message error: {:?}", err);
+                    break;
+                }
+            },
+            result = receiver.normal.recv_async() => match result {
+                Ok((sender, msg)) => {
+                    match handle_normal(&mut session, sender, msg, conn.as_mut()).await {
+                        Ok(()) => {}
+                        Err(err) => {
+                            // An error in offline mode should immediately return it
+                            log::error!("offline client error: {:?}", err);
+                            break;
+                        }
+                    }
+                }
+                Err(err) => {
+                    log::warn!("offline client receive normal message error: {:?}", err);
+                    break;
+                }
             }
         }
     }
@@ -339,7 +359,7 @@ async fn handle_control<T: AsyncWrite + Unpin>(
         }
         ControlMessage::Kick { reason } => {
             log::info!(
-                "kick {}, reason: {}, offline: {}, network: {}",
+                "kick \"{}\", reason: {}, offline: {}, network: {}",
                 session.client_id,
                 reason,
                 session.disconnected,

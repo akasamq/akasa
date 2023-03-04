@@ -283,7 +283,7 @@ impl<T: Executor> Executor for Arc<T> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ControlMessage {
     /// The v3.x client of the session connected, send the keept session to the connection loop
     OnlineV3 {
@@ -305,7 +305,7 @@ pub enum ControlMessage {
     },
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum NormalMessage {
     /// A publish message matched
     PublishV3 {

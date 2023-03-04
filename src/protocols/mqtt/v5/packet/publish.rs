@@ -19,7 +19,7 @@ use crate::config::SharedSubscriptionMode;
 use crate::protocols::mqtt::retain::RetainContent;
 use crate::state::{GlobalState, NormalMessage};
 
-use super::super::{PubPacket, Session};
+use super::super::{BroadcastPackets, PubPacket, Session};
 use super::common::build_error_disconnect;
 
 #[inline]
@@ -348,11 +348,21 @@ pub(crate) fn send_publish(
             subscribe_qos,
             properties: msg.properties.clone(),
         };
-        session
-            .broadcast_packets
-            .entry(receiver_client_id)
-            .or_default()
-            .push_back(publish);
+        if !session.broadcast_packets.contains_key(&receiver_client_id) {
+            if let Some(sender) = global.get_client_normal_sender(&receiver_client_id) {
+                session.broadcast_packets.insert(
+                    receiver_client_id,
+                    BroadcastPackets {
+                        sink: sender.into_sink(),
+                        msgs: Default::default(),
+                        flushed: true,
+                    },
+                );
+            }
+        }
+        if let Some(info) = session.broadcast_packets.get_mut(&receiver_client_id) {
+            info.msgs.push_back(publish);
+        }
     }
     matched_len
 }

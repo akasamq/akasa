@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -170,9 +169,6 @@ async fn test_publish_qos1() {
 
 #[tokio::test]
 async fn test_publish_qos2() {
-    env_logger::builder()
-        .format(|buf, record| writeln!(buf, "{}\t: {}", record.level(), record.args()))
-        .init();
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
         Config::new_allow_anonymous(),
