@@ -13,20 +13,15 @@ use crate::state::ClientId;
 use super::super::Session;
 
 #[inline]
-pub(crate) async fn after_handle_packet<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    conn: &mut T,
-) -> io::Result<()> {
+pub(crate) fn after_handle_packet(session: &mut Session) -> Vec<Packet> {
     *session.last_packet_time.write() = Instant::now();
-    handle_pendings(session, conn).await?;
-    Ok(())
+    handle_pendings(session)
 }
+
 #[inline]
-pub(super) async fn handle_pendings<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    conn: &mut T,
-) -> io::Result<()> {
+pub(crate) fn handle_pendings(session: &mut Session) -> Vec<Packet> {
     session.pending_packets.clean_complete();
+    let mut packets = Vec::new();
     let mut start_idx = 0;
     while let Some((idx, packet_status)) = session.pending_packets.get_ready_packet(start_idx) {
         start_idx = idx + 1;
@@ -47,19 +42,19 @@ pub(super) async fn handle_pendings<T: AsyncWrite + Unpin>(
                     payload: packet.payload.clone(),
                 };
                 *dup = true;
-                write_packet(session.client_id, conn, &rv_packet.into()).await?;
+                packets.push(rv_packet.into());
             }
             PendingPacketStatus::Pubrec { pid, .. } => {
-                write_packet(session.client_id, conn, &Packet::Pubrel(*pid)).await?;
+                packets.push(Packet::Pubrel(*pid));
             }
             PendingPacketStatus::Complete => unreachable!(),
         }
     }
-    Ok(())
+    packets
 }
 
 #[inline]
-pub(super) async fn write_packet<T: AsyncWrite + Unpin>(
+pub(crate) async fn write_packet<T: AsyncWrite + Unpin>(
     client_id: ClientId,
     conn: &mut T,
     packet: &Packet,

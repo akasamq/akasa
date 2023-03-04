@@ -10,7 +10,7 @@ use parking_lot::RwLock;
 use crate::config::Config;
 use crate::state::{ClientId, ClientReceiver};
 
-use super::super::PendingPackets;
+use super::super::{BroadcastPackets, PendingPackets};
 
 pub struct Session {
     pub(super) peer: SocketAddr,
@@ -31,6 +31,10 @@ pub struct Session {
     pub(super) clean_session: bool,
     pub(super) last_will: Option<LastWill>,
     pub(super) subscribes: HashMap<TopicFilter, QoS>,
+
+    pub(super) broadcast_packets_max: usize,
+    pub(super) broadcast_packets_cnt: usize,
+    pub(super) broadcast_packets: HashMap<ClientId, BroadcastPackets>,
 }
 
 pub struct SessionState {
@@ -43,6 +47,8 @@ pub struct SessionState {
     pub pending_packets: PendingPackets<PubPacket>,
     pub qos2_pids: HashMap<Pid, u64>,
     pub subscribes: HashMap<TopicFilter, QoS>,
+    pub broadcast_packets_cnt: usize,
+    pub broadcast_packets: HashMap<ClientId, BroadcastPackets>,
 }
 
 impl Session {
@@ -68,24 +74,12 @@ impl Session {
             clean_session: true,
             last_will: None,
             subscribes: HashMap::new(),
+            broadcast_packets_max: 10,
+            broadcast_packets_cnt: 0,
+            broadcast_packets: HashMap::new(),
         }
     }
 
-    pub fn peer(&self) -> &SocketAddr {
-        &self.peer
-    }
-    pub fn clean_session(&self) -> bool {
-        self.clean_session
-    }
-    pub fn connected(&self) -> bool {
-        self.connected
-    }
-    pub fn disconnected(&self) -> bool {
-        self.disconnected
-    }
-    pub fn client_id(&self) -> ClientId {
-        self.client_id
-    }
     pub fn subscribes(&self) -> &HashMap<TopicFilter, QoS> {
         &self.subscribes
     }

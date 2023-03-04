@@ -2,24 +2,25 @@ use std::cmp;
 use std::io;
 use std::sync::Arc;
 
-use futures_lite::io::AsyncWrite;
-use mqtt_proto::v3::{Packet, Suback, Subscribe, Unsubscribe};
+use mqtt_proto::{
+    v3::{Packet, Suback, Subscribe, Unsubscribe},
+    QoS,
+};
 
 use crate::state::GlobalState;
 
 use super::super::Session;
 use super::{
-    common::write_packet,
+    common::handle_pendings,
     publish::{recv_publish, RecvPublish},
 };
 
 #[inline]
-pub(crate) async fn handle_subscribe<T: AsyncWrite + Unpin>(
+pub(crate) fn handle_subscribe(
     session: &mut Session,
     packet: Subscribe,
-    conn: &mut T,
     global: &Arc<GlobalState>,
-) -> io::Result<()> {
+) -> io::Result<Vec<Packet>> {
     log::debug!(
         r#"{} received a subscribe packet:
 packet id : {}
@@ -28,6 +29,7 @@ packet id : {}
         packet.pid.value(),
         packet.topics,
     );
+    let mut rv_packets = Vec::new();
     let mut return_codes = Vec::with_capacity(packet.topics.len());
     for (filter, qos) in packet.topics {
         if filter.is_shared() {
@@ -40,37 +42,44 @@ packet id : {}
             .route_table
             .subscribe(&filter, session.client_id, granted_qos);
 
-        for retain in global.retain_table.get_matches(&filter) {
-            if retain.qos <= granted_qos {
-                recv_publish(
+        let mut process_pendings = false;
+        for msg in global.retain_table.get_matches(&filter) {
+            if msg.qos <= granted_qos {
+                if let Some((final_qos, packet_opt)) = recv_publish(
                     session,
                     RecvPublish {
-                        topic_name: &retain.topic_name,
-                        qos: retain.qos,
+                        topic_name: &msg.topic_name,
+                        qos: msg.qos,
                         retain: true,
-                        payload: &retain.payload,
+                        payload: &msg.payload,
                         subscribe_filter: &filter,
                         subscribe_qos: granted_qos,
                     },
-                    Some(conn),
-                )
-                .await?;
+                ) {
+                    if let Some(packet) = packet_opt {
+                        rv_packets.push(packet);
+                    }
+                    if final_qos != QoS::Level0 {
+                        process_pendings = true;
+                    }
+                }
             }
+        }
+        if process_pendings {
+            rv_packets.extend(handle_pendings(session));
         }
         return_codes.push(granted_qos.into());
     }
-    let rv_packet = Suback::new(packet.pid, return_codes);
-    write_packet(session.client_id, conn, &rv_packet.into()).await?;
-    Ok(())
+    rv_packets.push(Suback::new(packet.pid, return_codes).into());
+    Ok(rv_packets)
 }
 
 #[inline]
-pub(crate) async fn handle_unsubscribe<T: AsyncWrite + Unpin>(
+pub(crate) fn handle_unsubscribe(
     session: &mut Session,
     packet: Unsubscribe,
-    conn: &mut T,
     global: &Arc<GlobalState>,
-) -> io::Result<()> {
+) -> Packet {
     log::debug!(
         r#"{} received a unsubscribe packet:
 packet id : {}
@@ -83,6 +92,5 @@ packet id : {}
         global.route_table.unsubscribe(&filter, session.client_id);
         session.subscribes.remove(&filter);
     }
-    write_packet(session.client_id, conn, &Packet::Unsuback(packet.pid)).await?;
-    Ok(())
+    Packet::Unsuback(packet.pid)
 }

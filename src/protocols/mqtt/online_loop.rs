@@ -16,7 +16,7 @@ use futures_lite::{
 };
 use futures_sink::Sink;
 use hashbrown::HashMap;
-use mqtt_proto::{v3, v5, GenericPollPacket, GenericPollPacketState, PollHeader, QoS};
+use mqtt_proto::{v3, v5, GenericPollPacket, GenericPollPacketState, PollHeader, QoS, VarBytes};
 
 use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
@@ -39,7 +39,7 @@ where
     packet_state: GenericPollPacketState<H>,
     session_state_sender: Option<(SendSink<'static, S::SessionState>, bool)>,
     write_packets_max: usize,
-    write_packets: VecDeque<WritePacket<S::Packet, S::VarBytes>>,
+    write_packets: VecDeque<WritePacket<S::Packet>>,
 }
 
 impl<'a, C, S, H> OnlineLoop<'a, C, S, H>
@@ -84,8 +84,7 @@ where
     S: OnlineSession,
     H: PollHeader<Packet = S::Packet> + Copy + Debug + Unpin,
     H::Error: From<io::Error> + From<mqtt_proto::Error> + Debug + Display,
-    S::Packet: MqttPacket<VarBytes = S::VarBytes> + Debug + Unpin,
-    S::VarBytes: AsRef<[u8]> + Debug + Unpin,
+    S::Packet: MqttPacket + Debug + Unpin,
 {
     type Output = Option<io::Error>;
 
@@ -372,8 +371,9 @@ where
         // Broadcast packets to matched sessions
         //   * Consume from: [broadcast_packets]
         log::debug!(
-            "[{}] broadcast_packets.len() = {}",
+            "[{}] broadcast_cnt={}, broadcast_packets.len() = {}",
             current_client_id,
+            session.broadcast_packets_cnt(),
             session.broadcast_packets().len(),
         );
         let mut consume_cnt = 0;
@@ -384,22 +384,31 @@ where
                 info.flushed,
                 info.msgs
             );
-            if !info.flushed {
-                match Pin::new(&mut info.sink).poll_flush(cx) {
-                    Poll::Ready(Ok(())) => info.flushed = true,
-                    Poll::Ready(Err(_)) => {
-                        consume_cnt += info.msgs.len();
-                        return false;
-                    }
-                    Poll::Pending => {
+            // `info.flushed` is for msgs is empty
+            if !info.flushed && info.msgs.is_empty() {
+                return match Pin::new(&mut info.sink).poll_flush(cx) {
+                    Poll::Ready(Ok(())) => {
                         log::debug!(
-                            "[{}] sending broadcast to [{}] RETRY NOT FLUSHED",
+                            "[{}] broadcast to [{}] flush success",
                             current_client_id,
                             client_id,
                         );
-                        return true;
+                        consume_cnt += 1;
+                        false
                     }
-                }
+                    Poll::Ready(Err(_)) => {
+                        consume_cnt += info.msgs.len() + 1;
+                        false
+                    }
+                    Poll::Pending => {
+                        log::debug!(
+                            "[{}] broadcast to [{}] retry not flushed",
+                            current_client_id,
+                            client_id,
+                        );
+                        true
+                    }
+                };
             }
             while let Some(msg) = info.msgs.pop_front() {
                 match Pin::new(&mut info.sink).poll_ready(cx) {
@@ -407,7 +416,7 @@ where
                     Poll::Ready(Err(_)) => {
                         // channel disconnected
                         consume_cnt += info.msgs.len() + 1;
-                        break;
+                        return false;
                     }
                     Poll::Pending => {
                         // channel is full
@@ -417,7 +426,7 @@ where
                     }
                 }
                 log::debug!(
-                    "[{}] sending broadcast to [{}] {:?}",
+                    "[{}] broadcast to [{}] {:?}",
                     current_client_id,
                     client_id,
                     msg
@@ -428,36 +437,36 @@ where
                 {
                     log::info!("send publish to disconnected client: {}", client_id);
                     consume_cnt += info.msgs.len() + 1;
-                    break;
+                    return false;
                 } else {
                     have_broadcast = true;
                 }
 
-                consume_cnt += 1;
                 match Pin::new(&mut info.sink).poll_flush(cx) {
                     Poll::Ready(Ok(())) => {
                         log::debug!(
-                            "[{}] sending broadcast to [{}] SUCCESS",
+                            "[{}] broadcast to [{}] SUCCESS",
                             current_client_id,
                             client_id,
                         );
+                        consume_cnt += 1;
                     }
                     Poll::Ready(Err(_)) => {
-                        consume_cnt += info.msgs.len();
-                        break;
+                        consume_cnt += info.msgs.len() + 1;
+                        return false;
                     }
                     Poll::Pending => {
                         log::debug!(
-                            "[{}] sending broadcast to [{}] NOT FLUSHED",
+                            "[{}] broadcast to [{}] not flushed",
                             current_client_id,
                             client_id,
                         );
                         info.flushed = false;
-                        break;
+                        return true;
                     }
                 }
             }
-            !info.flushed
+            false
         });
         session.consume_broadcast(consume_cnt);
 
@@ -525,13 +534,13 @@ struct Pendings {
 }
 
 #[derive(Debug)]
-pub enum WritePacket<P, V> {
+pub enum WritePacket<P> {
     Packet(P),
-    Data((V, usize)),
+    Data((VarBytes, usize)),
 }
 
-impl<P, V> From<P> for WritePacket<P, V> {
-    fn from(pkt: P) -> WritePacket<P, V> {
+impl<P> From<P> for WritePacket<P> {
+    fn from(pkt: P) -> WritePacket<P> {
         WritePacket::Packet(pkt)
     }
 }
@@ -543,28 +552,22 @@ pub struct BroadcastPackets {
 }
 
 pub trait MqttPacket {
-    type VarBytes;
-    fn encode(&self) -> Result<Self::VarBytes, io::Error>;
+    fn encode(&self) -> Result<VarBytes, io::Error>;
 }
 
 impl MqttPacket for v3::Packet {
-    type VarBytes = v3::VarBytes;
-
-    fn encode(&self) -> Result<Self::VarBytes, io::Error> {
+    fn encode(&self) -> Result<VarBytes, io::Error> {
         self.encode().map_err(io::Error::from)
     }
 }
 impl MqttPacket for v5::Packet {
-    type VarBytes = v5::VarBytes;
-
-    fn encode(&self) -> Result<Self::VarBytes, io::Error> {
+    fn encode(&self) -> Result<VarBytes, io::Error> {
         self.encode().map_err(io::Error::from)
     }
 }
 
 pub trait OnlineSession {
     type Packet;
-    type VarBytes;
     type SessionState;
 
     fn client_id(&self) -> ClientId;
@@ -579,7 +582,7 @@ pub trait OnlineSession {
     fn handle_packet(
         &mut self,
         packet: Self::Packet,
-        write_packets: &mut VecDeque<WritePacket<Self::Packet, Self::VarBytes>>,
+        write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
     ) -> Result<(), io::Error>;
     fn handle_control(

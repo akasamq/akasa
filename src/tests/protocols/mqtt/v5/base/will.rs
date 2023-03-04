@@ -15,9 +15,6 @@ use super::super::ClientV5;
 
 #[tokio::test]
 async fn test_will_publish() {
-    // env_logger::builder()
-    //     .format(|buf, record| writeln!(buf, "{}\t: {}", record.level(), record.args()))
-    //     .init();
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
         Config::new_allow_anonymous(),

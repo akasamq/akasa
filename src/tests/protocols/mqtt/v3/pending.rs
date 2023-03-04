@@ -120,9 +120,9 @@ async fn test_pending_max_inflight_qos1() {
     let task1 = tokio::spawn(async move {
         client1.connect("client id 1", true, false).await;
         rx.await.unwrap();
-        for pub_pid in 1..15u16 {
+        for pub_pid in 1..17u16 {
             client1
-                .publish(QoS::Level1, pub_pid, "xyz/1", "payload", |_| ())
+                .publish(QoS::Level1, pub_pid, "xyz/1", pub_pid.to_string(), |_| ())
                 .await;
         }
     });
@@ -139,7 +139,7 @@ async fn test_pending_max_inflight_qos1() {
 
     for pub_pid in 1..9u16 {
         client2
-            .recv_publish(QoS::Level1, pub_pid, "xyz/1", "payload", |_| ())
+            .recv_publish(QoS::Level1, pub_pid, "xyz/1", pub_pid.to_string(), |_| ())
             .await;
     }
 
@@ -149,10 +149,14 @@ async fn test_pending_max_inflight_qos1() {
 
     for pub_pid in 1..9u16 {
         client2.send_puback(pub_pid).await;
-    }
-    for pub_pid in 9..15u16 {
         client2
-            .recv_publish(QoS::Level1, pub_pid, "xyz/1", "payload", |_| ())
+            .recv_publish(
+                QoS::Level1,
+                pub_pid + 8,
+                "xyz/1",
+                (pub_pid + 8).to_string(),
+                |_| (),
+            )
             .await;
     }
 

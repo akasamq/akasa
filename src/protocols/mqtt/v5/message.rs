@@ -15,7 +15,7 @@ use hashbrown::HashMap;
 use mqtt_proto::{
     v5::{
         Auth, AuthProperties, AuthReasonCode, Connect, ConnectReasonCode, Header, Packet,
-        PollPacketState, PublishProperties, VarBytes,
+        PollPacketState, PublishProperties,
     },
     Error, Protocol, QoS,
 };
@@ -31,7 +31,6 @@ use super::{
     packet::{
         common::{after_handle_packet, build_error_connack, handle_pendings, write_packet},
         connect::{handle_auth, handle_connect, handle_disconnect, session_connect},
-        pingreq::handle_pingreq,
         publish::{
             handle_puback, handle_pubcomp, handle_publish, handle_pubrec, handle_pubrel,
             recv_publish, send_publish, RecvPublish, SendPublish,
@@ -249,36 +248,41 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         session.client_id,
         session.disconnected
     );
-    if !session.disconnected() {
-        log::debug!("[{}] handling will...", session.client_id);
-        handle_will(&mut session, &mut conn, executor, global).await?;
-        for (target_id, info) in session.broadcast_packets.drain() {
-            for msg in info.msgs {
-                if let Err(err) = info
-                    .sink
-                    .sender()
-                    .send_async((session.client_id, msg))
-                    .await
-                {
-                    log::warn!(
-                        "[{}] after online loop, send broadcast message to {} failed: {:?}",
-                        session.client_id,
-                        target_id,
-                        err
-                    )
-                }
+    // FIXME: check all place depend on session.disconnected
+    if !session.disconnected {
+        handle_will(&mut session, executor, global).await?;
+    }
+    for (target_id, info) in session.broadcast_packets.drain() {
+        for msg in info.msgs {
+            log::debug!(
+                "[{}] broadcast to [{}], {:?}",
+                session.client_id,
+                target_id,
+                msg
+            );
+            if let Err(err) = info
+                .sink
+                .sender()
+                .send_async((session.client_id, msg))
+                .await
+            {
+                log::warn!(
+                    "[{}] handle will, send broadcast message to {} failed: {:?}",
+                    session.client_id,
+                    target_id,
+                    err
+                )
             }
         }
-        log::debug!("[{}] all will sent", session.client_id);
     }
     if session.session_expiry_interval == 0 {
-        global.remove_client(session.client_id(), session.subscribes().keys());
+        global.remove_client(session.client_id, session.subscribes().keys());
         if let Some(err) = io_error {
             return Err(err);
         }
     } else {
         // become a offline client, but session keep updating
-        global.offline_client(session.client_id());
+        global.offline_client(session.client_id);
         session.connected = false;
         session.connection_closed_time = Some(Instant::now());
         return Ok(Some((session, receiver)));
@@ -289,7 +293,6 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 
 impl OnlineSession for Session {
     type Packet = Packet;
-    type VarBytes = VarBytes;
     type SessionState = SessionState;
 
     fn client_id(&self) -> ClientId {
@@ -299,26 +302,25 @@ impl OnlineSession for Session {
         self.disconnected
     }
     fn build_state(&mut self, receiver: ClientReceiver) -> Self::SessionState {
-        let mut broadcast_packets = HashMap::new();
         let mut pending_packets = PendingPackets::new(0, 0, 0);
         let mut qos2_pids = HashMap::new();
         let mut subscribes = HashMap::new();
-        mem::swap(&mut self.broadcast_packets, &mut broadcast_packets);
+        let mut broadcast_packets = HashMap::new();
         mem::swap(&mut self.pending_packets, &mut pending_packets);
         mem::swap(&mut self.qos2_pids, &mut qos2_pids);
         mem::swap(&mut self.subscribes, &mut subscribes);
+        mem::swap(&mut self.broadcast_packets, &mut broadcast_packets);
         SessionState {
             client_id: self.client_id,
             receiver,
             protocol: self.protocol,
 
-            broadcast_packets_cnt: self.broadcast_packets_cnt,
-            broadcast_packets,
-
             server_packet_id: self.server_packet_id,
             pending_packets,
             qos2_pids,
             subscribes,
+            broadcast_packets_cnt: self.broadcast_packets_cnt,
+            broadcast_packets,
         }
     }
 
@@ -338,7 +340,7 @@ impl OnlineSession for Session {
     fn handle_packet(
         &mut self,
         packet: Self::Packet,
-        write_packets: &mut VecDeque<WritePacket<Self::Packet, Self::VarBytes>>,
+        write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
     ) -> Result<(), io::Error> {
         match packet {
@@ -368,9 +370,12 @@ impl OnlineSession for Session {
             Packet::Unsubscribe(pkt) => {
                 write_packets.push_back(handle_unsubscribe(self, pkt, global).into());
             }
-            Packet::Pingreq => write_packets.push_back(handle_pingreq(self).into()),
+            Packet::Pingreq => {
+                log::debug!("{} received a ping packet", self.client_id);
+                write_packets.push_back(Packet::Pingresp.into())
+            }
             _ => {
-                log::warn!(
+                log::info!(
                     "[{}] received a invalid packet: {:?}",
                     self.client_id,
                     packet
@@ -442,15 +447,19 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: 
 }
 
 #[inline]
-async fn handle_will<T: AsyncWrite + Unpin, E: Executor>(
+async fn handle_will<E: Executor>(
     session: &mut Session,
-    _conn: &mut T,
     executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     if let Some(last_will) = session.last_will.as_ref() {
         let delay_interval = last_will.properties.delay_interval.unwrap_or(0);
         if delay_interval == 0 {
+            log::debug!(
+                "[{}] broadcast_packets.len(): {}",
+                session.client_id,
+                session.broadcast_packets.len()
+            );
             send_will(session, global);
         } else if delay_interval < session.session_expiry_interval {
             executor.spawn_sleep(Duration::from_secs(delay_interval as u64), {

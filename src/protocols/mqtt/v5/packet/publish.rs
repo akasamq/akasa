@@ -362,6 +362,8 @@ pub(crate) fn send_publish(
         }
         if let Some(info) = session.broadcast_packets.get_mut(&receiver_client_id) {
             info.msgs.push_back(publish);
+        } else {
+            session.broadcast_packets_cnt -= 1;
         }
     }
     matched_len

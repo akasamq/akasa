@@ -293,6 +293,7 @@ pub enum ControlMessage {
     OnlineV5 {
         sender: Sender<mqtt::v5::SessionState>,
     },
+    // TODO: maybe rename to Timeout
     /// Kick client out (disconnect the client)
     Kick {
         reason: String,

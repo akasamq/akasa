@@ -171,13 +171,8 @@ clean session : {}
 }
 
 #[inline]
-pub(crate) async fn handle_disconnect<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    _conn: &mut T,
-    _global: &Arc<GlobalState>,
-) -> io::Result<()> {
+pub(crate) fn handle_disconnect(session: &mut Session) {
     log::debug!("{} received a disconnect packet", session.client_id);
     session.last_will = None;
     session.disconnected = true;
-    Ok(())
 }

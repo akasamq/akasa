@@ -6,25 +6,22 @@ use std::sync::Arc;
 
 use ahash::AHasher;
 use bytes::Bytes;
-use futures_lite::io::AsyncWrite;
 use mqtt_proto::{
     v3::{Packet, Publish},
     Pid, QoS, QosPid, TopicFilter, TopicName,
 };
 
-use crate::protocols::mqtt::RetainContent;
+use crate::protocols::mqtt::{BroadcastPackets, RetainContent};
 use crate::state::{GlobalState, NormalMessage};
 
 use super::super::{PubPacket, Session};
-use super::common::{handle_pendings, write_packet};
 
 #[inline]
-pub(crate) async fn handle_publish<T: AsyncWrite + Unpin>(
+pub(crate) fn handle_publish(
     session: &mut Session,
     packet: Publish,
-    conn: &mut T,
     global: &Arc<GlobalState>,
-) -> io::Result<()> {
+) -> io::Result<Option<Packet>> {
     log::debug!(
         r#"{} received a publish packet:
 topic name : {}
@@ -79,39 +76,26 @@ topic name : {}
             payload: &packet.payload,
         },
         global,
-    )
-    .await;
+    );
     match packet.qos_pid {
-        QosPid::Level0 => {}
-        QosPid::Level1(pid) => write_packet(session.client_id, conn, &Packet::Puback(pid)).await?,
-        QosPid::Level2(pid) => write_packet(session.client_id, conn, &Packet::Pubrec(pid)).await?,
+        QosPid::Level0 => Ok(None),
+        QosPid::Level1(pid) => Ok(Some(Packet::Puback(pid))),
+        QosPid::Level2(pid) => Ok(Some(Packet::Pubrec(pid))),
     }
-    Ok(())
 }
 
 #[inline]
-pub(crate) async fn handle_puback<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    pid: Pid,
-    _conn: &mut T,
-    _global: &Arc<GlobalState>,
-) -> io::Result<()> {
+pub(crate) fn handle_puback(session: &mut Session, pid: Pid) {
     log::debug!(
         "{} received a puback packet: id={}",
         session.client_id,
         pid.value()
     );
     let _matched = session.pending_packets.complete(pid, QoS::Level1);
-    Ok(())
 }
 
 #[inline]
-pub(crate) async fn handle_pubrec<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    pid: Pid,
-    conn: &mut T,
-    _global: &Arc<GlobalState>,
-) -> io::Result<()> {
+pub(crate) fn handle_pubrec(session: &mut Session, pid: Pid) -> Packet {
     log::debug!(
         "{} received a pubrec  packet: id={}",
         session.client_id,
@@ -119,17 +103,11 @@ pub(crate) async fn handle_pubrec<T: AsyncWrite + Unpin>(
     );
 
     let _matched = session.pending_packets.pubrec(pid);
-    write_packet(session.client_id, conn, &Packet::Pubrel(pid)).await?;
-    Ok(())
+    Packet::Pubrel(pid)
 }
 
 #[inline]
-pub(crate) async fn handle_pubrel<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    pid: Pid,
-    conn: &mut T,
-    _global: &Arc<GlobalState>,
-) -> io::Result<()> {
+pub(crate) fn handle_pubrel(session: &mut Session, pid: Pid) -> io::Result<Packet> {
     log::debug!(
         "{} received a pubrel  packet: id={}",
         session.client_id,
@@ -139,24 +117,17 @@ pub(crate) async fn handle_pubrel<T: AsyncWrite + Unpin>(
         log::warn!("packet identifier not found: {}", pid.value());
         return Err(io::ErrorKind::InvalidData.into());
     }
-    write_packet(session.client_id, conn, &Packet::Pubcomp(pid)).await?;
-    Ok(())
+    Ok(Packet::Pubcomp(pid))
 }
 
 #[inline]
-pub(crate) async fn handle_pubcomp<T: AsyncWrite + Unpin>(
-    session: &mut Session,
-    pid: Pid,
-    _conn: &mut T,
-    _global: &Arc<GlobalState>,
-) -> io::Result<()> {
+pub(crate) fn handle_pubcomp(session: &mut Session, pid: Pid) {
     log::debug!(
         "{} received a pubcomp packet: id={}",
         session.client_id,
         pid.value()
     );
     let _matched = session.pending_packets.complete(pid, QoS::Level2);
-    Ok(())
 }
 
 // ====================
@@ -180,11 +151,7 @@ pub(crate) struct RecvPublish<'a> {
 }
 
 // Received a publish message from client or will, then publish the message to matched clients
-pub(crate) async fn send_publish<'a>(
-    session: &mut Session,
-    msg: SendPublish<'a>,
-    global: &Arc<GlobalState>,
-) {
+pub(crate) fn send_publish(session: &mut Session, msg: SendPublish, global: &Arc<GlobalState>) {
     if msg.retain {
         if let Some(old_content) = if msg.payload.is_empty() {
             log::debug!("retain message removed");
@@ -218,15 +185,14 @@ pub(crate) async fn send_publish<'a>(
     let mut senders = Vec::with_capacity(matches.len());
     for content in matches {
         let content = content.read();
+        let subscribe_filter = content.topic_filter.as_ref().unwrap();
         for (client_id, subscribe_qos) in &content.clients {
-            if let Some(sender) = global.get_client_normal_sender(client_id) {
-                let subscribe_filter = content.topic_filter.clone().unwrap();
-                senders.push((*client_id, subscribe_filter, *subscribe_qos, sender));
-            }
+            senders.push((*client_id, subscribe_filter.clone(), *subscribe_qos));
         }
     }
 
-    for (receiver_client_id, subscribe_filter, subscribe_qos, sender) in senders {
+    session.broadcast_packets_cnt += senders.len();
+    for (receiver_client_id, subscribe_filter, subscribe_qos) in senders {
         let publish = NormalMessage::PublishV3 {
             retain: msg.retain,
             qos: msg.qos,
@@ -235,25 +201,34 @@ pub(crate) async fn send_publish<'a>(
             subscribe_filter,
             subscribe_qos,
         };
-        if let Err(err) = sender.send_async((session.client_id, publish)).await {
-            log::error!(
-                "send publish to connection {} failed: {}",
-                receiver_client_id,
-                err
-            );
+        if !session.broadcast_packets.contains_key(&receiver_client_id) {
+            if let Some(sender) = global.get_client_normal_sender(&receiver_client_id) {
+                session.broadcast_packets.insert(
+                    receiver_client_id,
+                    BroadcastPackets {
+                        sink: sender.into_sink(),
+                        msgs: Default::default(),
+                        flushed: true,
+                    },
+                );
+            }
+        }
+        if let Some(info) = session.broadcast_packets.get_mut(&receiver_client_id) {
+            info.msgs.push_back(publish);
+        } else {
+            session.broadcast_packets_cnt -= 1;
         }
     }
 }
 
 // Got a publish message from retain message or subscribed topic, then send the publish message to client.
-pub(crate) async fn recv_publish<'a, T: AsyncWrite + Unpin>(
+pub(crate) fn recv_publish(
     session: &mut Session,
-    msg: RecvPublish<'a>,
-    conn: Option<&mut T>,
-) -> io::Result<()> {
+    msg: RecvPublish,
+) -> Option<(QoS, Option<Packet>)> {
     if !session.subscribes.contains_key(msg.subscribe_filter) {
         // the client already unsubscribed.
-        return Ok(());
+        return None;
     }
 
     let final_qos = cmp::min(msg.qos, msg.subscribe_qos);
@@ -271,10 +246,8 @@ pub(crate) async fn recv_publish<'a, T: AsyncWrite + Unpin>(
         ) {
             // TODO: pending messages queue is full
         }
-        if let Some(conn) = conn {
-            handle_pendings(session, conn).await?;
-        }
-    } else if let Some(conn) = conn {
+        Some((final_qos, None))
+    } else if !session.disconnected {
         let rv_packet = Publish {
             dup: false,
             qos_pid: QosPid::Level0,
@@ -282,8 +255,8 @@ pub(crate) async fn recv_publish<'a, T: AsyncWrite + Unpin>(
             topic_name: msg.topic_name.clone(),
             payload: msg.payload.clone(),
         };
-        write_packet(session.client_id, conn, &rv_packet.into()).await?;
+        Some((final_qos, Some(rv_packet.into())))
+    } else {
+        None
     }
-
-    Ok(())
 }

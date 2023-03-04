@@ -125,7 +125,7 @@ async fn test_pending_max_inflight_qos1() {
         rx.await.unwrap();
         for pub_pid in 1..17u16 {
             client1
-                .publish(QoS::Level1, pub_pid, "xyz/1", vec![3, 5, 55], |_| ())
+                .publish(QoS::Level1, pub_pid, "xyz/1", pub_pid.to_string(), |_| ())
                 .await;
         }
     });
@@ -144,7 +144,7 @@ async fn test_pending_max_inflight_qos1() {
 
     for pub_pid in 1..9u16 {
         client2
-            .recv_publish(QoS::Level1, pub_pid, "xyz/1", vec![3, 5, 55], |_| ())
+            .recv_publish(QoS::Level1, pub_pid, "xyz/1", pub_pid.to_string(), |_| ())
             .await;
     }
 
@@ -156,7 +156,13 @@ async fn test_pending_max_inflight_qos1() {
         client2.send_puback(pub_pid).await;
         // If connection not receive packets, server forbid send more packets
         client2
-            .recv_publish(QoS::Level1, pub_pid + 8, "xyz/1", vec![3, 5, 55], |_| ())
+            .recv_publish(
+                QoS::Level1,
+                pub_pid + 8,
+                "xyz/1",
+                (pub_pid + 8).to_string(),
+                |_| (),
+            )
             .await;
     }
 

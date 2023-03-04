@@ -74,14 +74,13 @@ pub struct SessionState {
     pub receiver: ClientReceiver,
     pub protocol: Protocol,
 
-    pub broadcast_packets_cnt: usize,
-    pub broadcast_packets: HashMap<ClientId, BroadcastPackets>,
-
     // For record packet id send from server to client
     pub server_packet_id: Pid,
     pub pending_packets: PendingPackets<PubPacket>,
     pub qos2_pids: HashMap<Pid, u64>,
     pub subscribes: HashMap<TopicFilter, SubscriptionData>,
+    pub broadcast_packets_cnt: usize,
+    pub broadcast_packets: HashMap<ClientId, BroadcastPackets>,
 }
 
 impl Session {
