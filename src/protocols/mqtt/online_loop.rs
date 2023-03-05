@@ -67,10 +67,8 @@ where
             conn,
             taken_over,
             packet_state,
-
             read_unfinish: false,
             normal_stream_unfinish: false,
-
             write_packets_max: 4,
             write_packets: VecDeque::with_capacity(4),
             session_state_sender: None,
@@ -111,10 +109,8 @@ where
             ref mut control_stream,
             ref mut normal_stream,
             ref mut conn,
-
             ref mut read_unfinish,
             ref mut normal_stream_unfinish,
-
             packet_state,
             session_state_sender,
             write_packets_max,
