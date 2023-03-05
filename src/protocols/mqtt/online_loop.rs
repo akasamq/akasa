@@ -521,10 +521,11 @@ where
 
 #[derive(Debug, Clone, Copy, Default)]
 struct Pendings {
+    // producer
     read: bool,
     control_message: bool,
     normal_message: bool,
-
+    // consumer
     write: bool,
     broadcast: bool,
 }
