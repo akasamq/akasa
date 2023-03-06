@@ -405,3 +405,59 @@ async fn test_connack_properties() {
     }
     assert!(!task.is_finished());
 }
+
+#[tokio::test]
+async fn test_retain_not_supported() {
+    let mut config = Config::new_allow_anonymous();
+    config.retain_available = false;
+    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
+
+    let mut connect = Connect::new(Arc::new("client".to_owned()), 32);
+    connect.clean_start = true;
+    connect.last_will = Some(LastWill {
+        qos: QoS::Level1,
+        retain: true,
+        topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+        payload: Bytes::from(vec![1, 2, 3, 4]),
+        properties: Default::default(),
+    });
+    client.write_packet(connect.into()).await;
+    let pkt = client.read_packet().await;
+    if let Packet::Connack(connack) = pkt {
+        assert!(!connack.session_present);
+        assert_eq!(connack.reason_code, ConnectReasonCode::RetainNotSupported);
+    } else {
+        panic!("invalid packet: {pkt:?}");
+    }
+    sleep(Duration::from_millis(20)).await;
+    assert!(task.is_finished());
+}
+
+#[tokio::test]
+async fn test_qos_not_supported() {
+    let mut config = Config::new_allow_anonymous();
+    config.max_allowed_qos = 1;
+    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
+
+    let mut connect = Connect::new(Arc::new("client".to_owned()), 32);
+    connect.clean_start = true;
+    connect.last_will = Some(LastWill {
+        qos: QoS::Level2,
+        retain: true,
+        topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+        payload: Bytes::from(vec![1, 2, 3, 4]),
+        properties: Default::default(),
+    });
+    client.write_packet(connect.into()).await;
+    let pkt = client.read_packet().await;
+    if let Packet::Connack(connack) = pkt {
+        assert!(!connack.session_present);
+        assert_eq!(connack.reason_code, ConnectReasonCode::QoSNotSupported);
+    } else {
+        panic!("invalid packet: {pkt:?}");
+    }
+    sleep(Duration::from_millis(20)).await;
+    assert!(task.is_finished());
+}

@@ -321,16 +321,28 @@ pub(crate) async fn session_connect<T: AsyncWrite + Unpin, E: Executor>(
     }
     // * TODO ServerReference
 
+    let reason_code = if let Some(will) = session.last_will.as_ref() {
+        if will.retain && !global.config.retain_available {
+            ConnectReasonCode::RetainNotSupported
+        } else if will.qos > global.config.max_allowed_qos() {
+            ConnectReasonCode::QoSNotSupported
+        } else {
+            ConnectReasonCode::Success
+        }
+    } else {
+        ConnectReasonCode::Success
+    };
     let rv_packet = Connack {
         session_present,
-        reason_code: ConnectReasonCode::Success,
+        reason_code,
         properties: connack_properties,
     };
     write_packet(session.client_id, conn, &rv_packet.into()).await?;
 
-    session.connected = true;
-    session.connected_time = Some(Instant::now());
-
+    if reason_code == ConnectReasonCode::Success {
+        session.connected = true;
+        session.connected_time = Some(Instant::now());
+    }
     Ok(())
 }
 
