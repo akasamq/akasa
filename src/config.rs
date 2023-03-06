@@ -38,7 +38,10 @@ pub struct Config {
     pub multiple_subscription_id_in_publish: bool,
 
     pub max_session_expiry_interval: u32,
-    pub max_packet_size: u32,
+    /// max packet size given by client (to limit server)
+    pub max_packet_size_client: u32,
+    /// max packet size given by server (to limit client)
+    pub max_packet_size_server: u32,
     pub topic_alias_max: u16,
     pub retain_available: bool,
     pub shared_subscription_available: bool,
@@ -118,7 +121,8 @@ impl Default for Config {
             max_keep_alive: u16::max_value(),
             multiple_subscription_id_in_publish: false,
             max_session_expiry_interval: u32::max_value(),
-            max_packet_size: DEFAULT_MAX_PACKET_SIZE,
+            max_packet_size_client: DEFAULT_MAX_PACKET_SIZE,
+            max_packet_size_server: DEFAULT_MAX_PACKET_SIZE,
             topic_alias_max: u16::max_value(),
             retain_available: true,
             shared_subscription_available: true,
@@ -147,8 +151,12 @@ impl Config {
             );
             return false;
         }
-        if self.max_packet_size == 0 {
-            log::error!("invalid max_packet_size, 0 is not allowed");
+        if self.max_packet_size_client == 0 {
+            log::error!("invalid client max_packet_size, 0 is not allowed");
+            return false;
+        }
+        if self.max_packet_size_server == 0 {
+            log::error!("invalid server max_packet_size, 0 is not allowed");
             return false;
         }
         for mechanism in &self.sasl_mechanisms {

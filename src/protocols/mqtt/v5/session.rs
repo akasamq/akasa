@@ -60,6 +60,7 @@ pub struct Session {
     // properties
     pub(super) session_expiry_interval: u32,
     pub(super) receive_max: u16,
+    // to limit the max packet size server can send
     pub(super) max_packet_size: u32,
     // client topic alias maximum
     pub(super) topic_alias_max: u16,
@@ -120,7 +121,7 @@ impl Session {
 
             session_expiry_interval: 0,
             receive_max: config.max_inflight_client,
-            max_packet_size: config.max_packet_size,
+            max_packet_size: config.max_packet_size_client,
             topic_alias_max: 0,
             request_response_info: false,
             request_problem_info: true,

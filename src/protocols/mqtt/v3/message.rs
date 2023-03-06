@@ -246,9 +246,18 @@ impl OnlineSession for Session {
     fn handle_packet(
         &mut self,
         packet: Self::Packet,
+        encode_len: usize,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
     ) -> Result<(), io::Error> {
+        if encode_len > global.config.max_packet_size_server as usize {
+            log::debug!(
+                "packet too large, size={}, max={}",
+                encode_len,
+                global.config.max_packet_size_server
+            );
+            return Err(io::ErrorKind::InvalidData.into());
+        }
         match packet {
             Packet::Disconnect => handle_disconnect(self),
             Packet::Publish(pkt) => {

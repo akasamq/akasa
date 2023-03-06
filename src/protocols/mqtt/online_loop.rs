@@ -201,7 +201,7 @@ where
             );
             // TODO: Decode Header first for more detailed error report.
             let mut poll_packet = GenericPollPacket::new(packet_state, conn);
-            let (_total, packet) = match Pin::new(&mut poll_packet).poll(cx) {
+            let (total, packet) = match Pin::new(&mut poll_packet).poll(cx) {
                 Poll::Ready(Ok(output)) => {
                     *packet_state = GenericPollPacketState::default();
                     output
@@ -235,7 +235,7 @@ where
                 current_client_id,
                 packet
             );
-            if let Err(err) = session.handle_packet(packet, write_packets, global) {
+            if let Err(err) = session.handle_packet(packet, total, write_packets, global) {
                 return Poll::Ready(Some(err));
             }
         }
@@ -579,6 +579,7 @@ pub trait OnlineSession {
     fn handle_packet(
         &mut self,
         packet: Self::Packet,
+        encode_len: usize,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
     ) -> Result<(), io::Error>;

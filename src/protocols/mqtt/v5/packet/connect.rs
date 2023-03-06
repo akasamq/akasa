@@ -102,7 +102,7 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     session.request_problem_info = properties.request_problem_info.unwrap_or(true);
     session.max_packet_size = properties
         .max_packet_size
-        .unwrap_or(global.config.max_packet_size);
+        .unwrap_or(global.config.max_packet_size_client);
     if properties.receive_max == Some(0) {
         log::debug!("connect properties ReceiveMaximum is 0");
         let err_pkt = build_error_connack(
@@ -289,8 +289,8 @@ pub(crate) async fn session_connect<T: AsyncWrite + Unpin, E: Executor>(
     if !global.config.retain_available {
         connack_properties.retain_available = Some(false);
     }
-    if global.config.max_packet_size < u32::max_value() {
-        connack_properties.max_packet_size = Some(global.config.max_packet_size);
+    if global.config.max_packet_size_server < u32::max_value() {
+        connack_properties.max_packet_size = Some(global.config.max_packet_size_server);
     }
     if session.assigned_client_id {
         connack_properties.assigned_client_id = Some(Arc::clone(&session.client_identifier));

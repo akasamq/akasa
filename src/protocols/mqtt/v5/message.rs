@@ -14,8 +14,8 @@ use futures_lite::{
 use hashbrown::HashMap;
 use mqtt_proto::{
     v5::{
-        Auth, AuthProperties, AuthReasonCode, Connect, ConnectReasonCode, Header, Packet,
-        PollPacketState, Publish, PublishProperties,
+        Auth, AuthProperties, AuthReasonCode, Connect, ConnectReasonCode, DisconnectReasonCode,
+        Header, Packet, PollPacketState, Publish, PublishProperties,
     },
     Error, Protocol, QoS, QosPid,
 };
@@ -29,7 +29,10 @@ use crate::state::{
 
 use super::{
     packet::{
-        common::{after_handle_packet, build_error_connack, handle_pendings, write_packet},
+        common::{
+            after_handle_packet, build_error_connack, build_error_disconnect, handle_pendings,
+            write_packet,
+        },
         connect::{handle_auth, handle_connect, handle_disconnect, session_connect},
         publish::{
             handle_puback, handle_pubcomp, handle_publish, handle_pubrec, handle_pubrel,
@@ -340,9 +343,25 @@ impl OnlineSession for Session {
     fn handle_packet(
         &mut self,
         packet: Self::Packet,
+        encode_len: usize,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
     ) -> Result<(), io::Error> {
+        if encode_len > global.config.max_packet_size_server as usize {
+            log::debug!(
+                "packet too large, size={}, max={}",
+                encode_len,
+                global.config.max_packet_size_server
+            );
+            let err_pkt = build_error_disconnect(
+                self,
+                DisconnectReasonCode::PacketTooLarge,
+                "Packet too large",
+            );
+            write_packets.push_back(err_pkt.into());
+            return Ok(());
+        }
+
         match packet {
             Packet::Disconnect(pkt) => {
                 if let Err(err_pkt) = handle_disconnect(self, pkt) {

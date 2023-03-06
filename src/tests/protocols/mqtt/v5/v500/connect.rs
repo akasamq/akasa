@@ -203,6 +203,7 @@ async fn test_receive_max_server() {
     assert!(task.is_finished());
 }
 
+// to limit server
 #[tokio::test]
 async fn test_max_packet_size_client() {
     let global = Arc::new(GlobalState::new(
@@ -304,4 +305,46 @@ async fn test_max_packet_size_client() {
         sleep(Duration::from_millis(20)).await;
         assert!(task.is_finished());
     }
+}
+
+// to limit client
+#[tokio::test]
+async fn test_max_packet_size_server() {
+    let payload_ok = b"01234567890123456789";
+    let payload_large = b"@01234567890123456789";
+    let sample_packet_ok = Packet::Publish(Publish::new(
+        QosPid::Level0,
+        TopicName::try_from("abc/1".to_owned()).unwrap(),
+        // make sure disconnect.properties.reason_string.is_some()
+        Bytes::from(payload_ok.to_vec()),
+    ));
+    let sample_packet_large = Packet::Publish(Publish::new(
+        QosPid::Level0,
+        TopicName::try_from("abc/1".to_owned()).unwrap(),
+        Bytes::from(payload_large.to_vec()),
+    ));
+    let encode_len_ok = sample_packet_ok.encode_len().unwrap();
+    let encode_len_large = sample_packet_large.encode_len().unwrap();
+    assert_eq!(encode_len_ok + 1, encode_len_large);
+
+    let mut config = Config::new_allow_anonymous();
+    config.max_packet_size_server = encode_len_ok as u32;
+    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
+
+    client.connect("client id", true, false).await;
+
+    client.write_packet(sample_packet_ok).await;
+    sleep(Duration::from_millis(20)).await;
+    assert!(client.try_read_packet_is_empty());
+
+    client.write_packet(sample_packet_large).await;
+    let err_pkt = client.read_packet().await;
+    if let Packet::Disconnect(pkt) = err_pkt {
+        assert_eq!(pkt.reason_code, DisconnectReasonCode::PacketTooLarge,);
+    } else {
+        panic!("invalid packet: {err_pkt:?}");
+    }
+    sleep(Duration::from_millis(20)).await;
+    assert!(task.is_finished());
 }
