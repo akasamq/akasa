@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use hashbrown::{HashMap, HashSet};
 use mqtt_proto::v5::*;
 use mqtt_proto::*;
 use tokio::sync::{mpsc, oneshot};

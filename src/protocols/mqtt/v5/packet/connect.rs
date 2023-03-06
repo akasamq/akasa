@@ -17,7 +17,7 @@ use crate::config::{AuthType, SaslMechanism};
 use crate::protocols::mqtt::start_keep_alive_timer;
 use crate::state::{AddClientReceipt, ClientReceiver, Executor, GlobalState};
 
-use super::super::{ScramStage, Session};
+use super::super::{ScramStage, Session, TracedRng};
 use super::common::{build_error_connack, build_error_disconnect, write_packet};
 
 pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
@@ -453,8 +453,12 @@ pub(crate) fn handle_auth(
                 ));
             };
 
-            let client_first = match &session.scram_stage {
-                ScramStage::ClientFirst { ref message, .. } => message,
+            let (client_first, server_nonce) = match &session.scram_stage {
+                ScramStage::ClientFirst {
+                    ref message,
+                    server_nonce,
+                    ..
+                } => (message, server_nonce.clone()),
                 _ => unreachable!(),
             };
             let scram_server = ScramServer::new(&global.config);
@@ -479,7 +483,8 @@ pub(crate) fn handle_auth(
                     return Err(err_pkt);
                 }
             };
-            let (scram_server, _) = scram_server.server_first();
+            let mut traced_rng = TracedRng::new_from(server_nonce);
+            let (scram_server, _) = scram_server.server_first_with_rng(&mut traced_rng);
             let scram_server = match scram_server.handle_client_final(&client_final) {
                 Ok(server) => server,
                 Err(err) => {
@@ -617,10 +622,12 @@ fn scram_client_first(
             }
         }
     };
-    let (_, server_first) = scram_server.server_first();
+    let mut traced_rng = TracedRng::new_empty();
+    let (_, server_first) = scram_server.server_first_with_rng(&mut traced_rng);
     session.authorizing = true;
     session.scram_stage = ScramStage::ClientFirst {
         message: client_first,
+        server_nonce: traced_rng.into_data(),
         time: Instant::now(),
     };
     Ok(server_first)
