@@ -11,8 +11,8 @@ use futures_lite::{
 };
 use hashbrown::HashMap;
 use mqtt_proto::{
-    v3::{Connect, Header, Packet, PollPacketState},
-    Error, Protocol, QoS,
+    v3::{Connect, Header, Packet, PollPacketState, Publish},
+    Error, Protocol, QoS, QosPid,
 };
 
 use crate::protocols::mqtt::{
@@ -346,6 +346,23 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, _global:
 #[inline]
 async fn handle_will(session: &mut Session, global: &Arc<GlobalState>) -> io::Result<()> {
     if let Some(last_will) = session.last_will.take() {
+        let encode_len = {
+            let qos_pid = match last_will.qos {
+                QoS::Level0 => QosPid::Level0,
+                QoS::Level1 => QosPid::Level1(Default::default()),
+                QoS::Level2 => QosPid::Level2(Default::default()),
+            };
+            let publish = Publish {
+                dup: false,
+                retain: false,
+                qos_pid,
+                topic_name: last_will.topic_name.clone(),
+                payload: last_will.message.clone(),
+            };
+            Packet::Publish(publish)
+                .encode_len()
+                .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?
+        };
         send_publish(
             session,
             SendPublish {
@@ -353,6 +370,7 @@ async fn handle_will(session: &mut Session, global: &Arc<GlobalState>) -> io::Re
                 retain: last_will.retain,
                 qos: last_will.qos,
                 payload: &last_will.message,
+                encode_len,
             },
             global,
         );
@@ -406,6 +424,7 @@ fn handle_normal(
             ref payload,
             ref subscribe_filter,
             subscribe_qos,
+            encode_len: _,
         } => {
             log::debug!(
                 "{:?} received a v3.x publish message from {:?}",
@@ -432,6 +451,7 @@ fn handle_normal(
             ref subscribe_filter,
             subscribe_qos,
             properties: _,
+            encode_len: _,
         } => {
             log::debug!(
                 "{:?} received a v5.x publish message from {:?}",

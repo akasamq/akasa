@@ -316,6 +316,7 @@ pub enum NormalMessage {
         payload: Bytes,
         subscribe_filter: TopicFilter,
         subscribe_qos: QoS,
+        encode_len: usize,
     },
     PublishV5 {
         retain: bool,
@@ -326,6 +327,7 @@ pub enum NormalMessage {
         // [MQTTv5.0-3.8.4] keyword: downgraded
         subscribe_qos: QoS,
         properties: PublishProperties,
+        encode_len: usize,
     },
 }
 

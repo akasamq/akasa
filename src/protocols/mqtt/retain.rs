@@ -29,6 +29,7 @@ pub struct RetainContent {
     pub topic_name: TopicName,
     pub payload: Bytes,
     pub properties: Option<PublishProperties>,
+    pub encode_len: usize,
 }
 
 impl RetainTable {
@@ -175,6 +176,7 @@ impl RetainContent {
         topic_name: TopicName,
         payload: Bytes,
         properties: Option<PublishProperties>,
+        encode_len: usize,
     ) -> RetainContent {
         RetainContent {
             client_identifier,
@@ -182,6 +184,7 @@ impl RetainContent {
             topic_name,
             payload,
             properties,
+            encode_len,
         }
     }
 }
@@ -199,7 +202,7 @@ mod tests {
             let client_identifier = Arc::new(client_identifier.to_owned());
             let topic_name = TopicName::try_from(topic_name.to_owned()).unwrap();
             let payload = Bytes::from(payload);
-            Self::new(client_identifier, qos, topic_name, payload, None)
+            Self::new(client_identifier, qos, topic_name, payload, None, 0)
         }
     }
 

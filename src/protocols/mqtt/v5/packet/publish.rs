@@ -6,12 +6,13 @@ use std::sync::Arc;
 use ahash::AHasher;
 use bytes::Bytes;
 use mqtt_proto::{
+    total_len,
     v5::{
         DisconnectReasonCode, Packet, Puback, PubackProperties, PubackReasonCode, Pubcomp,
         PubcompProperties, PubcompReasonCode, Publish, PublishProperties, Pubrec, PubrecProperties,
         PubrecReasonCode, Pubrel, PubrelProperties, PubrelReasonCode,
     },
-    QoS, QosPid, TopicFilter, TopicName, SHARED_PREFIX,
+    Encodable, QoS, QosPid, TopicFilter, TopicName, SHARED_PREFIX,
 };
 use rand::{thread_rng, Rng};
 
@@ -135,6 +136,7 @@ topic name : {}
         }
     }
 
+    let encode_len = total_len(packet.encode_len()).expect("packet too large");
     let matched_len = send_publish(
         session,
         SendPublish {
@@ -143,6 +145,7 @@ topic name : {}
             topic_name: &topic_name,
             payload: &packet.payload,
             properties,
+            encode_len,
         },
         global,
     );
@@ -252,6 +255,7 @@ pub(crate) struct RecvPublish<'a> {
     pub subscribe_filter: &'a TopicFilter,
     // [MQTTv5.0-3.8.4] keyword: downgraded
     pub subscribe_qos: QoS,
+    pub encode_len: usize,
 }
 
 #[derive(Debug)]
@@ -261,6 +265,7 @@ pub(crate) struct SendPublish<'a> {
     pub qos: QoS,
     pub payload: &'a Bytes,
     pub properties: &'a PublishProperties,
+    pub encode_len: usize,
 }
 
 // TODO: change to broadcast_publish()
@@ -281,6 +286,7 @@ pub(crate) fn send_publish(
                 msg.topic_name.clone(),
                 msg.payload.clone(),
                 Some(msg.properties.clone()),
+                msg.encode_len,
             ));
             log::debug!("retain message inserted");
             global.retain_table.insert(content)
@@ -347,6 +353,7 @@ pub(crate) fn send_publish(
             subscribe_filter,
             subscribe_qos,
             properties: msg.properties.clone(),
+            encode_len: msg.encode_len,
         };
         if !session.broadcast_packets.contains_key(&receiver_client_id) {
             if let Some(sender) = global.get_client_normal_sender(&receiver_client_id) {
@@ -391,6 +398,9 @@ pub(crate) fn recv_publish(
 
     let final_qos = cmp::min(msg.qos, msg.subscribe_qos);
     if final_qos != QoS::Level0 {
+        if msg.encode_len > session.max_packet_size as usize {
+            return None;
+        }
         let pid = session.incr_server_packet_id();
         session.pending_packets.clean_complete();
         // TODO: proper handle this error
@@ -406,6 +416,14 @@ pub(crate) fn recv_publish(
         );
         Some((final_qos, None))
     } else if !session.disconnected {
+        let encode_len = if msg.qos > QoS::Level0 {
+            msg.encode_len - 2
+        } else {
+            msg.encode_len
+        };
+        if encode_len > session.max_packet_size as usize {
+            return None;
+        }
         let rv_packet = Publish {
             dup: false,
             qos_pid: QosPid::Level0,

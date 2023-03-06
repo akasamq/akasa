@@ -88,6 +88,12 @@ packet id : {}
                         if sub_opts.no_local && msg.client_identifier == session.client_identifier {
                             continue;
                         }
+                        let encode_len = if msg.properties.is_none() {
+                            // one byte for property length
+                            msg.encode_len + 1
+                        } else {
+                            msg.encode_len
+                        };
                         if let Some((final_qos, packet_opt)) = recv_publish(
                             session,
                             RecvPublish {
@@ -98,6 +104,7 @@ packet id : {}
                                 subscribe_filter: &filter,
                                 subscribe_qos: granted_qos,
                                 properties: msg.properties.as_ref(),
+                                encode_len,
                             },
                         ) {
                             if let Some(packet) = packet_opt {

@@ -7,8 +7,9 @@ use std::sync::Arc;
 use ahash::AHasher;
 use bytes::Bytes;
 use mqtt_proto::{
+    total_len,
     v3::{Packet, Publish},
-    Pid, QoS, QosPid, TopicFilter, TopicName,
+    Encodable, Pid, QoS, QosPid, TopicFilter, TopicName,
 };
 
 use crate::protocols::mqtt::{BroadcastPackets, RetainContent};
@@ -67,6 +68,7 @@ topic name : {}
         }
     }
 
+    let encode_len = total_len(packet.encode_len()).expect("packet too large");
     send_publish(
         session,
         SendPublish {
@@ -74,6 +76,7 @@ topic name : {}
             retain: packet.retain,
             qos: packet.qos_pid.qos(),
             payload: &packet.payload,
+            encode_len,
         },
         global,
     );
@@ -139,6 +142,7 @@ pub(crate) struct SendPublish<'a> {
     pub retain: bool,
     pub qos: QoS,
     pub payload: &'a Bytes,
+    pub encode_len: usize,
 }
 
 pub(crate) struct RecvPublish<'a> {
@@ -163,6 +167,7 @@ pub(crate) fn send_publish(session: &mut Session, msg: SendPublish, global: &Arc
                 msg.topic_name.clone(),
                 msg.payload.clone(),
                 None,
+                msg.encode_len,
             ));
             log::debug!("retain message inserted");
             global.retain_table.insert(content)
@@ -200,6 +205,7 @@ pub(crate) fn send_publish(session: &mut Session, msg: SendPublish, global: &Arc
             payload: msg.payload.clone(),
             subscribe_filter,
             subscribe_qos,
+            encode_len: msg.encode_len,
         };
         if !session.broadcast_packets.contains_key(&receiver_client_id) {
             if let Some(sender) = global.get_client_normal_sender(&receiver_client_id) {

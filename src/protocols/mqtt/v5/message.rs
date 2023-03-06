@@ -15,9 +15,9 @@ use hashbrown::HashMap;
 use mqtt_proto::{
     v5::{
         Auth, AuthProperties, AuthReasonCode, Connect, ConnectReasonCode, Header, Packet,
-        PollPacketState, PublishProperties,
+        PollPacketState, Publish, PublishProperties,
     },
-    Error, Protocol, QoS,
+    Error, Protocol, QoS, QosPid,
 };
 
 use crate::protocols::mqtt::{
@@ -460,7 +460,7 @@ async fn handle_will<E: Executor>(
                 session.client_id,
                 session.broadcast_packets.len()
             );
-            send_will(session, global);
+            send_will(session, global)?;
         } else if delay_interval < session.session_expiry_interval {
             executor.spawn_sleep(Duration::from_secs(delay_interval as u64), {
                 let client_id = session.client_id;
@@ -510,15 +510,20 @@ fn handle_control(
         ControlMessage::SessionExpired { connected_time } => {
             log::debug!("client {} session expired", session.client_identifier);
             if !session.connected && session.connected_time == Some(connected_time) {
-                send_will(session, global);
+                if send_will(session, global).is_err() {
+                    log::warn!("send will failed (packet too large)");
+                }
                 global.remove_client(session.client_id, session.subscribes.keys());
                 stop = true;
             }
         }
         ControlMessage::WillDelayReached { connected_time } => {
             log::debug!("client {} will delay reached", session.client_identifier);
-            if !session.connected && session.connected_time == Some(connected_time) {
-                send_will(session, global);
+            if !session.connected
+                && session.connected_time == Some(connected_time)
+                && send_will(session, global).is_err()
+            {
+                log::warn!("send will failed (packet too large)");
             }
         }
     }
@@ -542,6 +547,7 @@ fn handle_normal(
             ref payload,
             ref subscribe_filter,
             subscribe_qos,
+            encode_len,
         } => {
             log::debug!(
                 "[{}] received v3 publish message from {}",
@@ -562,6 +568,8 @@ fn handle_normal(
                         subscribe_filter,
                         subscribe_qos,
                         properties: None,
+                        // one byte is for property length
+                        encode_len: encode_len + 1,
                     },
                 )
             } else {
@@ -576,6 +584,7 @@ fn handle_normal(
             ref subscribe_filter,
             subscribe_qos,
             ref properties,
+            encode_len,
         } => {
             log::debug!(
                 "[{}] received v5 publish message from {}, msg: {:?}",
@@ -597,6 +606,7 @@ fn handle_normal(
                         subscribe_filter,
                         subscribe_qos,
                         properties: Some(properties),
+                        encode_len,
                     },
                 )
             } else {
@@ -608,9 +618,37 @@ fn handle_normal(
 
 // TODO: change to broadcast_will
 #[inline]
-fn send_will(session: &mut Session, global: &Arc<GlobalState>) {
+fn send_will(session: &mut Session, global: &Arc<GlobalState>) -> io::Result<()> {
     if let Some(last_will) = session.last_will.take() {
         let properties = last_will.properties;
+        let publish_properties = PublishProperties {
+            payload_is_utf8: properties.payload_is_utf8,
+            message_expiry_interval: properties.message_expiry_interval,
+            topic_alias: None,
+            response_topic: properties.response_topic,
+            correlation_data: properties.correlation_data,
+            user_properties: properties.user_properties,
+            subscription_id: None,
+            content_type: properties.content_type,
+        };
+        let encode_len = {
+            let qos_pid = match last_will.qos {
+                QoS::Level0 => QosPid::Level0,
+                QoS::Level1 => QosPid::Level1(Default::default()),
+                QoS::Level2 => QosPid::Level2(Default::default()),
+            };
+            let publish = Publish {
+                dup: false,
+                retain: false,
+                qos_pid,
+                topic_name: last_will.topic_name.clone(),
+                payload: last_will.payload.clone(),
+                properties: publish_properties.clone(),
+            };
+            Packet::Publish(publish)
+                .encode_len()
+                .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?
+        };
         let _matched_len = send_publish(
             session,
             SendPublish {
@@ -618,18 +656,11 @@ fn send_will(session: &mut Session, global: &Arc<GlobalState>) {
                 retain: last_will.retain,
                 topic_name: &last_will.topic_name,
                 payload: &last_will.payload,
-                properties: &PublishProperties {
-                    payload_is_utf8: properties.payload_is_utf8,
-                    message_expiry_interval: properties.message_expiry_interval,
-                    topic_alias: None,
-                    response_topic: properties.response_topic,
-                    correlation_data: properties.correlation_data,
-                    user_properties: properties.user_properties,
-                    subscription_id: None,
-                    content_type: properties.content_type,
-                },
+                properties: &publish_properties,
+                encode_len,
             },
             global,
         );
     }
+    Ok(())
 }
