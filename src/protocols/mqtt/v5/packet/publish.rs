@@ -130,6 +130,13 @@ topic name : {}
                 );
                 return Err(err_pkt);
             }
+        } else if session.qos2_pids.len() >= global.config.max_inflight_server as usize {
+            let err_pkt = build_error_disconnect(
+                session,
+                DisconnectReasonCode::ReceiveMaximumExceeded,
+                "too many inflight qos2 message",
+            );
+            return Err(err_pkt);
         } else {
             // FIXME: check qos2_pids limit
             session.qos2_pids.insert(pid, current_hash);

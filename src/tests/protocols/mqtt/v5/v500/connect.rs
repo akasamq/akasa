@@ -102,10 +102,7 @@ async fn test_session_not_expired() {
 async fn test_receive_max_client() {
     let mut config = Config::new_allow_anonymous();
     config.max_inflight_client = 8;
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        config.clone(),
-    ));
+    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
     let (_task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
     let (_task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));
 
@@ -175,7 +172,39 @@ async fn test_receive_max_client() {
 }
 
 #[tokio::test]
-async fn test_max_packet_size() {
+async fn test_receive_max_server() {
+    let mut config = Config::new_allow_anonymous();
+    config.max_inflight_server = 4;
+    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
+
+    client.connect("client id", true, false).await;
+    for pid in 1..(4 + 1) {
+        client
+            .send_publish(QoS::Level2, pid, "abc/2", pid.to_string(), |_| ())
+            .await;
+        client
+            .recv_pubrec(pid, PubrecReasonCode::NoMatchingSubscribers)
+            .await;
+    }
+    client
+        .send_publish(QoS::Level2, 5, "abc/2", "5", |_| ())
+        .await;
+    let err_pkt = client.read_packet().await;
+    if let Packet::Disconnect(pkt) = err_pkt {
+        assert_eq!(
+            pkt.reason_code,
+            DisconnectReasonCode::ReceiveMaximumExceeded
+        );
+    } else {
+        panic!("invalid packet: {err_pkt:?}");
+    }
+    sleep(Duration::from_millis(20)).await;
+    assert!(task.is_finished());
+}
+
+#[tokio::test]
+async fn test_max_packet_size_client() {
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),
         Config::new_allow_anonymous(),

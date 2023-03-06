@@ -66,7 +66,8 @@ trait ClientV5 {
     async fn recv_puback(&mut self, pid: u16, code: PubackReasonCode);
 
     async fn send_pubrec(&self, pid: u16);
-    async fn recv_pubrec(&mut self, pid: u16);
+    async fn recv_pubrec_success(&mut self, pid: u16);
+    async fn recv_pubrec(&mut self, pid: u16, code: PubrecReasonCode);
 
     async fn send_pubrel(&self, pid: u16);
     async fn recv_pubrel(&mut self, pid: u16);
@@ -202,7 +203,7 @@ impl ClientV5 for MockConnControl {
         match qos {
             QoS::Level0 => {}
             QoS::Level1 => self.recv_puback_success(pid).await,
-            QoS::Level2 => self.recv_pubrec(pid).await,
+            QoS::Level2 => self.recv_pubrec_success(pid).await,
         }
     }
 
@@ -224,11 +225,14 @@ impl ClientV5 for MockConnControl {
         let pid = Pid::try_from(pid).unwrap();
         self.write_packet(Pubrec::new_success(pid).into()).await;
     }
-    async fn recv_pubrec(&mut self, pid: u16) {
+    async fn recv_pubrec(&mut self, pid: u16, code: PubrecReasonCode) {
         let pid = Pid::try_from(pid).unwrap();
         let packet = self.read_packet().await;
-        let expected_packet = Pubrec::new_success(pid).into();
+        let expected_packet = Pubrec::new(pid, code).into();
         assert_eq!(packet, expected_packet);
+    }
+    async fn recv_pubrec_success(&mut self, pid: u16) {
+        self.recv_pubrec(pid, PubrecReasonCode::Success).await;
     }
 
     async fn send_pubrel(&self, pid: u16) {
