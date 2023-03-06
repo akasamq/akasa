@@ -159,10 +159,9 @@ async fn test_publish_qos1() {
 
 #[tokio::test]
 async fn test_publish_qos2() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let mut config = Config::new_allow_anonymous();
+    config.max_inflight_server = 60;
+    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
 
     // publisher
     let (_task0, mut client0) = MockConn::start_with_global(100, Arc::clone(&global));
