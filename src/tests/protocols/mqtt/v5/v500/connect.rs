@@ -147,8 +147,8 @@ async fn test_receive_max_client() {
             .await;
     }
 
-    // Reach max inflight, we can not receive more publish packet
     sleep(Duration::from_millis(50)).await;
+    // Reach max inflight, we can not receive more publish packet
     assert!(client2.try_read_packet_is_empty());
 
     for pub_pid in 1..(receive_max + 1) {
@@ -171,4 +171,66 @@ async fn test_receive_max_client() {
 
     sleep(Duration::from_millis(20)).await;
     assert!(client2.try_read_packet_is_empty());
+}
+
+#[tokio::test]
+async fn test_max_packet_size() {
+    let global = Arc::new(GlobalState::new(
+        "127.0.0.1:1883".parse().unwrap(),
+        Config::new_allow_anonymous(),
+    ));
+
+    // Without reason string
+    {
+        let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
+        let update_connect = |c: &mut Connect| {
+            c.clean_start = true;
+            c.properties.session_expiry_interval = None;
+            c.properties.max_packet_size = Some(6);
+        };
+        client
+            .connect_with("client id", update_connect, |_| ())
+            .await;
+        let mut disconnect = Disconnect::new_normal();
+        // to casue server send an error disconnect packet, due to limited max
+        // packet size, server will ommit the error message in properties.
+        disconnect.properties.session_expiry_interval = Some(10);
+        client.write_packet(disconnect.into()).await;
+        let err_pkt = client.read_packet().await;
+        if let Packet::Disconnect(pkt) = err_pkt {
+            assert_eq!(pkt.reason_code, DisconnectReasonCode::ProtocolError);
+            assert!(pkt.properties.reason_string.is_none());
+        } else {
+            panic!("invalid packet: {err_pkt:?}");
+        }
+        sleep(Duration::from_millis(20)).await;
+        assert!(task.is_finished());
+    }
+
+    // With reason string
+    {
+        let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
+        let update_connect = |c: &mut Connect| {
+            c.clean_start = true;
+            c.properties.session_expiry_interval = None;
+            c.properties.max_packet_size = Some(50);
+        };
+        client
+            .connect_with("client id", update_connect, |_| ())
+            .await;
+        let mut disconnect = Disconnect::new_normal();
+        // to casue server send an error disconnect packet, due to limited max
+        // packet size, server will ommit the error message in properties.
+        disconnect.properties.session_expiry_interval = Some(10);
+        client.write_packet(disconnect.into()).await;
+        let err_pkt = client.read_packet().await;
+        if let Packet::Disconnect(pkt) = err_pkt {
+            assert_eq!(pkt.reason_code, DisconnectReasonCode::ProtocolError);
+            assert!(pkt.properties.reason_string.is_some());
+        } else {
+            panic!("invalid packet: {err_pkt:?}");
+        }
+        sleep(Duration::from_millis(20)).await;
+        assert!(task.is_finished());
+    }
 }
