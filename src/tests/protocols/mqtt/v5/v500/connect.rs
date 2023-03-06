@@ -348,3 +348,60 @@ async fn test_max_packet_size_server() {
     sleep(Duration::from_millis(20)).await;
     assert!(task.is_finished());
 }
+
+#[tokio::test]
+async fn test_connack_properties() {
+    let mut config = Config::new_allow_anonymous();
+    config.max_packet_size_server = 90;
+    config.max_keep_alive = 30;
+    config.max_allowed_qos = 1;
+    config.max_inflight_client = 11;
+    config.max_inflight_server = 13;
+    // properties
+    config.max_session_expiry_interval = 60;
+    config.topic_alias_max = 40;
+    config.retain_available = false;
+    config.shared_subscription_available = false;
+    config.subscription_id_available = false;
+    config.wildcard_subscription_available = false;
+    assert!(config.is_valid());
+
+    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
+
+    let connect = {
+        let mut c = Connect::new(Arc::new(String::new()), 32);
+        c.clean_start = true;
+        c.keep_alive = 32;
+        let p = &mut c.properties;
+        p.session_expiry_interval = Some(62);
+        p.receive_max = Some(15);
+        p.max_packet_size = Some(92);
+        p.topic_alias_max = Some(22);
+        c
+    };
+    let assert_connack = |c: &Connack| {
+        assert!(!c.session_present);
+        assert_eq!(c.reason_code, ConnectReasonCode::Success);
+        let p = &c.properties;
+        assert!(p.assigned_client_id.is_some());
+        assert_eq!(p.session_expiry_interval, Some(60));
+        assert_eq!(p.receive_max, Some(13));
+        assert_eq!(p.max_qos, Some(QoS::Level1));
+        assert_eq!(p.server_keep_alive, Some(30));
+        assert_eq!(p.max_packet_size, Some(90));
+        assert_eq!(p.topic_alias_max, Some(40));
+        assert_eq!(p.retain_available, Some(false));
+        assert_eq!(p.wildcard_subscription_available, Some(false));
+        assert_eq!(p.subscription_id_available, Some(false));
+        assert_eq!(p.shared_subscription_available, Some(false));
+    };
+    client.write_packet(connect.into()).await;
+    let pkt = client.read_packet().await;
+    if let Packet::Connack(connack) = pkt {
+        assert_connack(&connack);
+    } else {
+        panic!("invalid packet: {pkt:?}");
+    }
+    assert!(!task.is_finished());
+}
