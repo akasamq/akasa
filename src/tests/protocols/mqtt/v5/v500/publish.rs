@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::Bytes;
 use mqtt_proto::v5::*;
 use mqtt_proto::*;
 use tokio::time::sleep;
@@ -324,4 +325,65 @@ async fn test_topic_alias_not_found() {
     }
     sleep(Duration::from_millis(20)).await;
     assert!(task.is_finished());
+}
+
+#[tokio::test]
+async fn test_request_response() {
+    let global = Arc::new(GlobalState::new(
+        "127.0.0.1:1883".parse().unwrap(),
+        Config::new_allow_anonymous(),
+    ));
+
+    let (task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
+    let (task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));
+
+    client1.connect("client1", true, false).await;
+    client2.connect("client2", true, false).await;
+
+    client1
+        .subscribe(
+            1,
+            vec![("/client1/response", SubscriptionOptions::new(QoS::Level2))],
+        )
+        .await;
+    client2
+        .subscribe(
+            1,
+            vec![("/client2/request", SubscriptionOptions::new(QoS::Level2))],
+        )
+        .await;
+
+    tokio::spawn(async move {
+        client2
+            .recv_publish(QoS::Level0, 0, "/client2/request", "ping", |p| {
+                let pp = &mut p.properties;
+                pp.response_topic =
+                    Some(TopicName::try_from("/client1/response".to_owned()).unwrap());
+                pp.correlation_data = Some(Bytes::from("request-id-01"));
+            })
+            .await;
+        client2
+            .send_publish(QoS::Level0, 0, "/client1/response", "pong", |p| {
+                p.properties.correlation_data = Some(Bytes::from("request-id-01"));
+            })
+            .await;
+        sleep(Duration::from_millis(20)).await;
+        assert!(!task2.is_finished());
+    });
+
+    client1
+        .send_publish(QoS::Level0, 0, "/client2/request", "ping", |p| {
+            let pp = &mut p.properties;
+            pp.response_topic = Some(TopicName::try_from("/client1/response".to_owned()).unwrap());
+            pp.correlation_data = Some(Bytes::from("request-id-01"));
+        })
+        .await;
+    client1
+        .recv_publish(QoS::Level0, 0, "/client1/response", "pong", |p| {
+            p.properties.correlation_data = Some(Bytes::from("request-id-01"));
+        })
+        .await;
+
+    sleep(Duration::from_millis(20)).await;
+    assert!(!task1.is_finished());
 }
