@@ -328,6 +328,34 @@ async fn test_topic_alias_not_found() {
 }
 
 #[tokio::test]
+async fn test_forbid_publish_subscription_id() {
+    let global = Arc::new(GlobalState::new(
+        "127.0.0.1:1883".parse().unwrap(),
+        Config::new_allow_anonymous(),
+    ));
+
+    let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
+    client.connect("client", true, false).await;
+    client
+        .send_publish(QoS::Level0, 0, "xyz", "0", |p| {
+            p.properties.subscription_id = Some(VarByteInt::try_from(2).unwrap());
+        })
+        .await;
+    let received_pkt = client.read_packet().await;
+    if let Packet::Disconnect(pkt) = received_pkt {
+        assert_eq!(pkt.reason_code, DisconnectReasonCode::ProtocolError);
+        assert_eq!(
+            pkt.properties.reason_string.unwrap().as_str(),
+            "subscription identifier can't in publish"
+        );
+    } else {
+        panic!("invalid received packet: {:?}", received_pkt);
+    }
+    sleep(Duration::from_millis(20)).await;
+    assert!(task.is_finished());
+}
+
+#[tokio::test]
 async fn test_request_response() {
     let global = Arc::new(GlobalState::new(
         "127.0.0.1:1883".parse().unwrap(),

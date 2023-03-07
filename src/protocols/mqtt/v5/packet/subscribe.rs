@@ -94,12 +94,13 @@ packet id : {}
                         } else {
                             msg.encode_len
                         };
+                        let retain = sub_opts.retain_as_published;
                         if let Some((final_qos, packet_opt)) = recv_publish(
                             session,
                             RecvPublish {
                                 topic_name: &msg.topic_name,
                                 qos: msg.qos,
-                                retain: true,
+                                retain,
                                 payload: &msg.payload,
                                 subscribe_filter: &filter,
                                 subscribe_qos: granted_qos,
