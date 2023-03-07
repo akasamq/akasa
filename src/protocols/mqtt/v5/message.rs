@@ -442,6 +442,30 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: 
                         }
                         break;
                     }
+                    // Because send_will is not a async_function
+                    for (target_id, info) in session.broadcast_packets.drain() {
+                        for msg in info.msgs {
+                            log::debug!(
+                                "[{}] broadcast to [{}], {:?}",
+                                session.client_id,
+                                target_id,
+                                msg
+                            );
+                            if let Err(err) = info
+                                .sink
+                                .sender()
+                                .send_async((session.client_id, msg))
+                                .await
+                            {
+                                log::warn!(
+                                    "[{}] handle will, send broadcast message to {} failed: {:?}",
+                                    session.client_id,
+                                    target_id,
+                                    err
+                                )
+                            }
+                        }
+                    }
                     if stop {
                         break;
                     }
@@ -527,7 +551,7 @@ fn handle_control(
             stop = !session.disconnected;
         }
         ControlMessage::SessionExpired { connected_time } => {
-            log::debug!("client {} session expired", session.client_identifier);
+            log::debug!("client \"{}\" session expired", session.client_identifier);
             if !session.connected && session.connected_time == Some(connected_time) {
                 if send_will(session, global).is_err() {
                     log::warn!("send will failed (packet too large)");
@@ -537,7 +561,11 @@ fn handle_control(
             }
         }
         ControlMessage::WillDelayReached { connected_time } => {
-            log::debug!("client {} will delay reached", session.client_identifier);
+            log::debug!(
+                "client \"{}\" will delay reached, connected={}",
+                session.client_identifier,
+                session.connected,
+            );
             if !session.connected
                 && session.connected_time == Some(connected_time)
                 && send_will(session, global).is_err()
@@ -639,6 +667,7 @@ fn handle_normal(
 #[inline]
 fn send_will(session: &mut Session, global: &Arc<GlobalState>) -> io::Result<()> {
     if let Some(last_will) = session.last_will.take() {
+        log::debug!("[{}] send will", session.client_id);
         let properties = last_will.properties;
         let publish_properties = PublishProperties {
             payload_is_utf8: properties.payload_is_utf8,

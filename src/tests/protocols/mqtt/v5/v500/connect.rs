@@ -435,7 +435,7 @@ async fn test_retain_not_supported() {
 }
 
 #[tokio::test]
-async fn test_qos_not_supported() {
+async fn test_will_qos_not_supported() {
     let mut config = Config::new_allow_anonymous();
     config.max_allowed_qos = 1;
     let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
@@ -460,4 +460,99 @@ async fn test_qos_not_supported() {
     }
     sleep(Duration::from_millis(20)).await;
     assert!(task.is_finished());
+}
+
+#[tokio::test]
+async fn test_will_delay_interval_reached() {
+    let global = Arc::new(GlobalState::new(
+        "127.0.0.1:1883".parse().unwrap(),
+        Config::new_allow_anonymous(),
+    ));
+    let (task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
+    let (task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));
+
+    client2.connect("client2", true, false).await;
+    client2
+        .subscribe(1, vec![("topic/1", SubscriptionOptions::new(QoS::Level2))])
+        .await;
+
+    let mut connect = Connect::new(Arc::new("client1".to_owned()), 32);
+    connect.clean_start = false;
+    connect.properties.session_expiry_interval = Some(60);
+    connect.last_will = Some(LastWill {
+        qos: QoS::Level0,
+        retain: false,
+        topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+        payload: Bytes::from("will message"),
+        properties: WillProperties {
+            delay_interval: Some(2),
+            ..Default::default()
+        },
+    });
+    client1.write_packet(connect.into()).await;
+    let pkt = client1.read_packet().await;
+    if let Packet::Connack(connack) = pkt {
+        assert!(!connack.session_present);
+        assert_eq!(connack.reason_code, ConnectReasonCode::Success);
+    } else {
+        panic!("invalid packet: {pkt:?}");
+    }
+    client1.write_data(b"invalid data".to_vec()).await;
+
+    client2
+        .recv_publish(QoS::Level0, 0, "topic/1", "will message", |_| ())
+        .await;
+
+    assert!(task1.await.unwrap().is_ok());
+    sleep(Duration::from_millis(20)).await;
+    assert!(!task2.is_finished());
+}
+
+#[tokio::test]
+async fn test_will_delay_interval_not_reached() {
+    let global = Arc::new(GlobalState::new(
+        "127.0.0.1:1883".parse().unwrap(),
+        Config::new_allow_anonymous(),
+    ));
+    let (_task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
+    let (task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));
+
+    client2.connect("client2", true, false).await;
+    client2
+        .subscribe(1, vec![("topic/1", SubscriptionOptions::new(QoS::Level2))])
+        .await;
+
+    let mut connect = Connect::new(Arc::new("client1".to_owned()), 32);
+    connect.clean_start = false;
+    connect.properties.session_expiry_interval = Some(60);
+    connect.last_will = Some(LastWill {
+        qos: QoS::Level0,
+        retain: false,
+        topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+        payload: Bytes::from("will message"),
+        properties: WillProperties {
+            delay_interval: Some(2),
+            ..Default::default()
+        },
+    });
+    client1.write_packet(connect.into()).await;
+    let pkt = client1.read_packet().await;
+    if let Packet::Connack(connack) = pkt {
+        assert!(!connack.session_present);
+        assert_eq!(connack.reason_code, ConnectReasonCode::Success);
+    } else {
+        panic!("invalid packet: {pkt:?}");
+    }
+    client1.write_data(b"invalid data".to_vec()).await;
+
+    sleep(Duration::from_millis(1030)).await;
+    // reconnect the session
+    let (_task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
+    client1.connect("client1", false, true).await;
+
+    sleep(Duration::from_millis(1030)).await;
+    assert!(client2.try_read_packet_is_empty());
+
+    sleep(Duration::from_millis(20)).await;
+    assert!(!task2.is_finished());
 }
