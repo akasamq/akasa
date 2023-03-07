@@ -119,14 +119,12 @@ impl<P: Debug> PendingPackets<P> {
             match packet_status {
                 PendingPacketStatus::New { last_sent, .. } => {
                     if now_ts >= self.timeout + *last_sent {
-                        *last_sent = now_ts;
                         next_idx = Some(idx);
                         break;
                     }
                 }
                 PendingPacketStatus::Pubrec { last_sent, .. } => {
                     if now_ts >= self.timeout + *last_sent {
-                        *last_sent = now_ts;
                         next_idx = Some(idx);
                         break;
                     }

@@ -26,7 +26,7 @@ use super::common::build_error_disconnect;
 #[inline]
 pub(crate) fn handle_publish(
     session: &mut Session,
-    packet: Publish,
+    mut packet: Publish,
     global: &Arc<GlobalState>,
 ) -> Result<Option<Packet>, Packet> {
     log::debug!(
@@ -64,14 +64,22 @@ topic name : {}
         return Err(err_pkt);
     }
 
-    let properties = &packet.properties;
+    let properties = &mut packet.properties;
     let mut topic_name = packet.topic_name.clone();
     if let Some(alias) = properties.topic_alias {
-        if alias == 0 || alias > global.config.topic_alias_max {
+        if alias == 0 {
+            let err_pkt = build_error_disconnect(
+                session,
+                DisconnectReasonCode::ProtocolError,
+                "topic alias is 0",
+            );
+            return Err(err_pkt);
+        }
+        if alias > global.config.topic_alias_max {
             let err_pkt = build_error_disconnect(
                 session,
                 DisconnectReasonCode::TopicAliasInvalid,
-                "topic alias too large or is 0",
+                "topic alias too large",
             );
             return Err(err_pkt);
         }
@@ -91,7 +99,15 @@ topic name : {}
                 .topic_aliases
                 .insert(alias, packet.topic_name.clone());
         }
+    } else if topic_name.is_empty() {
+        let err_pkt = build_error_disconnect(
+            session,
+            DisconnectReasonCode::ProtocolError,
+            "empty topic name",
+        );
+        return Err(err_pkt);
     }
+
     if properties.subscription_id.is_some() {
         let err_pkt = build_error_disconnect(
             session,
@@ -144,6 +160,8 @@ topic name : {}
     }
 
     let encode_len = total_len(packet.encode_len()).expect("packet too large");
+    let properties = &mut packet.properties;
+    properties.topic_alias = None;
     let matched_len = send_publish(
         session,
         SendPublish {
@@ -400,7 +418,6 @@ pub(crate) fn recv_publish(
     //       (shared subscription not support multiple subscription identifiers)
 
     let mut properties = msg.properties.cloned().unwrap_or_default();
-    properties.topic_alias = None;
     properties.subscription_id = subscription_id;
 
     let final_qos = cmp::min(msg.qos, msg.subscribe_qos);

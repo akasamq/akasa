@@ -35,6 +35,10 @@ topic name : {}
         packet.retain,
         packet.dup,
     );
+    if packet.topic_name.is_empty() {
+        log::debug!("invalid empty topic name");
+        return Err(io::ErrorKind::InvalidData.into());
+    }
     if packet.topic_name.starts_with('$') {
         log::debug!("invalid topic name: {}", packet.topic_name);
         return Err(io::ErrorKind::InvalidData.into());

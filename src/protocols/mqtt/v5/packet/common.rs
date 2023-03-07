@@ -115,9 +115,10 @@ pub(crate) fn handle_pendings(session: &mut Session) -> Vec<Packet> {
                 packet,
                 ..
             } => {
+                let now_ts = get_unix_ts();
                 let mut message_expiry_interval = None;
                 if let Some(value) = packet.properties.message_expiry_interval {
-                    let passed_secs = get_unix_ts() - *added_at;
+                    let passed_secs = now_ts - *added_at;
                     if *last_sent == 0 && passed_secs >= value as u64 {
                         expired_packets.push(*pid);
                         continue;
@@ -140,14 +141,16 @@ pub(crate) fn handle_pendings(session: &mut Session) -> Vec<Packet> {
                     properties,
                 };
                 *dup = true;
+                *last_sent = now_ts;
                 packets.push(rv_packet.into());
             }
-            PendingPacketStatus::Pubrec { pid, .. } => {
+            PendingPacketStatus::Pubrec { pid, last_sent, .. } => {
                 let rv_packet = Pubrel {
                     pid: *pid,
                     reason_code: PubrelReasonCode::Success,
                     properties: PubrelProperties::default(),
                 };
+                *last_sent = get_unix_ts();
                 packets.push(rv_packet.into());
             }
             PendingPacketStatus::Complete => unreachable!(),

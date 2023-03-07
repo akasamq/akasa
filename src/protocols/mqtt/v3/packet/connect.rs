@@ -109,6 +109,9 @@ clean session : {}
     session.keep_alive = packet.keep_alive;
 
     if let Some(last_will) = packet.last_will {
+        if last_will.topic_name.is_empty() {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
         if last_will.topic_name.starts_with('$') {
             return Err(io::ErrorKind::InvalidData.into());
         }

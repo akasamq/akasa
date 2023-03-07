@@ -7,7 +7,7 @@ use mqtt_proto::{
     QoS, QosPid,
 };
 
-use crate::protocols::mqtt::PendingPacketStatus;
+use crate::protocols::mqtt::{get_unix_ts, PendingPacketStatus};
 use crate::state::ClientId;
 
 use super::super::Session;
@@ -27,7 +27,11 @@ pub(crate) fn handle_pendings(session: &mut Session) -> Vec<Packet> {
         start_idx = idx + 1;
         match packet_status {
             PendingPacketStatus::New {
-                dup, pid, packet, ..
+                last_sent,
+                dup,
+                pid,
+                packet,
+                ..
             } => {
                 let qos_pid = match packet.qos {
                     QoS::Level0 => QosPid::Level0,
@@ -42,9 +46,11 @@ pub(crate) fn handle_pendings(session: &mut Session) -> Vec<Packet> {
                     payload: packet.payload.clone(),
                 };
                 *dup = true;
+                *last_sent = get_unix_ts();
                 packets.push(rv_packet.into());
             }
-            PendingPacketStatus::Pubrec { pid, .. } => {
+            PendingPacketStatus::Pubrec { pid, last_sent, .. } => {
+                *last_sent = get_unix_ts();
                 packets.push(Packet::Pubrel(*pid));
             }
             PendingPacketStatus::Complete => unreachable!(),

@@ -150,6 +150,12 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     session.auth_method = properties.auth_method;
 
     if let Some(last_will) = packet.last_will {
+        // v5.0 [MQTT-4.7.3-1]
+        if last_will.topic_name.is_empty() {
+            log::warn!("will topic name can't be empty");
+            // FIXME: send error connack
+            return Err(io::ErrorKind::InvalidData.into());
+        }
         if last_will.topic_name.starts_with('$') {
             log::warn!("will topic name can't start with $");
             // FIXME: send error connack
