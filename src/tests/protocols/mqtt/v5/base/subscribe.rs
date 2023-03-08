@@ -37,8 +37,17 @@ async fn test_subscribe_reject_empty_topics() {
 
     client.connect("client id", true, false).await;
     client.send_subscribe::<&str>(23, vec![]).await;
+    let received_pkt = client.read_packet().await;
+    if let Packet::Disconnect(pkt) = received_pkt {
+        assert_eq!(pkt.reason_code, DisconnectReasonCode::MalformedPacket);
+        assert_eq!(
+            pkt.properties.reason_string.unwrap().as_str(),
+            "empty subscription"
+        );
+    } else {
+        panic!("invalid received packet: {:?}", received_pkt);
+    }
 
     sleep(Duration::from_millis(10)).await;
-    assert!(client.try_read_packet().is_err());
     assert!(task.is_finished());
 }

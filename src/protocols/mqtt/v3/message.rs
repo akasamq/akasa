@@ -199,6 +199,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 
 impl OnlineSession for Session {
     type Packet = Packet;
+    type Error = Error;
     type SessionState = SessionState;
 
     fn client_id(&self) -> ClientId {
@@ -245,23 +246,37 @@ impl OnlineSession for Session {
 
     fn handle_packet(
         &mut self,
-        packet: Self::Packet,
-        encode_len: usize,
+        packet_result: Result<(usize, Self::Packet), Self::Error>,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
-    ) -> Result<(), io::Error> {
+    ) -> Result<(), Option<io::Error>> {
+        let (encode_len, packet) = match packet_result {
+            Ok(value) => value,
+            Err(err) => {
+                log::debug!("[{}] mqtt v3.x codec error: {}", self.client_id, err);
+                return if err.is_eof() {
+                    if !self.disconnected() {
+                        Err(Some(io::ErrorKind::UnexpectedEof.into()))
+                    } else {
+                        Err(None)
+                    }
+                } else {
+                    Err(Some(io::ErrorKind::InvalidData.into()))
+                };
+            }
+        };
         if encode_len > global.config.max_packet_size_server as usize {
             log::debug!(
                 "packet too large, size={}, max={}",
                 encode_len,
                 global.config.max_packet_size_server
             );
-            return Err(io::ErrorKind::InvalidData.into());
+            return Err(Some(io::ErrorKind::InvalidData.into()));
         }
         match packet {
             Packet::Disconnect => handle_disconnect(self),
             Packet::Publish(pkt) => {
-                if let Some(packet) = handle_publish(self, pkt, global)? {
+                if let Some(packet) = handle_publish(self, pkt, global).map_err(Some)? {
                     write_packets.push_back(packet.into());
                 }
             }
@@ -286,7 +301,7 @@ impl OnlineSession for Session {
                     self.client_id,
                     packet
                 );
-                return Err(io::ErrorKind::InvalidData.into());
+                return Err(Some(io::ErrorKind::InvalidData.into()));
             }
         }
         let pending_packets = after_handle_packet(self);

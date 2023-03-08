@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
@@ -80,8 +80,8 @@ impl<'a, C, S, H> Future for OnlineLoop<'a, C, S, H>
 where
     C: AsyncRead + AsyncWrite + Unpin, // connection
     S: OnlineSession,
-    H: PollHeader<Packet = S::Packet> + Copy + Debug + Unpin,
-    H::Error: From<io::Error> + From<mqtt_proto::Error> + Debug + Display,
+    H: PollHeader<Packet = S::Packet, Error = S::Error> + Copy + Debug + Unpin,
+    S::Error: From<io::Error> + From<mqtt_proto::Error> + Debug,
     S::Packet: MqttPacket + Debug + Unpin,
 {
     type Output = Option<io::Error>;
@@ -201,24 +201,8 @@ where
             );
             // TODO: Decode Header first for more detailed error report.
             let mut poll_packet = GenericPollPacket::new(packet_state, conn);
-            let (total, packet) = match Pin::new(&mut poll_packet).poll(cx) {
-                Poll::Ready(Ok(output)) => {
-                    *packet_state = GenericPollPacketState::default();
-                    output
-                }
-                Poll::Ready(Err(err)) => {
-                    log::debug!("[{}] mqtt v5.x codec error: {}", current_client_id, err);
-                    return if H::is_eof_error(&err) {
-                        if !session.disconnected() {
-                            Poll::Ready(Some(io::ErrorKind::UnexpectedEof.into()))
-                        } else {
-                            Poll::Ready(None)
-                        }
-                    } else {
-                        // FIXME: return error reason info with connack/disconnect packet
-                        Poll::Ready(Some(io::ErrorKind::InvalidData.into()))
-                    };
-                }
+            let packet_result = match Pin::new(&mut poll_packet).poll(cx) {
+                Poll::Ready(result) => result,
                 Poll::Pending => {
                     log::debug!("[{}] read pending, {:?}", current_client_id, packet_state);
                     *read_unfinish = false;
@@ -226,17 +210,17 @@ where
                     break;
                 }
             };
-            // TODO: handle packet
-            //   * insert packet into write_packets
-            //   * insert packet into broadcast_packets
+            if packet_result.is_ok() {
+                *packet_state = GenericPollPacketState::default();
+            }
 
             log::debug!(
-                "[{}] success decode MQTT v5 packet: {:?}",
+                "[{}] decode MQTT packet result: {:?}",
                 current_client_id,
-                packet
+                packet_result
             );
-            if let Err(err) = session.handle_packet(packet, total, write_packets, global) {
-                return Poll::Ready(Some(err));
+            if let Err(err_opt) = session.handle_packet(packet_result, write_packets, global) {
+                return Poll::Ready(err_opt);
             }
         }
 
@@ -565,6 +549,7 @@ impl MqttPacket for v5::Packet {
 
 pub trait OnlineSession {
     type Packet;
+    type Error;
     type SessionState;
 
     fn client_id(&self) -> ClientId;
@@ -578,11 +563,10 @@ pub trait OnlineSession {
 
     fn handle_packet(
         &mut self,
-        packet: Self::Packet,
-        encode_len: usize,
+        packet_result: Result<(usize, Self::Packet), Self::Error>,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
-    ) -> Result<(), io::Error>;
+    ) -> Result<(), Option<io::Error>>;
     fn handle_control(
         &mut self,
         msg: ControlMessage,

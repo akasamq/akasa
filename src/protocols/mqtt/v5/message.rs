@@ -15,7 +15,7 @@ use hashbrown::HashMap;
 use mqtt_proto::{
     v5::{
         Auth, AuthProperties, AuthReasonCode, Connect, ConnectReasonCode, DisconnectReasonCode,
-        Header, Packet, PollPacketState, Publish, PublishProperties,
+        ErrorV5, Header, Packet, PollPacketState, Publish, PublishProperties,
     },
     Error, Protocol, QoS, QosPid,
 };
@@ -137,8 +137,29 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     {
         Ok(packet) => packet,
         Err(err) => {
-            log::debug!("mqtt v5.x connect codec error: {}", err);
-            return Err(io::ErrorKind::InvalidData.into());
+            return match err {
+                ErrorV5::Common(Error::IoError(kind, _str)) => Err(kind.into()),
+                ErrorV5::Common(err) => {
+                    let err_pkt = build_error_connack(
+                        &mut session,
+                        false,
+                        ConnectReasonCode::MalformedPacket,
+                        err.to_string(),
+                    );
+                    write_packet(session.client_id, &mut conn, &err_pkt).await?;
+                    Ok(None)
+                }
+                err => {
+                    let err_pkt = build_error_connack(
+                        &mut session,
+                        false,
+                        ConnectReasonCode::MalformedPacket,
+                        err.to_string(),
+                    );
+                    write_packet(session.client_id, &mut conn, &err_pkt).await?;
+                    Ok(None)
+                }
+            }
         }
     };
     handle_connect(
@@ -158,9 +179,32 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         round_quota -= 1;
 
         let packet = async {
-            Packet::decode_async(&mut conn)
-                .await
-                .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
+            match Packet::decode_async(&mut conn).await {
+                Ok(packet) => Ok(packet),
+                Err(err) => match err {
+                    ErrorV5::Common(Error::IoError(kind, _str)) => Err(kind.into()),
+                    ErrorV5::Common(err) => {
+                        let err_pkt = build_error_connack(
+                            &mut session,
+                            false,
+                            ConnectReasonCode::MalformedPacket,
+                            err.to_string(),
+                        );
+                        write_packet(session.client_id, &mut conn, &err_pkt).await?;
+                        Err(io::ErrorKind::InvalidData.into())
+                    }
+                    err => {
+                        let err_pkt = build_error_connack(
+                            &mut session,
+                            false,
+                            ConnectReasonCode::MalformedPacket,
+                            err.to_string(),
+                        );
+                        write_packet(session.client_id, &mut conn, &err_pkt).await?;
+                        Err(io::ErrorKind::InvalidData.into())
+                    }
+                },
+            }
         }
         .or(async {
             log::info!("connection timeout: {}", peer);
@@ -256,29 +300,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     if !session.client_disconnected {
         handle_will(&mut session, executor, global).await?;
     }
-    for (target_id, info) in session.broadcast_packets.drain() {
-        for msg in info.msgs {
-            log::debug!(
-                "[{}] broadcast to [{}], {:?}",
-                session.client_id,
-                target_id,
-                msg
-            );
-            if let Err(err) = info
-                .sink
-                .sender()
-                .send_async((session.client_id, msg))
-                .await
-            {
-                log::warn!(
-                    "[{}] handle will, send broadcast message to {} failed: {:?}",
-                    session.client_id,
-                    target_id,
-                    err
-                )
-            }
-        }
-    }
+    broadcast_packets(&mut session).await;
     if session.session_expiry_interval == 0 {
         global.remove_client(session.client_id, session.subscribes().keys());
         if let Some(err) = io_error {
@@ -297,6 +319,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 
 impl OnlineSession for Session {
     type Packet = Packet;
+    type Error = ErrorV5;
     type SessionState = SessionState;
 
     fn client_id(&self) -> ClientId {
@@ -343,11 +366,48 @@ impl OnlineSession for Session {
 
     fn handle_packet(
         &mut self,
-        packet: Self::Packet,
-        encode_len: usize,
+        packet_result: Result<(usize, Self::Packet), Self::Error>,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
-    ) -> Result<(), io::Error> {
+    ) -> Result<(), Option<io::Error>> {
+        let (encode_len, packet) = match packet_result {
+            Ok(value) => value,
+            Err(err) => {
+                log::debug!("[{}] mqtt v5.x codec error: {}", self.client_id, err);
+                return match err {
+                    ErrorV5::Common(Error::IoError(kind, _str)) => {
+                        if kind == io::ErrorKind::UnexpectedEof {
+                            if !self.disconnected() {
+                                Err(Some(io::ErrorKind::UnexpectedEof.into()))
+                            } else {
+                                Err(None)
+                            }
+                        } else {
+                            Err(Some(kind.into()))
+                        }
+                    }
+                    ErrorV5::Common(err) => {
+                        let err_pkt = build_error_disconnect(
+                            self,
+                            DisconnectReasonCode::MalformedPacket,
+                            err.to_string(),
+                        );
+                        write_packets.push_back(err_pkt.into());
+                        Ok(())
+                    }
+                    err => {
+                        let err_pkt = build_error_disconnect(
+                            self,
+                            DisconnectReasonCode::MalformedPacket,
+                            err.to_string(),
+                        );
+                        write_packets.push_back(err_pkt.into());
+                        Ok(())
+                    }
+                };
+            }
+        };
+
         if encode_len > global.config.max_packet_size_server as usize {
             log::debug!(
                 "packet too large, size={}, max={}",
@@ -400,7 +460,7 @@ impl OnlineSession for Session {
                     self.client_id,
                     packet
                 );
-                return Err(io::ErrorKind::InvalidData.into());
+                return Err(Some(io::ErrorKind::InvalidData.into()));
             }
         }
         let pending_packets = after_handle_packet(self);
@@ -444,29 +504,7 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: 
                         break;
                     }
                     // Because send_will is not a async_function
-                    for (target_id, info) in session.broadcast_packets.drain() {
-                        for msg in info.msgs {
-                            log::debug!(
-                                "[{}] broadcast to [{}], {:?}",
-                                session.client_id,
-                                target_id,
-                                msg
-                            );
-                            if let Err(err) = info
-                                .sink
-                                .sender()
-                                .send_async((session.client_id, msg))
-                                .await
-                            {
-                                log::warn!(
-                                    "[{}] handle will, send broadcast message to {} failed: {:?}",
-                                    session.client_id,
-                                    target_id,
-                                    err
-                                )
-                            }
-                        }
-                    }
+                    broadcast_packets(&mut session).await;
                     if stop {
                         break;
                     }
@@ -712,4 +750,30 @@ fn send_will(session: &mut Session, global: &Arc<GlobalState>) -> io::Result<()>
         );
     }
     Ok(())
+}
+
+async fn broadcast_packets(session: &mut Session) {
+    for (target_id, info) in session.broadcast_packets.drain() {
+        for msg in info.msgs {
+            log::debug!(
+                "[{}] broadcast to [{}], {:?}",
+                session.client_id,
+                target_id,
+                msg
+            );
+            if let Err(err) = info
+                .sink
+                .sender()
+                .send_async((session.client_id, msg))
+                .await
+            {
+                log::warn!(
+                    "[{}] handle will, send broadcast message to {} failed: {:?}",
+                    session.client_id,
+                    target_id,
+                    err
+                )
+            }
+        }
+    }
 }

@@ -26,9 +26,19 @@ async fn test_payload_is_not_utf8() {
             p.properties.payload_is_utf8 = Some(true);
         })
         .await;
-    // FIXME: return Puback with PayloadFormatInvalid
+    let received_pkt = client.read_packet().await;
+    if let Packet::Disconnect(pkt) = received_pkt {
+        assert_eq!(pkt.reason_code, DisconnectReasonCode::MalformedPacket);
+        assert_eq!(
+            pkt.properties.reason_string.unwrap().as_str(),
+            "invalid payload format, utf8 expected"
+        );
+    } else {
+        panic!("invalid received packet: {:?}", received_pkt);
+    }
+
     sleep(Duration::from_millis(20)).await;
-    assert!(task.await.unwrap().is_err());
+    assert!(task.await.unwrap().is_ok());
 }
 
 #[tokio::test]
