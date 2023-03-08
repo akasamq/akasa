@@ -58,7 +58,8 @@ pub(crate) fn build_error_connack<'a, R: Into<Cow<'a, str>>>(
             .into();
         }
     }
-    session.disconnected = true;
+    session.client_disconnected = true;
+    session.server_disconnected = true;
     rv_packet
 }
 
@@ -94,7 +95,7 @@ pub(crate) fn build_error_disconnect<'a, R: Into<Cow<'a, str>>>(
             .into();
         }
     }
-    session.disconnected = true;
+    session.server_disconnected = true;
     rv_packet
 }
 

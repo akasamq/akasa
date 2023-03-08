@@ -373,7 +373,7 @@ pub(crate) fn handle_disconnect(session: &mut Session, packet: Disconnect) -> Re
     if packet.reason_code == DisconnectReasonCode::NormalDisconnect {
         session.last_will = None;
     }
-    session.disconnected = true;
+    session.client_disconnected = true;
     Ok(())
 }
 

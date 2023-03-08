@@ -439,7 +439,7 @@ pub(crate) fn recv_publish(
             },
         );
         Some((final_qos, None))
-    } else if !session.disconnected {
+    } else if !session.client_disconnected && !session.server_disconnected {
         let encode_len = if msg.qos > QoS::Level0 {
             msg.encode_len - 2
         } else {

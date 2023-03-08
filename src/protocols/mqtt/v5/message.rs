@@ -247,12 +247,13 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     }
 
     log::debug!(
-        "[{}] online loop finished, disconnected={}",
+        "[{}] online loop finished, client_disconnected={}, server_disconnected={}",
         session.client_id,
-        session.disconnected
+        session.client_disconnected,
+        session.server_disconnected,
     );
     // FIXME: check all place depend on session.disconnected
-    if !session.disconnected {
+    if !session.client_disconnected {
         handle_will(&mut session, executor, global).await?;
     }
     for (target_id, info) in session.broadcast_packets.drain() {
@@ -302,7 +303,7 @@ impl OnlineSession for Session {
         self.client_id
     }
     fn disconnected(&self) -> bool {
-        self.disconnected
+        self.client_disconnected || self.server_disconnected
     }
     fn build_state(&mut self, receiver: ClientReceiver) -> Self::SessionState {
         let mut pending_packets = PendingPackets::new(0, 0, 0);
@@ -546,9 +547,9 @@ fn handle_control(
                 "kick \"{}\", reason: {}, online: {}",
                 session.client_identifier,
                 reason,
-                !session.disconnected,
+                !session.disconnected(),
             );
-            stop = !session.disconnected;
+            stop = !session.disconnected();
         }
         ControlMessage::SessionExpired { connected_time } => {
             log::debug!("client \"{}\" session expired", session.client_identifier);
