@@ -1,5 +1,5 @@
 mod message;
-mod packet;
+pub mod packet;
 mod session;
 
 pub use message::handle_connection;

@@ -7,13 +7,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use flume::bounded;
+use flume::{bounded, Sender};
 use futures_lite::{
     io::{AsyncRead, AsyncWrite},
     FutureExt,
 };
 use mqtt_proto::{decode_raw_header, v3, v5, Error, Protocol};
 
+use crate::hook::HookRequest;
 use crate::protocols::mqtt;
 use crate::state::{Executor, GlobalState};
 
@@ -22,6 +23,7 @@ const CONNECT_TIMEOUT_SECS: u64 = 5;
 pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     mut conn: T,
     peer: SocketAddr,
+    hook_requests: Sender<HookRequest>,
     executor: E,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
@@ -58,6 +60,7 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
                 header,
                 protocol,
                 timeout_receiver,
+                hook_requests,
                 executor,
                 global,
             )
@@ -71,6 +74,7 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
                 header,
                 protocol,
                 timeout_receiver,
+                hook_requests,
                 executor,
                 global,
             )

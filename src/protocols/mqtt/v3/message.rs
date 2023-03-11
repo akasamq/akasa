@@ -14,7 +14,9 @@ use mqtt_proto::{
     v3::{Connect, Header, Packet, PollPacketState, Publish},
     Error, Protocol, QoS, QosPid,
 };
+use tokio::sync::oneshot;
 
+use crate::hook::{HookRequest, HookResult};
 use crate::protocols::mqtt::{
     BroadcastPackets, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
 };
@@ -35,12 +37,14 @@ use super::{
     Session, SessionState,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     conn: T,
     peer: SocketAddr,
     header: Header,
     protocol: Protocol,
     timeout_receiver: Receiver<()>,
+    hook_requests: Sender<HookRequest>,
     executor: E,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
@@ -50,6 +54,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         header,
         protocol,
         timeout_receiver,
+        &hook_requests,
         &executor,
         &global,
     )
@@ -89,12 +94,14 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     mut conn: T,
     peer: SocketAddr,
     _header: Header,
     protocol: Protocol,
     timeout_receiver: Receiver<()>,
+    hook_requests: &Sender<HookRequest>,
     executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<Option<(Session, ClientReceiver)>> {
@@ -151,6 +158,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         &receiver,
         receiver.control.stream(),
         receiver.normal.stream(),
+        hook_requests.sink(),
         &mut conn,
         &mut taken_over,
         PollPacketState::default(),
@@ -244,27 +252,30 @@ impl OnlineSession for Session {
         &mut self.broadcast_packets
     }
 
+    fn handle_decode_error(
+        &mut self,
+        err: Self::Error,
+        _write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
+    ) -> Result<(), Option<io::Error>> {
+        log::debug!("[{}] mqtt v3.x codec error: {}", self.client_id, err);
+        if err.is_eof() {
+            if !self.disconnected() {
+                Err(Some(io::ErrorKind::UnexpectedEof.into()))
+            } else {
+                Err(None)
+            }
+        } else {
+            Err(Some(io::ErrorKind::InvalidData.into()))
+        }
+    }
+
     fn handle_packet(
         &mut self,
-        packet_result: Result<(usize, Self::Packet), Self::Error>,
+        encode_len: usize,
+        packet: Self::Packet,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
-    ) -> Result<(), Option<io::Error>> {
-        let (encode_len, packet) = match packet_result {
-            Ok(value) => value,
-            Err(err) => {
-                log::debug!("[{}] mqtt v3.x codec error: {}", self.client_id, err);
-                return if err.is_eof() {
-                    if !self.disconnected() {
-                        Err(Some(io::ErrorKind::UnexpectedEof.into()))
-                    } else {
-                        Err(None)
-                    }
-                } else {
-                    Err(Some(io::ErrorKind::InvalidData.into()))
-                };
-            }
-        };
+    ) -> Result<Option<(HookRequest, oneshot::Receiver<HookResult>)>, Option<io::Error>> {
         if encode_len > global.config.max_packet_size_server as usize {
             log::debug!(
                 "packet too large, size={}, max={}",
@@ -276,6 +287,7 @@ impl OnlineSession for Session {
         match packet {
             Packet::Disconnect => handle_disconnect(self),
             Packet::Publish(pkt) => {
+                // FIXME: handle hook
                 if let Some(packet) = handle_publish(self, pkt, global).map_err(Some)? {
                     write_packets.push_back(packet.into());
                 }
@@ -285,10 +297,12 @@ impl OnlineSession for Session {
             Packet::Pubrel(pid) => write_packets.push_back(handle_pubrel(self, pid)?.into()),
             Packet::Pubcomp(pid) => handle_pubcomp(self, pid),
             Packet::Subscribe(pkt) => {
+                // FIXME: handle hook
                 let retain_packets = handle_subscribe(self, pkt, global)?;
                 write_packets.extend(retain_packets.into_iter().map(WritePacket::Packet));
             }
             Packet::Unsubscribe(pkt) => {
+                // FIXME: handle hook
                 write_packets.push_back(handle_unsubscribe(self, pkt, global).into());
             }
             Packet::Pingreq => {
@@ -304,9 +318,12 @@ impl OnlineSession for Session {
                 return Err(Some(io::ErrorKind::InvalidData.into()));
             }
         }
+        Ok(None)
+    }
+
+    fn after_handle_packet(&mut self, write_packets: &mut VecDeque<WritePacket<Self::Packet>>) {
         let pending_packets = after_handle_packet(self);
         write_packets.extend(pending_packets.into_iter().map(WritePacket::Packet));
-        Ok(())
     }
 
     fn handle_control(

@@ -27,7 +27,7 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     conn: &mut T,
     executor: &E,
     global: &Arc<GlobalState>,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     log::debug!(
         r#"{} received a connect packet:
      protocol : {}
@@ -75,7 +75,7 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     if reason_code != ConnectReasonCode::Success {
         let err_pkt = build_error_connack(session, false, reason_code, "");
         write_packet(session.client_id, conn, &err_pkt).await?;
-        return Ok(());
+        return Ok(false);
     }
 
     // FIXME: if connection reach rate limit return "Server unavailable"
@@ -112,7 +112,7 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
             "ReceiveMaximum value=0 is not allowed",
         );
         write_packet(session.client_id, conn, &err_pkt).await?;
-        return Ok(());
+        return Ok(false);
     }
     if session.max_packet_size == 0 {
         log::debug!("connect properties MaximumPacketSize is 0");
@@ -123,7 +123,7 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
             "MaximumPacketSize value=0 is not allowed",
         );
         write_packet(session.client_id, conn, &err_pkt).await?;
-        return Ok(());
+        return Ok(false);
     }
 
     if properties.auth_data.is_some() && properties.auth_method.is_none() {
@@ -135,7 +135,7 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
             "AuthenticationMethod is missing",
         );
         write_packet(session.client_id, conn, &err_pkt).await?;
-        return Ok(());
+        return Ok(false);
     }
 
     session.session_expiry_interval = properties.session_expiry_interval.unwrap_or(0);
@@ -176,7 +176,7 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
                 "auth method not supported",
             );
             write_packet(session.client_id, conn, &err_pkt).await?;
-            return Ok(());
+            return Ok(false);
         };
         if !global.config.sasl_mechanisms.contains(&mechanism) {
             log::info!("Sasl mechanism not supported: {:?}", mechanism);
@@ -187,7 +187,7 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
                 "auth method not supported",
             );
             write_packet(session.client_id, conn, &err_pkt).await?;
-            return Ok(());
+            return Ok(false);
         }
         match scram_client_first(session, properties.auth_data, global) {
             Ok(server_first) => {
@@ -204,7 +204,7 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
             }
             Err(err_pkt) => write_packet(session.client_id, conn, &err_pkt).await?,
         }
-        Ok(())
+        Ok(false)
     } else if properties.auth_data.is_some() {
         log::info!("connect properties have auth data but missing auth method");
         let err_pkt = build_error_connack(
@@ -214,7 +214,7 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
             "auth method is missing",
         );
         write_packet(session.client_id, conn, &err_pkt).await?;
-        Ok(())
+        Ok(false)
     } else {
         session_connect(session, receiver, None, conn, executor, global).await
     }
@@ -227,7 +227,7 @@ pub(crate) async fn session_connect<T: AsyncWrite + Unpin, E: Executor>(
     conn: &mut T,
     executor: &E,
     global: &Arc<GlobalState>,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     let mut session_present = false;
     match global
         .add_client(session.client_identifier.as_str(), session.protocol)
@@ -349,7 +349,7 @@ pub(crate) async fn session_connect<T: AsyncWrite + Unpin, E: Executor>(
         session.connected = true;
         session.connected_time = Some(Instant::now());
     }
-    Ok(())
+    Ok(session_present)
 }
 
 #[inline]

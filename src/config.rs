@@ -4,6 +4,8 @@ use mqtt_proto::QoS;
 use scram::server::{AuthenticationProvider, PasswordInfo};
 use serde::{Deserialize, Serialize};
 
+use crate::hook::HookConfig;
+
 pub const DEFAULT_MAX_PACKET_SIZE: u32 = 5 + 268_435_455;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -47,6 +49,8 @@ pub struct Config {
     pub shared_subscription_available: bool,
     pub subscription_id_available: bool,
     pub wildcard_subscription_available: bool,
+
+    pub hook: HookConfig,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -128,6 +132,8 @@ impl Default for Config {
             shared_subscription_available: true,
             subscription_id_available: true,
             wildcard_subscription_available: true,
+
+            hook: HookConfig::default(),
         };
         assert!(config.is_valid(), "default config");
         config

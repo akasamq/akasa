@@ -19,7 +19,9 @@ use mqtt_proto::{
     },
     Error, Protocol, QoS, QosPid,
 };
+use tokio::sync::oneshot;
 
+use crate::hook::{HookRequest, HookResult, LockedHookContext};
 use crate::protocols::mqtt::{
     BroadcastPackets, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
 };
@@ -43,12 +45,14 @@ use super::{
     Session, SessionState,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     conn: T,
     peer: SocketAddr,
     header: Header,
     protocol: Protocol,
     timeout_receiver: Receiver<()>,
+    hook_requests: Sender<HookRequest>,
     executor: E,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
@@ -58,6 +62,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         header,
         protocol,
         timeout_receiver,
+        &hook_requests,
         &executor,
         &global,
     )
@@ -115,12 +120,14 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     mut conn: T,
     peer: SocketAddr,
     header: Header,
     protocol: Protocol,
     timeout_receiver: Receiver<()>,
+    hook_requests: &Sender<HookRequest>,
     executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<Option<(Session, ClientReceiver)>> {
@@ -162,7 +169,34 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
             }
         }
     };
-    handle_connect(
+
+    // Run before connect hook
+    if global.config.hook.enable_before_connect {
+        let (hook_tx, hook_rx) = oneshot::channel();
+        let hook_request = HookRequest::V5BeforeConnect {
+            peer,
+            connect: packet.clone(),
+            sender: hook_tx,
+        };
+        if let Err(err) = hook_requests.send_async(hook_request).await {
+            log::error!("No hook service found: {err:?}");
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        let reason_code = match hook_rx.await {
+            Ok(resp) => resp?.to_reason_code(),
+            Err(err) => {
+                log::error!("Hook service stopped: {err:?}");
+                return Err(io::ErrorKind::InvalidData.into());
+            }
+        };
+        if reason_code != ConnectReasonCode::Success {
+            let err_pkt = build_error_connack(&mut session, false, reason_code, "");
+            write_packet(session.client_id, &mut conn, &err_pkt).await?;
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+    }
+
+    let mut session_present = handle_connect(
         &mut session,
         &mut receiver,
         packet,
@@ -225,7 +259,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 
         match handle_auth(&mut session, auth, global) {
             Ok((AuthReasonCode::Success, server_final)) => {
-                session_connect(
+                session_present = session_connect(
                     &mut session,
                     &mut receiver,
                     Some(server_final),
@@ -281,6 +315,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         &receiver,
         receiver.control.stream(),
         receiver.normal.stream(),
+        hook_requests.sink(),
         &mut conn,
         &mut taken_over,
         PollPacketState::default(),
@@ -364,50 +399,52 @@ impl OnlineSession for Session {
         &mut self.broadcast_packets
     }
 
+    fn handle_decode_error(
+        &mut self,
+        err: Self::Error,
+        write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
+    ) -> Result<(), Option<io::Error>> {
+        log::debug!("[{}] mqtt v5.x codec error: {}", self.client_id, err);
+        match err {
+            ErrorV5::Common(Error::IoError(kind, _str)) => {
+                if kind == io::ErrorKind::UnexpectedEof {
+                    if !self.disconnected() {
+                        Err(Some(io::ErrorKind::UnexpectedEof.into()))
+                    } else {
+                        Err(None)
+                    }
+                } else {
+                    Err(Some(kind.into()))
+                }
+            }
+            ErrorV5::Common(err) => {
+                let err_pkt = build_error_disconnect(
+                    self,
+                    DisconnectReasonCode::MalformedPacket,
+                    err.to_string(),
+                );
+                write_packets.push_back(err_pkt.into());
+                Ok(())
+            }
+            err => {
+                let err_pkt = build_error_disconnect(
+                    self,
+                    DisconnectReasonCode::MalformedPacket,
+                    err.to_string(),
+                );
+                write_packets.push_back(err_pkt.into());
+                Ok(())
+            }
+        }
+    }
+
     fn handle_packet(
         &mut self,
-        packet_result: Result<(usize, Self::Packet), Self::Error>,
+        encode_len: usize,
+        packet: Self::Packet,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
-    ) -> Result<(), Option<io::Error>> {
-        let (encode_len, packet) = match packet_result {
-            Ok(value) => value,
-            Err(err) => {
-                log::debug!("[{}] mqtt v5.x codec error: {}", self.client_id, err);
-                return match err {
-                    ErrorV5::Common(Error::IoError(kind, _str)) => {
-                        if kind == io::ErrorKind::UnexpectedEof {
-                            if !self.disconnected() {
-                                Err(Some(io::ErrorKind::UnexpectedEof.into()))
-                            } else {
-                                Err(None)
-                            }
-                        } else {
-                            Err(Some(kind.into()))
-                        }
-                    }
-                    ErrorV5::Common(err) => {
-                        let err_pkt = build_error_disconnect(
-                            self,
-                            DisconnectReasonCode::MalformedPacket,
-                            err.to_string(),
-                        );
-                        write_packets.push_back(err_pkt.into());
-                        Ok(())
-                    }
-                    err => {
-                        let err_pkt = build_error_disconnect(
-                            self,
-                            DisconnectReasonCode::MalformedPacket,
-                            err.to_string(),
-                        );
-                        write_packets.push_back(err_pkt.into());
-                        Ok(())
-                    }
-                };
-            }
-        };
-
+    ) -> Result<Option<(HookRequest, oneshot::Receiver<HookResult>)>, Option<io::Error>> {
         if encode_len > global.config.max_packet_size_server as usize {
             log::debug!(
                 "packet too large, size={}, max={}",
@@ -420,7 +457,7 @@ impl OnlineSession for Session {
                 "Packet too large",
             );
             write_packets.push_back(err_pkt.into());
-            return Ok(());
+            return Ok(None);
         }
 
         match packet {
@@ -431,24 +468,64 @@ impl OnlineSession for Session {
                 }
             }
             Packet::Publish(pkt) => {
-                match handle_publish(self, pkt, global) {
-                    // QoS0
-                    Ok(None) => {}
-                    // QoS1, QoS2
-                    Ok(Some(packet)) => write_packets.push_back(packet.into()),
-                    Err(err_pkt) => write_packets.push_back(err_pkt.into()),
+                if global.config.hook.enable_publish {
+                    let locked_hook_context = LockedHookContext::new(self, write_packets);
+                    let (hook_sender, hook_receiver) = oneshot::channel();
+                    let hook_request = HookRequest::V5Publish {
+                        context: locked_hook_context,
+                        encode_len,
+                        publish: pkt,
+                        sender: hook_sender,
+                    };
+                    return Ok(Some((hook_request, hook_receiver)));
+                } else {
+                    match handle_publish(self, pkt, global) {
+                        // QoS0
+                        Ok(None) => {}
+                        // QoS1, QoS2
+                        Ok(Some(packet)) => write_packets.push_back(packet.into()),
+                        Err(err_pkt) => write_packets.push_back(err_pkt.into()),
+                    }
                 }
             }
             Packet::Puback(pkt) => handle_puback(self, pkt),
             Packet::Pubrec(pkt) => write_packets.push_back(handle_pubrec(self, pkt).into()),
             Packet::Pubrel(pkt) => write_packets.push_back(handle_pubrel(self, pkt).into()),
             Packet::Pubcomp(pkt) => handle_pubcomp(self, pkt),
-            Packet::Subscribe(pkt) => match handle_subscribe(self, pkt, global) {
-                Ok(packets) => write_packets.extend(packets.into_iter().map(WritePacket::Packet)),
-                Err(err_pkt) => write_packets.push_back(err_pkt.into()),
-            },
+            Packet::Subscribe(pkt) => {
+                if global.config.hook.enable_subscribe {
+                    let locked_hook_context = LockedHookContext::new(self, write_packets);
+                    let (hook_sender, hook_receiver) = oneshot::channel();
+                    let hook_request = HookRequest::V5Subscribe {
+                        context: locked_hook_context,
+                        encode_len,
+                        subscribe: pkt,
+                        sender: hook_sender,
+                    };
+                    return Ok(Some((hook_request, hook_receiver)));
+                } else {
+                    match handle_subscribe(self, pkt, global) {
+                        Ok(packets) => {
+                            write_packets.extend(packets.into_iter().map(WritePacket::Packet))
+                        }
+                        Err(err_pkt) => write_packets.push_back(err_pkt.into()),
+                    }
+                }
+            }
             Packet::Unsubscribe(pkt) => {
-                write_packets.push_back(handle_unsubscribe(self, pkt, global).into());
+                if global.config.hook.enable_unsubscribe {
+                    let locked_hook_context = LockedHookContext::new(self, write_packets);
+                    let (hook_sender, hook_receiver) = oneshot::channel();
+                    let hook_request = HookRequest::V5Unsubscribe {
+                        context: locked_hook_context,
+                        encode_len,
+                        unsubscribe: pkt,
+                        sender: hook_sender,
+                    };
+                    return Ok(Some((hook_request, hook_receiver)));
+                } else {
+                    write_packets.push_back(handle_unsubscribe(self, pkt, global).into());
+                }
             }
             Packet::Pingreq => {
                 log::debug!("{} received a ping packet", self.client_id);
@@ -463,9 +540,12 @@ impl OnlineSession for Session {
                 return Err(Some(io::ErrorKind::InvalidData.into()));
             }
         }
+        Ok(None)
+    }
+
+    fn after_handle_packet(&mut self, write_packets: &mut VecDeque<WritePacket<Self::Packet>>) {
         let pending_packets = after_handle_packet(self);
         write_packets.extend(pending_packets.into_iter().map(WritePacket::Packet));
-        Ok(())
     }
 
     fn handle_control(

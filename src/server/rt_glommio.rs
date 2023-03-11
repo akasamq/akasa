@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use flume::bounded;
 use glommio::{
     net::TcpListener,
     spawn_local,
@@ -13,11 +14,14 @@ use glommio::{
 };
 
 use super::handle_accept;
+use crate::hook::{DefaultHook, HookRequest, HookService};
 use crate::state::{Executor, GlobalState};
 
 pub fn start(global: Arc<GlobalState>) -> anyhow::Result<()> {
     let cpu_set = CpuSet::online().expect("online cpus");
-    let placement = PoolPlacement::MaxSpread(num_cpus::get(), Some(cpu_set));
+    let cpu_num = num_cpus::get();
+    let placement = PoolPlacement::MaxSpread(cpu_num, Some(cpu_set));
+    let (hook_sender, hook_receiver) = bounded(64);
     LocalExecutorPoolBuilder::new(placement)
         .on_all_shards(move || async move {
             let id = glommio::executor().id();
@@ -29,13 +33,33 @@ pub fn start(global: Arc<GlobalState>) -> anyhow::Result<()> {
                 "gc",
             );
             let executor = Rc::new(GlommioExecutor::new(id, gc_queue));
-            loop {
-                log::info!("Starting executor {}", id);
-                if let Err(err) = server(Rc::clone(&executor), Arc::clone(&global)).await {
-                    log::error!("Executor {} stopped with error: {}", id, err);
-                    sleep(Duration::from_secs(1)).await;
-                } else {
-                    log::info!("Executor {} stopped successfully!", id);
+            if cpu_num == 1 || id % 2 == 1 {
+                log::info!("Starting executor for hook {}", id);
+                let hook_handler = DefaultHook::new(Arc::clone(&global));
+                let hook_service = HookService::new(
+                    Arc::clone(&executor),
+                    hook_handler,
+                    hook_receiver.clone(),
+                    Arc::clone(&global),
+                );
+                executor.spawn_local(hook_service.start());
+            }
+
+            if cpu_num == 1 || id % 2 == 0 {
+                loop {
+                    log::info!("Starting executor for server {}", id);
+                    if let Err(err) = server(
+                        hook_requests.clone(),
+                        Rc::clone(&executor),
+                        Arc::clone(&global),
+                    )
+                    .await
+                    {
+                        log::error!("Executor {} stopped with error: {}", id, err);
+                        sleep(Duration::from_secs(1)).await;
+                    } else {
+                        log::info!("Executor {} stopped successfully!", id);
+                    }
                 }
             }
         })
@@ -44,7 +68,11 @@ pub fn start(global: Arc<GlobalState>) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn server(executor: Rc<GlommioExecutor>, global: Arc<GlobalState>) -> io::Result<()> {
+async fn server(
+    hook_requests: Sender<HookRequest>,
+    executor: Rc<GlommioExecutor>,
+    global: Arc<GlobalState>,
+) -> io::Result<()> {
     let listener = TcpListener::bind(global.bind)?;
     loop {
         let conn = listener.accept().await?.buffered();
@@ -55,7 +83,14 @@ async fn server(executor: Rc<GlommioExecutor>, global: Arc<GlobalState>) -> io::
             let executor = Rc::clone(&executor);
             let global = Arc::clone(&global);
             async move {
-                let _ = handle_accept(conn, peer, executor, Arc::clone(&global)).await;
+                let _ = handle_accept(
+                    conn,
+                    peer,
+                    hook_requests.clone(),
+                    executor,
+                    Arc::clone(&global),
+                )
+                .await;
             }
         })
         .detach();
