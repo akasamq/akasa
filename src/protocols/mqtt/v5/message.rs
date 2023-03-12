@@ -15,13 +15,14 @@ use hashbrown::HashMap;
 use mqtt_proto::{
     v5::{
         Auth, AuthProperties, AuthReasonCode, Connect, ConnectReasonCode, DisconnectReasonCode,
-        ErrorV5, Header, Packet, PollPacketState, Publish, PublishProperties,
+        ErrorV5, Header, Packet, PollPacketState, Publish, PublishProperties, RetainHandling,
+        Subscribe, SubscribeReasonCode, SubscriptionOptions, Unsubscribe,
     },
-    Error, Protocol, QoS, QosPid,
+    Error, Pid, Protocol, QoS, QosPid,
 };
 use tokio::sync::oneshot;
 
-use crate::hook::{HookRequest, HookResult, LockedHookContext};
+use crate::hook::{HookConnectedAction, HookRequest, HookResult, LockedHookContext};
 use crate::protocols::mqtt::{
     BroadcastPackets, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
 };
@@ -154,7 +155,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
                         err.to_string(),
                     );
                     write_packet(session.client_id, &mut conn, &err_pkt).await?;
-                    Ok(None)
+                    Err(io::ErrorKind::InvalidData.into())
                 }
                 err => {
                     let err_pkt = build_error_connack(
@@ -164,7 +165,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
                         err.to_string(),
                     );
                     write_packet(session.client_id, &mut conn, &err_pkt).await?;
-                    Ok(None)
+                    Err(io::ErrorKind::InvalidData.into())
                 }
             }
         }
@@ -172,28 +173,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 
     // Run before connect hook
     if global.config.hook.enable_before_connect {
-        let (hook_tx, hook_rx) = oneshot::channel();
-        let hook_request = HookRequest::V5BeforeConnect {
-            peer,
-            connect: packet.clone(),
-            sender: hook_tx,
-        };
-        if let Err(err) = hook_requests.send_async(hook_request).await {
-            log::error!("No hook service found: {err:?}");
-            return Err(io::ErrorKind::InvalidData.into());
-        }
-        let reason_code = match hook_rx.await {
-            Ok(resp) => resp?.to_reason_code(),
-            Err(err) => {
-                log::error!("Hook service stopped: {err:?}");
-                return Err(io::ErrorKind::InvalidData.into());
-            }
-        };
-        if reason_code != ConnectReasonCode::Success {
-            let err_pkt = build_error_connack(&mut session, false, reason_code, "");
-            write_packet(session.client_id, &mut conn, &err_pkt).await?;
-            return Err(io::ErrorKind::InvalidData.into());
-        }
+        before_connect_hook(&mut session, &mut conn, peer, &packet, hook_requests).await?;
     }
 
     let mut session_present = handle_connect(
@@ -295,6 +275,12 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         log::info!("{} not connected", session.peer);
         return Err(io::ErrorKind::InvalidData.into());
     }
+
+    // Run after connect hook
+    if global.config.hook.enable_before_connect {
+        after_connect_hook(&mut session, session_present, hook_requests, global).await?;
+    }
+
     for packet in after_handle_packet(&mut session) {
         write_packet(session.client_id, &mut conn, &packet).await?;
     }
@@ -856,4 +842,155 @@ async fn broadcast_packets(session: &mut Session) {
             }
         }
     }
+}
+
+async fn before_connect_hook<T: AsyncWrite + Unpin>(
+    session: &mut Session,
+    conn: &mut T,
+    peer: SocketAddr,
+    packet: &Connect,
+    hook_requests: &Sender<HookRequest>,
+) -> io::Result<()> {
+    let (hook_tx, hook_rx) = oneshot::channel();
+    let hook_request = HookRequest::V5BeforeConnect {
+        peer,
+        connect: packet.clone(),
+        sender: hook_tx,
+    };
+    if let Err(err) = hook_requests.send_async(hook_request).await {
+        log::error!("No hook service found: {err:?}");
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    let code = match hook_rx.await {
+        Ok(resp) => resp?.to_v5_code(),
+        Err(err) => {
+            log::error!("Hook service stopped: {err:?}");
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+    };
+    if code != ConnectReasonCode::Success {
+        let err_pkt = build_error_connack(session, false, code, "");
+        write_packet(session.client_id, conn, &err_pkt).await?;
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    Ok(())
+}
+
+async fn after_connect_hook(
+    session: &mut Session,
+    session_present: bool,
+    hook_requests: &Sender<HookRequest>,
+    global: &Arc<GlobalState>,
+) -> io::Result<()> {
+    let locked_hook_context = LockedHookContext::new(session, &mut Default::default());
+    let (hook_tx, hook_rx) = oneshot::channel();
+    let hook_request = HookRequest::V5AfterConnect {
+        context: locked_hook_context,
+        session_present,
+        sender: hook_tx,
+    };
+    if let Err(err) = hook_requests.send_async(hook_request).await {
+        log::error!("No hook service found: {err:?}");
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    let actions = match hook_rx.await {
+        Ok(resp) => resp?,
+        Err(err) => {
+            log::error!("Hook service stopped: {err:?}");
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+    };
+    for action in actions {
+        match action {
+            HookConnectedAction::Publish {
+                retain,
+                qos,
+                topic_name,
+                payload,
+                payload_is_utf8,
+                message_expiry_interval,
+                content_type,
+            } => {
+                let publish_properties = PublishProperties {
+                    payload_is_utf8,
+                    message_expiry_interval,
+                    content_type,
+                    ..Default::default()
+                };
+                let encode_len = {
+                    let qos_pid = match qos {
+                        QoS::Level0 => QosPid::Level0,
+                        QoS::Level1 => QosPid::Level1(Default::default()),
+                        QoS::Level2 => QosPid::Level2(Default::default()),
+                    };
+                    let publish = Publish {
+                        dup: false,
+                        retain,
+                        qos_pid,
+                        topic_name: topic_name.clone(),
+                        payload: payload.clone(),
+                        properties: publish_properties.clone(),
+                    };
+                    Packet::Publish(publish).encode_len().map_err(|_| {
+                        log::error!("action publish message too large");
+                        io::Error::from(io::ErrorKind::InvalidData)
+                    })?
+                };
+                let _matched_len = send_publish(
+                    session,
+                    SendPublish {
+                        qos,
+                        retain,
+                        topic_name: &topic_name,
+                        payload: &payload,
+                        properties: &publish_properties,
+                        encode_len,
+                    },
+                    global,
+                );
+            }
+            HookConnectedAction::Subscribe(topics) => {
+                let subscribe = Subscribe::new(
+                    Pid::default(),
+                    topics
+                        .clone()
+                        .into_iter()
+                        .map(|(filter, qos)| {
+                            let options = SubscriptionOptions {
+                                max_qos: qos,
+                                no_local: false,
+                                retain_as_published: false,
+                                retain_handling: RetainHandling::DoNotSend,
+                            };
+                            (filter, options)
+                        })
+                        .collect(),
+                );
+                match handle_subscribe(session, subscribe, global) {
+                    Ok(packets) => match &packets[0] {
+                        Packet::Suback(suback) => {
+                            for reason_code in &suback.topics {
+                                match reason_code {
+                                    SubscribeReasonCode::GrantedQoS0
+                                    | SubscribeReasonCode::GrantedQoS1
+                                    | SubscribeReasonCode::GrantedQoS2 => {}
+                                    code => {
+                                        log::error!("action subscribe message error reason code: {:?}, topics={:?}", code, topics,);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        _ => log::error!("action subscribe message invalid (retain included)"),
+                    },
+                    Err(err) => log::error!("action subscribe message invalid: {:?}", err),
+                }
+            }
+            HookConnectedAction::Unsubscribe(topics) => {
+                let unsubscribe = Unsubscribe::new(Pid::default(), topics);
+                let _unsuback = handle_unsubscribe(session, unsubscribe, global);
+            }
+        }
+    }
+    Ok(())
 }

@@ -80,6 +80,10 @@ impl Session {
         }
     }
 
+    pub fn client_identifier(&self) -> &Arc<String> {
+        &self.client_identifier
+    }
+
     pub fn subscribes(&self) -> &HashMap<TopicFilter, QoS> {
         &self.subscribes
     }

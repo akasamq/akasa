@@ -21,7 +21,7 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     conn: &mut T,
     executor: &E,
     global: &Arc<GlobalState>,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     log::debug!(
         r#"{} received a connect packet:
      protocol : {}
@@ -49,7 +49,7 @@ clean session : {}
         let rv_packet = Connack::new(false, ConnectReturnCode::IdentifierRejected);
         write_packet(session.client_id, conn, &rv_packet.into()).await?;
         session.disconnected = true;
-        return Ok(());
+        return Ok(false);
     }
 
     // v3.1.1 [MQTT-3.1.3-8]
@@ -58,7 +58,7 @@ clean session : {}
         let rv_packet = Connack::new(false, ConnectReturnCode::IdentifierRejected);
         write_packet(session.client_id, conn, &rv_packet.into()).await?;
         session.disconnected = true;
-        return Ok(());
+        return Ok(false);
     }
 
     let mut return_code = ConnectReturnCode::Accepted;
@@ -93,7 +93,7 @@ clean session : {}
         let rv_packet = Connack::new(false, return_code);
         write_packet(session.client_id, conn, &rv_packet.into()).await?;
         session.disconnected = true;
-        return Ok(());
+        return Ok(false);
     }
 
     // FIXME: if connection reach rate limit return "Server unavailable"
@@ -170,7 +170,7 @@ clean session : {}
     let rv_packet = Connack::new(session_present, return_code);
     write_packet(session.client_id, conn, &rv_packet.into()).await?;
     session.connected = true;
-    Ok(())
+    Ok(session_present)
 }
 
 #[inline]

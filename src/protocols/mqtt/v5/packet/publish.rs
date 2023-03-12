@@ -159,21 +159,25 @@ topic name : {}
         }
     }
 
-    let encode_len = total_len(packet.encode_len()).expect("packet too large");
-    let properties = &mut packet.properties;
-    properties.topic_alias = None;
-    let matched_len = send_publish(
-        session,
-        SendPublish {
-            qos: packet.qos_pid.qos(),
-            retain: packet.retain,
-            topic_name: &topic_name,
-            payload: &packet.payload,
-            properties,
-            encode_len,
-        },
-        global,
-    );
+    let matched_len = if !(packet.dup && packet.qos_pid.qos() == QoS::Level2) {
+        let encode_len = total_len(packet.encode_len()).expect("packet too large");
+        let properties = &mut packet.properties;
+        properties.topic_alias = None;
+        send_publish(
+            session,
+            SendPublish {
+                qos: packet.qos_pid.qos(),
+                retain: packet.retain,
+                topic_name: &topic_name,
+                payload: &packet.payload,
+                properties,
+                encode_len,
+            },
+            global,
+        )
+    } else {
+        1
+    };
     match packet.qos_pid {
         QosPid::Level0 => Ok(None),
         QosPid::Level1(pid) => {

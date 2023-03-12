@@ -17,7 +17,10 @@ use super::handle_accept;
 use crate::hook::{DefaultHook, HookRequest, HookService};
 use crate::state::{Executor, GlobalState};
 
-pub fn start(global: Arc<GlobalState>) -> anyhow::Result<()> {
+pub fn start<H>(hook_handler: H, global: Arc<GlobalState>) -> anyhow::Result<()>
+where
+    H: Hook + Clone + Send + Sync + 'static,
+{
     let cpu_set = CpuSet::online().expect("online cpus");
     let cpu_num = num_cpus::get();
     let placement = PoolPlacement::MaxSpread(cpu_num, Some(cpu_set));
@@ -35,10 +38,9 @@ pub fn start(global: Arc<GlobalState>) -> anyhow::Result<()> {
             let executor = Rc::new(GlommioExecutor::new(id, gc_queue));
             if cpu_num == 1 || id % 2 == 1 {
                 log::info!("Starting executor for hook {}", id);
-                let hook_handler = DefaultHook::new(Arc::clone(&global));
                 let hook_service = HookService::new(
                     Arc::clone(&executor),
-                    hook_handler,
+                    hook_handler.clone(),
                     hook_receiver.clone(),
                     Arc::clone(&global),
                 );

@@ -72,18 +72,20 @@ topic name : {}
         }
     }
 
-    let encode_len = total_len(packet.encode_len()).expect("packet too large");
-    send_publish(
-        session,
-        SendPublish {
-            topic_name: &packet.topic_name,
-            retain: packet.retain,
-            qos: packet.qos_pid.qos(),
-            payload: &packet.payload,
-            encode_len,
-        },
-        global,
-    );
+    if !(packet.dup && packet.qos_pid.qos() == QoS::Level2) {
+        let encode_len = total_len(packet.encode_len()).expect("packet too large");
+        send_publish(
+            session,
+            SendPublish {
+                topic_name: &packet.topic_name,
+                retain: packet.retain,
+                qos: packet.qos_pid.qos(),
+                payload: &packet.payload,
+                encode_len,
+            },
+            global,
+        );
+    }
     match packet.qos_pid {
         QosPid::Level0 => Ok(None),
         QosPid::Level1(pid) => Ok(Some(Packet::Puback(pid))),

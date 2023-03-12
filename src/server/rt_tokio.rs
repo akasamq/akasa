@@ -15,10 +15,13 @@ use tokio::{
 };
 
 use super::handle_accept;
-use crate::hook::{DefaultHook, HookService};
+use crate::hook::{Hook, HookService};
 use crate::state::{Executor, GlobalState};
 
-pub fn start(global: Arc<GlobalState>) -> io::Result<()> {
+pub fn start<H>(hook_handler: H, global: Arc<GlobalState>) -> io::Result<()>
+where
+    H: Hook + Clone + Send + Sync + 'static,
+{
     let rt = Runtime::new()?;
     let (hook_sender, hook_receiver) = bounded(64);
     rt.block_on(async move {
@@ -28,10 +31,9 @@ pub fn start(global: Arc<GlobalState>) -> io::Result<()> {
 
         let hook_service_tasks = cmp::max(num_cpus::get() / 2, 1);
         for _ in 0..hook_service_tasks {
-            let hook_handler = DefaultHook::new(Arc::clone(&global));
             let hook_service = HookService::new(
                 Arc::clone(&executor),
-                hook_handler,
+                hook_handler.clone(),
                 hook_receiver.clone(),
                 Arc::clone(&global),
             );

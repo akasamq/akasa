@@ -18,7 +18,10 @@ use anyhow::{anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::config::Config;
+use crate::hook::DefaultHook;
 use crate::state::GlobalState;
+
+pub use crate::hook::{HookConnectCode, HookConnectedAction, HookPublishCode};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -86,11 +89,12 @@ fn main() -> anyhow::Result<()> {
                 bail!("invalid config");
             }
             log::info!("Listen on {}", bind);
+            let hook_handler = DefaultHook;
             let global = Arc::new(GlobalState::new(bind, config));
             match runtime {
                 #[cfg(target_os = "linux")]
-                Runtime::Glommio => server::rt_glommio::start(global)?,
-                Runtime::Tokio => server::rt_tokio::start(global)?,
+                Runtime::Glommio => server::rt_glommio::start(hook_handler, global)?,
+                Runtime::Tokio => server::rt_tokio::start(hook_handler, global)?,
             }
         }
         Commands::DefaultConfig { allow_anonymous } => {
