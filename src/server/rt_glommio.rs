@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use flume::bounded;
+use flume::{bounded, Sender};
 use glommio::{
     net::TcpListener,
     spawn_local,
@@ -14,7 +14,7 @@ use glommio::{
 };
 
 use super::handle_accept;
-use crate::hook::{DefaultHook, HookRequest, HookService};
+use crate::hook::{Hook, HookRequest, HookService};
 use crate::state::{Executor, GlobalState};
 
 pub fn start<H>(hook_handler: H, global: Arc<GlobalState>) -> anyhow::Result<()>
@@ -39,19 +39,19 @@ where
             if cpu_num == 1 || id % 2 == 1 {
                 log::info!("Starting executor for hook {}", id);
                 let hook_service = HookService::new(
-                    Arc::clone(&executor),
+                    Rc::clone(&executor),
                     hook_handler.clone(),
                     hook_receiver.clone(),
                     Arc::clone(&global),
                 );
-                executor.spawn_local(hook_service.start());
+                spawn_local(hook_service.start()).detach();
             }
 
             if cpu_num == 1 || id % 2 == 0 {
                 loop {
                     log::info!("Starting executor for server {}", id);
                     if let Err(err) = server(
-                        hook_requests.clone(),
+                        hook_sender.clone(),
                         Rc::clone(&executor),
                         Arc::clone(&global),
                     )
@@ -82,17 +82,12 @@ async fn server(
         let peer = conn.peer_addr()?;
         log::debug!("executor {:03}, #{} {} connected", executor.id(), fd, peer);
         spawn_local({
+            let hook_requests = hook_requests.clone();
             let executor = Rc::clone(&executor);
             let global = Arc::clone(&global);
             async move {
-                let _ = handle_accept(
-                    conn,
-                    peer,
-                    hook_requests.clone(),
-                    executor,
-                    Arc::clone(&global),
-                )
-                .await;
+                let _ =
+                    handle_accept(conn, peer, hook_requests, executor, Arc::clone(&global)).await;
             }
         })
         .detach();

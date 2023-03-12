@@ -40,6 +40,9 @@ async-trait = "0.1.64"
 futures-sink = "0.3.26"
 tokio-util = "0.7.7"
 
+[features]
+iouring = ["glommio"]
+
 [profile.release]
 debug = true
 
