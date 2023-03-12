@@ -9,6 +9,7 @@ use std::task::{Context, Poll};
 use futures_lite::io::{AsyncRead, AsyncWrite};
 use futures_sink::Sink;
 // use mqtt_proto::{v3, v5};
+use flume::bounded;
 use tokio::{
     sync::mpsc::{channel, error::TryRecvError, Receiver, Sender},
     task::JoinHandle,
@@ -16,6 +17,7 @@ use tokio::{
 use tokio_util::sync::PollSender;
 
 use crate::config::Config;
+use crate::hook::{DefaultHook, HookService};
 use crate::server::{handle_accept, rt_tokio::TokioExecutor};
 use crate::state::GlobalState;
 
@@ -77,9 +79,19 @@ impl MockConn {
 impl MockConnControl {
     pub fn start(&self, conn: MockConn) -> JoinHandle<io::Result<()>> {
         let peer = conn.peer;
-        let executor = TokioExecutor {};
+        let executor = Arc::new(TokioExecutor {});
         let global = Arc::clone(&self.global);
-        tokio::spawn(handle_accept(conn, peer, executor, global))
+
+        let hook_handler = DefaultHook;
+        let (hook_sender, hook_receiver) = bounded(2);
+        let hook_service = HookService::new(
+            Arc::clone(&executor),
+            hook_handler,
+            hook_receiver,
+            Arc::clone(&global),
+        );
+        tokio::spawn(hook_service.start());
+        tokio::spawn(handle_accept(conn, peer, hook_sender, executor, global))
     }
 
     pub fn try_read_packet_is_empty(&mut self) -> bool {
