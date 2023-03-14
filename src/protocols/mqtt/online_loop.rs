@@ -471,7 +471,6 @@ where
             session.broadcast_packets_cnt(),
             session.broadcast_packets().len(),
         );
-        #[cfg(debug_assertions)]
         let old_cnt: usize = session
             .broadcast_packets()
             .values()
@@ -555,22 +554,20 @@ where
                 }
             }
         });
-        #[cfg(debug_assertions)]
-        {
-            let new_cnt: usize = session
-                .broadcast_packets()
-                .values()
-                .map(|info| info.msgs.len())
-                .sum();
-            assert_eq!(
-                new_cnt + consume_cnt,
-                old_cnt,
-                "new:{} + consume:{} != old:{}",
-                new_cnt,
-                consume_cnt,
-                old_cnt
-            );
-        }
+        let new_cnt: usize = session
+            .broadcast_packets()
+            .values()
+            .map(|info| info.msgs.len())
+            .sum();
+        // TODO: make this as debug assert when ready
+        assert_eq!(
+            new_cnt + consume_cnt,
+            old_cnt,
+            "new:{} + consume:{} != old:{}",
+            new_cnt,
+            consume_cnt,
+            old_cnt
+        );
         let have_broadcast = consume_cnt > 0;
         session.consume_broadcast(consume_cnt);
 
