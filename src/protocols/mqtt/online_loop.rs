@@ -224,7 +224,6 @@ where
 
         let mut pendings = Pendings::default();
         let mut have_write = false;
-        let mut have_broadcast = false;
 
         log::trace!(
             "[{}] write_packets={}, broadcast_packets={}, ",
@@ -260,7 +259,7 @@ where
             let packet_result = match Pin::new(&mut poll_packet).poll(cx) {
                 Poll::Ready(result) => result,
                 Poll::Pending => {
-                    log::debug!("[{}] read pending, {:?}", current_client_id, packet_state);
+                    log::trace!("[{}] read pending", current_client_id);
                     *read_unfinish = false;
                     pendings.read = true;
                     break;
@@ -268,7 +267,7 @@ where
             };
             match packet_result {
                 Ok((encode_len, packet)) => {
-                    log::trace!("[{}] decode MQTT packet: {:?}", current_client_id, packet,);
+                    log::trace!("[{}] decode MQTT packet: {:?}", current_client_id, packet);
                     *packet_state = GenericPollPacketState::default();
 
                     match session.handle_packet(encode_len, packet, write_packets, global) {
@@ -392,13 +391,13 @@ where
                     return Poll::Ready(Some(io::ErrorKind::InvalidData.into()));
                 }
                 Poll::Pending => {
-                    log::debug!("[{}] normal receiver is pending", current_client_id);
+                    log::trace!("[{}] normal receiver is pending", current_client_id);
                     pendings.normal_message = true;
                     break;
                 }
             };
 
-            log::debug!(
+            log::trace!(
                 "[{}] received a normal message from [{}], {:?}",
                 current_client_id,
                 sender_id,
@@ -435,7 +434,7 @@ where
             match Pin::new(&mut *conn).poll_write(cx, data.as_ref()) {
                 Poll::Ready(Ok(size)) => {
                     have_write = true;
-                    log::debug!("[{}] write {} bytes data", current_client_id, size);
+                    log::trace!("[{}] write {} bytes data", current_client_id, size);
                     idx += size;
                     if idx < data.as_ref().len() {
                         write_packets.push_front(WritePacket::Data((data, idx)));
@@ -472,6 +471,12 @@ where
             session.broadcast_packets_cnt(),
             session.broadcast_packets().len(),
         );
+        #[cfg(debug_assertions)]
+        let old_cnt: usize = session
+            .broadcast_packets()
+            .values()
+            .map(|info| info.msgs.len())
+            .sum();
         let mut consume_cnt = 0;
         session.broadcast_packets().retain(|client_id, info| {
             log::trace!(
@@ -489,11 +494,10 @@ where
                             current_client_id,
                             client_id,
                         );
-                        consume_cnt += 1;
                         false
                     }
                     Poll::Ready(Err(_)) => {
-                        consume_cnt += info.msgs.len() + 1;
+                        consume_cnt += info.msgs.len();
                         false
                     }
                     Poll::Pending => {
@@ -507,15 +511,17 @@ where
                 };
             }
             while let Some(msg) = info.msgs.pop_front() {
+                consume_cnt += 1;
                 match Pin::new(&mut info.sink).poll_ready(cx) {
                     Poll::Ready(Ok(())) => {}
                     Poll::Ready(Err(_)) => {
                         // channel disconnected
-                        consume_cnt += info.msgs.len() + 1;
+                        consume_cnt += info.msgs.len();
                         return false;
                     }
                     Poll::Pending => {
                         // channel is full
+                        consume_cnt -= 1;
                         info.msgs.push_front(msg);
                         log::trace!("target client channel is pending: [{}]", client_id);
                         return true;
@@ -531,39 +537,41 @@ where
                     .start_send((current_client_id, msg))
                     .is_err()
                 {
-                    log::debug!("send publish to disconnected client: {}", client_id);
-                    consume_cnt += info.msgs.len() + 1;
+                    log::trace!("send publish to disconnected client: {}", client_id);
+                    consume_cnt += info.msgs.len();
                     return false;
-                } else {
-                    have_broadcast = true;
-                }
-
-                match Pin::new(&mut info.sink).poll_flush(cx) {
-                    Poll::Ready(Ok(())) => {
-                        log::trace!(
-                            "[{}] broadcast to [{}] SUCCESS",
-                            current_client_id,
-                            client_id,
-                        );
-                        consume_cnt += 1;
-                    }
-                    Poll::Ready(Err(_)) => {
-                        consume_cnt += info.msgs.len() + 1;
-                        return false;
-                    }
-                    Poll::Pending => {
-                        log::trace!(
-                            "[{}] broadcast to [{}] not flushed",
-                            current_client_id,
-                            client_id,
-                        );
-                        info.flushed = false;
-                        return true;
-                    }
                 }
             }
-            false
+            match Pin::new(&mut info.sink).poll_flush(cx) {
+                Poll::Ready(_) => false,
+                Poll::Pending => {
+                    log::trace!(
+                        "[{}] broadcast to [{}] not flushed",
+                        current_client_id,
+                        client_id,
+                    );
+                    info.flushed = false;
+                    true
+                }
+            }
         });
+        #[cfg(debug_assertions)]
+        {
+            let new_cnt: usize = session
+                .broadcast_packets()
+                .values()
+                .map(|info| info.msgs.len())
+                .sum();
+            assert_eq!(
+                new_cnt + consume_cnt,
+                old_cnt,
+                "new:{} + consume:{} != old:{}",
+                new_cnt,
+                consume_cnt,
+                old_cnt
+            );
+        }
+        let have_broadcast = consume_cnt > 0;
         session.consume_broadcast(consume_cnt);
 
         // FIXME: handle extension request here
