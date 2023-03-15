@@ -141,8 +141,56 @@ impl Session {
         &self.client_identifier
     }
 
+    pub fn assigned_client_id(&self) -> bool {
+        self.assigned_client_id
+    }
+
+    pub fn username(&self) -> Option<&Arc<String>> {
+        self.username.as_ref()
+    }
+
+    pub fn keep_alive(&self) -> u16 {
+        self.keep_alive
+    }
+
+    pub fn clean_start(&self) -> bool {
+        self.clean_start
+    }
+
+    pub fn last_will(&self) -> Option<&LastWill> {
+        self.last_will.as_ref()
+    }
+
     pub fn subscribes(&self) -> &HashMap<TopicFilter, SubscriptionData> {
         &self.subscribes
+    }
+
+    pub fn topic_aliases(&self) -> &HashMap<u16, TopicName> {
+        &self.topic_aliases
+    }
+
+    pub fn session_expiry_interval(&self) -> u32 {
+        self.session_expiry_interval
+    }
+
+    pub fn receive_max(&self) -> u16 {
+        self.receive_max
+    }
+
+    pub fn max_packet_size(&self) -> u32 {
+        self.max_packet_size
+    }
+
+    pub fn peer(&self) -> SocketAddr {
+        self.peer
+    }
+
+    pub fn connected_time(&self) -> Option<Instant> {
+        self.connected_time
+    }
+
+    pub fn last_packet_time(&self) -> Instant {
+        *self.last_packet_time.read()
     }
 
     pub(crate) fn incr_server_packet_id(&mut self) -> Pid {

@@ -115,18 +115,7 @@ impl AsyncRead for MockConn {
         if self.data_in.is_empty() {
             self.data_in = match self.chan_in.poll_recv(cx) {
                 Poll::Pending => return Poll::Pending,
-                Poll::Ready(Some(v)) => {
-                    // if let Ok(pkt_opt) = v3::Packet::decode(&v) {
-                    //     log::info!("[{}] send v3: {:?}", peer, pkt_opt.unwrap());
-                    // } else {
-                    // if let Ok(pkt_opt) = v5::Packet::decode(&v) {
-                    //     log::info!("[{}] send v5: {:?}", peer, pkt_opt.unwrap());
-                    // } else {
-                    //     log::info!("[{}] sent invalid packet: {:?}", peer, v);
-                    // }
-                    // };
-                    v
-                }
+                Poll::Ready(Some(v)) => v,
                 Poll::Ready(None) => {
                     return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)))
                 }
@@ -150,12 +139,6 @@ impl AsyncWrite for MockConn {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         let peer = self.peer.clone();
-        // if let Ok(pkt_opt) = v3::Packet::decode(buf) {
-        //     log::info!("[{}] recv v3: {:?}", peer, pkt_opt.unwrap());
-        // } else {
-        //     let pkt = v5::Packet::decode(buf).unwrap().unwrap();
-        //     log::info!("[{}] receiving v5: {:?}......", peer, pkt);
-        // };
         let mut sink = Pin::new(&mut self.chan_out);
         match sink.as_mut().poll_ready(cx) {
             Poll::Ready(Ok(())) => {
@@ -164,9 +147,7 @@ impl AsyncWrite for MockConn {
                     return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)));
                 }
                 match sink.as_mut().poll_flush(cx) {
-                    Poll::Ready(Ok(())) => {
-                        // log::info!("[{}] received v5: {:?}", peer, pkt);
-                    }
+                    Poll::Ready(Ok(())) => {}
                     Poll::Pending => {}
                     Poll::Ready(Err(_)) => {
                         return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)));

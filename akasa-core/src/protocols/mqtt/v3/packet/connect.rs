@@ -1,5 +1,6 @@
 use std::io;
 use std::sync::Arc;
+use std::time::Instant;
 
 use futures_lite::io::AsyncWrite;
 use mqtt_proto::{
@@ -170,6 +171,7 @@ clean session : {}
     let rv_packet = Connack::new(session_present, return_code);
     write_packet(session.client_id, conn, &rv_packet.into()).await?;
     session.connected = true;
+    session.connected_time = Some(Instant::now());
     Ok(session_present)
 }
 

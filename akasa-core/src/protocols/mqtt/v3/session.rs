@@ -17,6 +17,7 @@ pub struct Session {
     pub(super) connected: bool,
     pub(super) disconnected: bool,
     pub(super) protocol: Protocol,
+    pub(super) connected_time: Option<Instant>,
     // last package timestamp
     pub(super) last_packet_time: Arc<RwLock<Instant>>,
     // For record packet id send from server to client
@@ -58,6 +59,7 @@ impl Session {
             connected: false,
             disconnected: false,
             protocol: Protocol::V311,
+            connected_time: None,
             last_packet_time: Arc::new(RwLock::new(Instant::now())),
             server_packet_id: Pid::default(),
             pending_packets: PendingPackets::new(
@@ -88,8 +90,32 @@ impl Session {
         &self.client_identifier
     }
 
+    pub fn username(&self) -> Option<&Arc<String>> {
+        self.username.as_ref()
+    }
+
+    pub fn keep_alive(&self) -> u16 {
+        self.keep_alive
+    }
+
+    pub fn clean_session(&self) -> bool {
+        self.clean_session
+    }
+
+    pub fn last_will(&self) -> Option<&LastWill> {
+        self.last_will.as_ref()
+    }
+
     pub fn subscribes(&self) -> &HashMap<TopicFilter, QoS> {
         &self.subscribes
+    }
+
+    pub fn peer(&self) -> SocketAddr {
+        self.peer
+    }
+
+    pub fn last_packet_time(&self) -> Instant {
+        *self.last_packet_time.read()
     }
 
     pub(crate) fn incr_server_packet_id(&mut self) -> Pid {
