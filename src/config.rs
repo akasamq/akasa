@@ -4,8 +4,6 @@ use mqtt_proto::QoS;
 use scram::server::{AuthenticationProvider, PasswordInfo};
 use serde::{Deserialize, Serialize};
 
-use crate::hook::HookConfig;
-
 pub const DEFAULT_MAX_PACKET_SIZE: u32 = 5 + 268_435_455;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -89,6 +87,27 @@ pub enum SharedSubscriptionMode {
     Random,
     HashClientId,
     HashTopicName,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookConfig {
+    pub enable_before_connect: bool,
+    pub enable_after_connect: bool,
+    pub enable_publish: bool,
+    pub enable_subscribe: bool,
+    pub enable_unsubscribe: bool,
+}
+
+impl Default for HookConfig {
+    fn default() -> HookConfig {
+        HookConfig {
+            enable_before_connect: true,
+            enable_after_connect: true,
+            enable_publish: true,
+            enable_subscribe: true,
+            enable_unsubscribe: true,
+        }
+    }
 }
 
 impl Default for Config {

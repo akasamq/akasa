@@ -9,7 +9,6 @@ use flume::Receiver;
 use mqtt_proto::{
     QoS, QosPid, TopicFilter, TopicName, {v3, v5},
 };
-use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 use crate::protocols::mqtt::v3::{
@@ -227,27 +226,6 @@ impl HookPublishCode {
             Self::NotAuthorized => v5::PubrecReasonCode::NotAuthorized,
             Self::TopicNameInvalid => v5::PubrecReasonCode::TopicNameInvalid,
             Self::QuotaExceeded => v5::PubrecReasonCode::QuotaExceeded,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HookConfig {
-    pub enable_before_connect: bool,
-    pub enable_after_connect: bool,
-    pub enable_publish: bool,
-    pub enable_subscribe: bool,
-    pub enable_unsubscribe: bool,
-}
-
-impl Default for HookConfig {
-    fn default() -> HookConfig {
-        HookConfig {
-            enable_before_connect: true,
-            enable_after_connect: true,
-            enable_publish: true,
-            enable_subscribe: true,
-            enable_unsubscribe: true,
         }
     }
 }
