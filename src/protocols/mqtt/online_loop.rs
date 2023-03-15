@@ -563,10 +563,7 @@ where
         assert_eq!(
             new_cnt + consume_cnt,
             old_cnt,
-            "new:{} + consume:{} != old:{}",
-            new_cnt,
-            consume_cnt,
-            old_cnt
+            "new:{new_cnt} + consume:{consume_cnt} != old:{old_cnt}",
         );
         let have_broadcast = consume_cnt > 0;
         session.consume_broadcast(consume_cnt);
