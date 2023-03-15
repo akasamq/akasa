@@ -133,6 +133,10 @@ impl Session {
         }
     }
 
+    pub fn client_id(&self) -> ClientId {
+        self.client_id
+    }
+
     pub fn client_identifier(&self) -> &Arc<String> {
         &self.client_identifier
     }

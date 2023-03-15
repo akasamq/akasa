@@ -63,8 +63,8 @@ impl GlobalState {
 
             bind,
             config,
-            route_table: RouteTable::new(),
-            retain_table: RetainTable::new(),
+            route_table: RouteTable::default(),
+            retain_table: RetainTable::default(),
         }
     }
 

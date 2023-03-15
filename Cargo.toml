@@ -1,46 +1,6 @@
-[package]
-name = "akasa"
-version = "0.1.0"
-edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-anyhow = "1.0.66"
-bytes = "1.2.1"
-clap = { version = "4.0.26", features = ["derive"] }
-dashmap = "5.4.0"
-env_logger = "0.9.3"
-flume = { version = "0.10", features = ["async"] }
-futures-io = "0.3.25"
-futures-lite = "1.12.0"
-hashbrown = "0.13.1"
-serde_yaml = "0.9.14"
-hex = { version = "0.4", features = ["serde"] }
-log = "0.4.17"
-mqtt-proto = { git = "ssh://git@github.com/akasamq/mqtt-proto.git", branch = "master" }
-num_cpus = "1.14.0"
-parking_lot = "0.12.1"
-# rhai = { version = "1.11.0", features = ["decimal"] }
-# jsonwebtoken = "8.2.0"
-# jwt-simple = "0.11.2"
-serde = { version = "1.0.147", features = ["derive"] }
-thiserror = "1.0.38"
-tokio = { version = "1.23.0", features = ["full"] }
-uuid = { version = "1.2.2", features = ["v4"] }
-rand = { version = "0.8.5", features = ["getrandom"] }
-ahash = "0.8.3"
-scram = "0.6.0"
-pin-project-lite = "0.2.9"
-futures-sink = "0.3.26"
-async-trait = "0.1.64"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-glommio = { version = "0.7.0" }
-
-[dev-dependencies]
-futures-sink = "0.3.26"
-tokio-util = "0.7.7"
+[workspace]
+members = ["akasa-core", "akasa"]
 
 [profile.release]
 debug = true

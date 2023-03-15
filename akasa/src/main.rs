@@ -1,27 +1,16 @@
-mod config;
-mod hook;
+mod default_hook;
 mod logger;
-mod protocols;
-mod server;
-mod state;
-mod storage;
-
-#[cfg(test)]
-mod tests;
 
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use akasa_core::{server, Config, GlobalState};
 use anyhow::{anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::config::Config;
-use crate::hook::DefaultHook;
-use crate::state::GlobalState;
-
-pub use crate::hook::{HookConnectCode, HookConnectedAction, HookPublishCode};
+use default_hook::DefaultHook;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]

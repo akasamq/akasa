@@ -10,12 +10,12 @@ use mqtt_proto::{
 
 use super::route::split_topic;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct RetainTable {
     inner: RetainNode,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct RetainNode {
     content: Option<Arc<RetainContent>>,
     nodes: Arc<DashMap<String, RetainNode>>,
@@ -33,12 +33,6 @@ pub struct RetainContent {
 }
 
 impl RetainTable {
-    pub fn new() -> RetainTable {
-        RetainTable {
-            inner: RetainNode::new(),
-        }
-    }
-
     pub fn get_matches(&self, topic_filter: &str) -> Vec<Arc<RetainContent>> {
         // [MQTT-4.7.2-1] The Server MUST NOT match Topic Filters starting with a
         // wildcard character (# or +) with Topic Names beginning with a $ character
@@ -64,13 +58,6 @@ impl RetainTable {
 }
 
 impl RetainNode {
-    fn new() -> RetainNode {
-        RetainNode {
-            content: None,
-            nodes: Arc::new(DashMap::new()),
-        }
-    }
-
     fn is_empty(&self) -> bool {
         self.content.is_none() && self.nodes.is_empty()
     }
@@ -140,7 +127,7 @@ impl RetainNode {
                 mem::replace(&mut pair.value_mut().content, Some(content))
             }
         } else {
-            let mut new_node = RetainNode::new();
+            let mut new_node = RetainNode::default();
             if let Some((topic_item, rest_items)) = topic_items.map(split_topic) {
                 new_node.insert(topic_item, rest_items, content);
             } else {
@@ -217,7 +204,7 @@ mod tests {
     }
 
     fn run_actions(actions: &[Action]) {
-        let table = RetainTable::new();
+        let table = RetainTable::default();
         for action in actions {
             match action.clone() {
                 Insert(new_content, old_content) => {

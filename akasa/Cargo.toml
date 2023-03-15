@@ -1,0 +1,15 @@
+[package]
+name = "akasa"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+akasa-core = { version = "0.1.0", path = "../akasa-core" }
+anyhow = "1.0.66"
+clap = { version = "4.0.26", features = ["derive"] }
+serde_yaml = "0.9.14"
+async-trait = "0.1.64"
+env_logger = "0.9.3"
+log = "0.4.17"

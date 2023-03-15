@@ -17,7 +17,7 @@ use super::handle_accept;
 use crate::hook::{Hook, HookRequest, HookService};
 use crate::state::{Executor, GlobalState};
 
-pub fn start<H>(hook_handler: H, global: Arc<GlobalState>) -> anyhow::Result<()>
+pub fn start<H>(hook_handler: H, global: Arc<GlobalState>) -> io::Result<()>
 where
     H: Hook + Clone + Send + Sync + 'static,
 {

@@ -10,6 +10,7 @@ use parking_lot::RwLock;
 
 use crate::state::ClientId;
 
+#[derive(Default)]
 pub struct RouteTable {
     nodes: DashMap<String, RouteNode>,
 }
@@ -35,12 +36,6 @@ pub struct SharedClients {
 }
 
 impl RouteTable {
-    pub fn new() -> RouteTable {
-        RouteTable {
-            nodes: DashMap::new(),
-        }
-    }
-
     pub fn get_matches(&self, topic_name: &TopicName) -> Vec<Arc<RwLock<RouteContent>>> {
         let (topic_item, rest_items) = split_topic(topic_name.deref());
         let mut filters = Vec::new();
@@ -309,7 +304,7 @@ mod tests {
     }
 
     fn run_actions(actions: &[Action]) {
-        let table = RouteTable::new();
+        let table = RouteTable::default();
         for action in actions {
             match action.clone() {
                 Sub(filter, id) => {
