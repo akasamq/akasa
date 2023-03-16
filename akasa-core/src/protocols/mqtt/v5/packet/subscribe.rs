@@ -20,7 +20,7 @@ use super::{
 #[inline]
 pub(crate) fn handle_subscribe(
     session: &mut Session,
-    packet: Subscribe,
+    packet: &Subscribe,
     global: &Arc<GlobalState>,
 ) -> Result<Vec<Packet>, Packet> {
     log::debug!(
@@ -32,7 +32,7 @@ packet id : {}
         packet.topics,
     );
 
-    let properties = packet.properties;
+    let properties = &packet.properties;
     if properties.subscription_id.map(|id| id.value()) == Some(0) {
         let err_pkt = build_error_disconnect(
             session,
@@ -50,7 +50,7 @@ packet id : {}
         vec![SubscribeReasonCode::SubscriptionIdentifiersNotSupported; packet.topics.len()]
     } else {
         let mut items = Vec::with_capacity(packet.topics.len());
-        for (filter, mut sub_opts) in packet.topics {
+        for (filter, mut sub_opts) in &packet.topics {
             let granted_qos = cmp::min(sub_opts.max_qos, global.config.max_allowed_qos());
             let reason_code = if !global.config.shared_subscription_available && filter.is_shared()
             {
@@ -73,7 +73,7 @@ packet id : {}
                 let old_sub = session.subscribes.insert(filter.clone(), new_sub);
                 global
                     .route_table
-                    .subscribe(&filter, session.client_id, granted_qos);
+                    .subscribe(filter, session.client_id, granted_qos);
 
                 let send_retain = global.config.retain_available
                     && !filter.is_shared()
@@ -84,7 +84,7 @@ packet id : {}
                     };
                 if send_retain {
                     let mut process_pendings = false;
-                    for msg in global.retain_table.get_matches(&filter) {
+                    for msg in global.retain_table.get_matches(filter) {
                         if sub_opts.no_local && msg.client_identifier == session.client_identifier {
                             continue;
                         }
@@ -102,7 +102,7 @@ packet id : {}
                                 qos: msg.qos,
                                 retain,
                                 payload: &msg.payload,
-                                subscribe_filter: &filter,
+                                subscribe_filter: filter,
                                 subscribe_qos: granted_qos,
                                 properties: msg.properties.as_ref(),
                                 encode_len,
@@ -142,7 +142,7 @@ packet id : {}
 #[inline]
 pub(crate) fn handle_unsubscribe(
     session: &mut Session,
-    packet: Unsubscribe,
+    packet: &Unsubscribe,
     global: &Arc<GlobalState>,
 ) -> Packet {
     log::debug!(
@@ -154,9 +154,9 @@ packet id : {}
         packet.topics,
     );
     let mut reason_codes = Vec::with_capacity(packet.topics.len());
-    for filter in packet.topics {
-        global.route_table.unsubscribe(&filter, session.client_id);
-        let reason_code = if session.subscribes.remove(&filter).is_some() {
+    for filter in &packet.topics {
+        global.route_table.unsubscribe(filter, session.client_id);
+        let reason_code = if session.subscribes.remove(filter).is_some() {
             UnsubscribeReasonCode::Success
         } else {
             UnsubscribeReasonCode::NoSubscriptionExisted

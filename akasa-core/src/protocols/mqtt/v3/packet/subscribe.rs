@@ -18,7 +18,7 @@ use super::{
 #[inline]
 pub(crate) fn handle_subscribe(
     session: &mut Session,
-    packet: Subscribe,
+    packet: &Subscribe,
     global: &Arc<GlobalState>,
 ) -> io::Result<Vec<Packet>> {
     log::debug!(
@@ -31,19 +31,19 @@ packet id : {}
     );
     let mut rv_packets = Vec::new();
     let mut return_codes = Vec::with_capacity(packet.topics.len());
-    for (filter, qos) in packet.topics {
+    for (filter, qos) in &packet.topics {
         if filter.is_shared() {
             log::info!("mqtt v3.x don't support shared subscription");
             return Err(io::ErrorKind::InvalidData.into());
         }
-        let granted_qos = cmp::min(qos, global.config.max_allowed_qos());
+        let granted_qos = cmp::min(*qos, global.config.max_allowed_qos());
         session.subscribes.insert(filter.clone(), granted_qos);
         global
             .route_table
-            .subscribe(&filter, session.client_id, granted_qos);
+            .subscribe(filter, session.client_id, granted_qos);
 
         let mut process_pendings = false;
-        for msg in global.retain_table.get_matches(&filter) {
+        for msg in global.retain_table.get_matches(filter) {
             if msg.qos <= granted_qos {
                 if let Some((final_qos, packet_opt)) = recv_publish(
                     session,
@@ -52,7 +52,7 @@ packet id : {}
                         qos: msg.qos,
                         retain: true,
                         payload: &msg.payload,
-                        subscribe_filter: &filter,
+                        subscribe_filter: filter,
                         subscribe_qos: granted_qos,
                     },
                 ) {
@@ -77,7 +77,7 @@ packet id : {}
 #[inline]
 pub(crate) fn handle_unsubscribe(
     session: &mut Session,
-    packet: Unsubscribe,
+    packet: &Unsubscribe,
     global: &Arc<GlobalState>,
 ) -> Packet {
     log::debug!(
@@ -88,9 +88,9 @@ packet id : {}
         packet.pid.value(),
         packet.topics,
     );
-    for filter in packet.topics {
-        global.route_table.unsubscribe(&filter, session.client_id);
-        session.subscribes.remove(&filter);
+    for filter in &packet.topics {
+        global.route_table.unsubscribe(filter, session.client_id);
+        session.subscribes.remove(filter);
     }
     Packet::Unsuback(packet.pid)
 }

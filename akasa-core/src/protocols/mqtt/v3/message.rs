@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::io;
-use std::mem;
+use std::mem::{self, MaybeUninit};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -286,6 +286,7 @@ impl OnlineSession for Session {
     fn handle_packet(
         &mut self,
         encode_len: usize,
+        packet_body: Vec<MaybeUninit<u8>>,
         packet: Self::Packet,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
@@ -307,6 +308,7 @@ impl OnlineSession for Session {
                     let hook_request = HookRequest::V3Publish {
                         context: locked_hook_context,
                         encode_len,
+                        packet_body,
                         publish: pkt,
                         sender: hook_sender,
                     };
@@ -326,12 +328,13 @@ impl OnlineSession for Session {
                     let hook_request = HookRequest::V3Subscribe {
                         context: locked_hook_context,
                         encode_len,
+                        packet_body,
                         subscribe: pkt,
                         sender: hook_sender,
                     };
                     return Ok(Some((hook_request, hook_receiver)));
                 } else {
-                    let retain_packets = handle_subscribe(self, pkt, global)?;
+                    let retain_packets = handle_subscribe(self, &pkt, global)?;
                     write_packets.extend(retain_packets.into_iter().map(WritePacket::Packet));
                 }
             }
@@ -342,12 +345,13 @@ impl OnlineSession for Session {
                     let hook_request = HookRequest::V3Unsubscribe {
                         context: locked_hook_context,
                         encode_len,
+                        packet_body,
                         unsubscribe: pkt,
                         sender: hook_sender,
                     };
                     return Ok(Some((hook_request, hook_receiver)));
                 } else {
-                    write_packets.push_back(handle_unsubscribe(self, pkt, global).into());
+                    write_packets.push_back(handle_unsubscribe(self, &pkt, global).into());
                 }
             }
             Packet::Pingreq => {
@@ -652,7 +656,7 @@ async fn after_connect_hook(
             }
             HookConnectedAction::Subscribe(topics) => {
                 let subscribe = Subscribe::new(Pid::default(), topics.clone());
-                match handle_subscribe(session, subscribe, global) {
+                match handle_subscribe(session, &subscribe, global) {
                     Ok(packets) => match &packets[0] {
                         Packet::Suback(suback) => {
                             for reason_code in &suback.topics {
@@ -674,7 +678,7 @@ async fn after_connect_hook(
             }
             HookConnectedAction::Unsubscribe(topics) => {
                 let unsubscribe = Unsubscribe::new(Pid::default(), topics);
-                let _unsuback = handle_unsubscribe(session, unsubscribe, global);
+                let _unsuback = handle_unsubscribe(session, &unsubscribe, global);
             }
         }
     }

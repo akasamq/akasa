@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::future::Future;
 use std::io;
+use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -266,11 +267,17 @@ where
                 }
             };
             match packet_result {
-                Ok((encode_len, packet)) => {
+                Ok((encode_len, packet_body, packet)) => {
                     log::trace!("[{}] decode MQTT packet: {:?}", current_client_id, packet);
                     *packet_state = GenericPollPacketState::default();
 
-                    match session.handle_packet(encode_len, packet, write_packets, global) {
+                    match session.handle_packet(
+                        encode_len,
+                        packet_body,
+                        packet,
+                        write_packets,
+                        global,
+                    ) {
                         Ok(Some((hook_request, mut hook_receiver))) => {
                             match Pin::new(&mut *hook_sink).poll_ready(cx) {
                                 Poll::Ready(Ok(())) => {}
@@ -687,6 +694,7 @@ pub trait OnlineSession {
     fn handle_packet(
         &mut self,
         encode_len: usize,
+        packet_body: Vec<MaybeUninit<u8>>,
         packet: Self::Packet,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,

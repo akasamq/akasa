@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::io;
+use std::mem::{self, MaybeUninit};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -32,6 +33,15 @@ use crate::protocols::mqtt::v5::{
 use crate::protocols::mqtt::{OnlineSession, WritePacket};
 use crate::state::{Executor, GlobalState};
 
+// TODO:
+//  [ ] add timer support
+//  [ ] mutate the packet (make handle_subscribe() use reference)
+//  [ ] deny subscribe/unsubscribe
+//  [ ] handle mqtt v5.0 scram auth
+//  [ ] handle disconnect event (takenover, by_server, by_client)
+//  [ ] return Result in hook functions
+//  [ ] passing packet data as argument
+
 #[async_trait]
 pub trait Hook {
     async fn v5_before_connect(&self, connect: &v5::Connect) -> HookConnectCode;
@@ -44,23 +54,33 @@ pub trait Hook {
     async fn v5_before_publish(
         &self,
         session: &SessionV5,
-        publish: &v5::Publish,
+        encode_len: usize,
+        packet_body: &[u8],
+        publish: &mut v5::Publish,
     ) -> HookPublishCode;
 
     async fn v5_before_subscribe(
         &self,
         session: &SessionV5,
-        subscribe: v5::Subscribe,
-    ) -> v5::Subscribe;
+        encode_len: usize,
+        usize_body: &[u8],
+        subscribe: &mut v5::Subscribe,
+    );
     async fn v5_after_subscribe(
         &self,
         session: &SessionV5,
-        subscribe: v5::Subscribe,
+        subscribe: &v5::Subscribe,
         codes: Option<Vec<v5::SubscribeReasonCode>>,
     );
 
-    async fn v5_before_unsubscribe(&self, session: &SessionV5, unsubscribe: &v5::Unsubscribe);
-    async fn v5_after_unsubscribe(&self, session: &SessionV5, unsubscribe: v5::Unsubscribe);
+    async fn v5_before_unsubscribe(
+        &self,
+        session: &SessionV5,
+        encode_len: usize,
+        packet_body: &[u8],
+        unsubscribe: &mut v5::Unsubscribe,
+    );
+    async fn v5_after_unsubscribe(&self, session: &SessionV5, unsubscribe: &v5::Unsubscribe);
 
     async fn v3_before_connect(&self, connect: &v3::Connect) -> HookConnectCode;
     async fn v3_after_connect(
@@ -72,23 +92,33 @@ pub trait Hook {
     async fn v3_before_publish(
         &self,
         session: &SessionV3,
-        publish: &v3::Publish,
+        encode_len: usize,
+        usize_body: &[u8],
+        publish: &mut v3::Publish,
     ) -> HookPublishCode;
 
     async fn v3_before_subscribe(
         &self,
         session: &SessionV3,
-        subscribe: v3::Subscribe,
-    ) -> v3::Subscribe;
+        encode_len: usize,
+        usize_body: &[u8],
+        subscribe: &mut v3::Subscribe,
+    );
     async fn v3_after_subscribe(
         &self,
         session: &SessionV3,
-        subscribe: v3::Subscribe,
+        subscribe: &v3::Subscribe,
         codes: Option<Vec<v3::SubscribeReturnCode>>,
     );
 
-    async fn v3_before_unsubscribe(&self, session: &SessionV3, unsubscribe: &v3::Unsubscribe);
-    async fn v3_after_unsubscribe(&self, session: &SessionV3, unsubscribe: v3::Unsubscribe);
+    async fn v3_before_unsubscribe(
+        &self,
+        session: &SessionV3,
+        encode_len: usize,
+        usize_body: &[u8],
+        unsubscribe: &mut v3::Unsubscribe,
+    );
+    async fn v3_after_unsubscribe(&self, session: &SessionV3, unsubscribe: &v3::Unsubscribe);
 }
 
 pub type HookResult = Result<(), Option<io::Error>>;
@@ -108,18 +138,21 @@ pub enum HookRequest {
     V5Publish {
         context: LockedHookContext<SessionV5>,
         encode_len: usize,
+        packet_body: Vec<MaybeUninit<u8>>,
         publish: v5::Publish,
         sender: oneshot::Sender<HookResult>,
     },
     V5Subscribe {
         context: LockedHookContext<SessionV5>,
         encode_len: usize,
+        packet_body: Vec<MaybeUninit<u8>>,
         subscribe: v5::Subscribe,
         sender: oneshot::Sender<HookResult>,
     },
     V5Unsubscribe {
         context: LockedHookContext<SessionV5>,
         encode_len: usize,
+        packet_body: Vec<MaybeUninit<u8>>,
         unsubscribe: v5::Unsubscribe,
         sender: oneshot::Sender<HookResult>,
     },
@@ -137,18 +170,21 @@ pub enum HookRequest {
     V3Publish {
         context: LockedHookContext<SessionV3>,
         encode_len: usize,
+        packet_body: Vec<MaybeUninit<u8>>,
         publish: v3::Publish,
         sender: oneshot::Sender<HookResult>,
     },
     V3Subscribe {
         context: LockedHookContext<SessionV3>,
         encode_len: usize,
+        packet_body: Vec<MaybeUninit<u8>>,
         subscribe: v3::Subscribe,
         sender: oneshot::Sender<HookResult>,
     },
     V3Unsubscribe {
         context: LockedHookContext<SessionV3>,
         encode_len: usize,
+        packet_body: Vec<MaybeUninit<u8>>,
         unsubscribe: v3::Unsubscribe,
         sender: oneshot::Sender<HookResult>,
     },
@@ -342,13 +378,18 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
         }
         HookRequest::V5Publish {
             mut context,
-            encode_len: _,
-            publish,
+            encode_len,
+            packet_body,
+            mut publish,
             sender,
         } => {
             log::debug!("got a v5 publish request: {publish:#?}");
             let (session, write_packets) = context.get_mut();
-            let code = handler.v5_before_publish(session, &publish).await;
+
+            let body: &[u8] = unsafe { mem::transmute(&packet_body[..]) };
+            let code = handler
+                .v5_before_publish(session, encode_len, body, &mut publish)
+                .await;
             log::debug!("v5 before publish return code: {:?}", code);
             if let HookPublishCode::Success = code {
                 match v5_handle_publish(session, publish, &global) {
@@ -390,13 +431,17 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
         }
         HookRequest::V5Subscribe {
             mut context,
-            encode_len: _,
-            subscribe,
+            encode_len,
+            packet_body,
+            mut subscribe,
             sender,
         } => {
             let (session, write_packets) = context.get_mut();
-            let subscribe = handler.v5_before_subscribe(session, subscribe).await;
-            let codes = match v5_handle_subscribe(session, subscribe.clone(), &global) {
+            let body: &[u8] = unsafe { mem::transmute(&packet_body[..]) };
+            handler
+                .v5_before_subscribe(session, encode_len, body, &mut subscribe)
+                .await;
+            let codes = match v5_handle_subscribe(session, &subscribe, &global) {
                 Ok(packets) => {
                     let mut codes = Vec::new();
                     for packet in packets {
@@ -412,22 +457,26 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                     None
                 }
             };
-            handler.v5_after_subscribe(session, subscribe, codes).await;
+            handler.v5_after_subscribe(session, &subscribe, codes).await;
             if let Err(_err) = sender.send(Ok(())) {
                 log::error!("send publish hook ack error");
             }
         }
         HookRequest::V5Unsubscribe {
             mut context,
-            encode_len: _,
-            unsubscribe,
+            encode_len,
+            packet_body,
+            mut unsubscribe,
             sender,
         } => {
             let (session, write_packets) = context.get_mut();
-            handler.v5_before_unsubscribe(session, &unsubscribe).await;
-            let unsuback = v5_handle_unsubscribe(session, unsubscribe.clone(), &global);
+            let body: &[u8] = unsafe { mem::transmute(&packet_body[..]) };
+            handler
+                .v5_before_unsubscribe(session, encode_len, body, &mut unsubscribe)
+                .await;
+            let unsuback = v5_handle_unsubscribe(session, &unsubscribe, &global);
             write_packets.push_back(unsuback.into());
-            handler.v5_after_unsubscribe(session, unsubscribe).await;
+            handler.v5_after_unsubscribe(session, &unsubscribe).await;
             if let Err(_err) = sender.send(Ok(())) {
                 log::error!("send publish hook ack error");
             }
@@ -458,13 +507,17 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
         }
         HookRequest::V3Publish {
             mut context,
-            encode_len: _,
-            publish,
+            encode_len,
+            packet_body,
+            mut publish,
             sender,
         } => {
             log::debug!("got a v3 publish request: {publish:#?}");
             let (session, write_packets) = context.get_mut();
-            let code = handler.v3_before_publish(session, &publish).await;
+            let body: &[u8] = unsafe { mem::transmute(&packet_body[..]) };
+            let code = handler
+                .v3_before_publish(session, encode_len, body, &mut publish)
+                .await;
             log::debug!("v3 before publish return code: {:?}", code);
             if let HookPublishCode::Success = code {
                 match v3_handle_publish(session, publish, &global) {
@@ -488,13 +541,17 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
         }
         HookRequest::V3Subscribe {
             mut context,
-            encode_len: _,
-            subscribe,
+            encode_len,
+            packet_body,
+            mut subscribe,
             sender,
         } => {
             let (session, write_packets) = context.get_mut();
-            let subscribe = handler.v3_before_subscribe(session, subscribe).await;
-            match v3_handle_subscribe(session, subscribe.clone(), &global) {
+            let body: &[u8] = unsafe { mem::transmute(&packet_body[..]) };
+            handler
+                .v3_before_subscribe(session, encode_len, body, &mut subscribe)
+                .await;
+            match v3_handle_subscribe(session, &subscribe, &global) {
                 Ok(packets) => {
                     let mut codes = Vec::new();
                     for packet in packets {
@@ -504,14 +561,14 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                         write_packets.push_back(WritePacket::Packet(packet));
                     }
                     handler
-                        .v3_after_subscribe(session, subscribe, Some(codes))
+                        .v3_after_subscribe(session, &subscribe, Some(codes))
                         .await;
                     if let Err(_err) = sender.send(Ok(())) {
                         log::error!("send publish hook ack error");
                     }
                 }
                 Err(err) => {
-                    handler.v3_after_subscribe(session, subscribe, None).await;
+                    handler.v3_after_subscribe(session, &subscribe, None).await;
                     if let Err(_err) = sender.send(Err(Some(err))) {
                         log::error!("send publish hook ack error");
                     }
@@ -520,15 +577,19 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
         }
         HookRequest::V3Unsubscribe {
             mut context,
-            encode_len: _,
-            unsubscribe,
+            encode_len,
+            packet_body,
+            mut unsubscribe,
             sender,
         } => {
             let (session, write_packets) = context.get_mut();
-            handler.v3_before_unsubscribe(session, &unsubscribe).await;
-            let unsuback = v3_handle_unsubscribe(session, unsubscribe.clone(), &global);
+            let body: &[u8] = unsafe { mem::transmute(&packet_body[..]) };
+            handler
+                .v3_before_unsubscribe(session, encode_len, body, &mut unsubscribe)
+                .await;
+            let unsuback = v3_handle_unsubscribe(session, &unsubscribe, &global);
             write_packets.push_back(unsuback.into());
-            handler.v3_after_unsubscribe(session, unsubscribe).await;
+            handler.v3_after_unsubscribe(session, &unsubscribe).await;
             if let Err(_err) = sender.send(Ok(())) {
                 log::error!("send publish hook ack error");
             }

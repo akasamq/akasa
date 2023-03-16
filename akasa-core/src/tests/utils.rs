@@ -231,7 +231,9 @@ impl Hook for TestHook {
     async fn v5_before_publish(
         &self,
         session: &SessionV5,
-        publish: &v5::Publish,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        publish: &mut v5::Publish,
     ) -> HookPublishCode {
         log::debug!(
             "v5_before_publish() [{}], topic={}",
@@ -244,26 +246,33 @@ impl Hook for TestHook {
     async fn v5_before_subscribe(
         &self,
         session: &SessionV5,
-        subscribe: v5::Subscribe,
-    ) -> v5::Subscribe {
+        _encode_len: usize,
+        _packet_body: &[u8],
+        subscribe: &mut v5::Subscribe,
+    ) {
         log::debug!(
             "v5_before_subscribe() [{}], {:#?}",
             session.client_id(),
             subscribe
         );
-        subscribe
     }
 
     async fn v5_after_subscribe(
         &self,
         session: &SessionV5,
-        _subscribe: v5::Subscribe,
+        _subscribe: &v5::Subscribe,
         _reason_codes: Option<Vec<v5::SubscribeReasonCode>>,
     ) {
         log::debug!("v5_after_subscribe(), [{}]", session.client_id());
     }
 
-    async fn v5_before_unsubscribe(&self, session: &SessionV5, unsubscribe: &v5::Unsubscribe) {
+    async fn v5_before_unsubscribe(
+        &self,
+        session: &SessionV5,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        unsubscribe: &mut v5::Unsubscribe,
+    ) {
         log::debug!(
             "v5_before_unsubscribe(), [{}], {:#?}",
             session.client_id(),
@@ -271,7 +280,7 @@ impl Hook for TestHook {
         );
     }
 
-    async fn v5_after_unsubscribe(&self, session: &SessionV5, _unsubscribe: v5::Unsubscribe) {
+    async fn v5_after_unsubscribe(&self, session: &SessionV5, _unsubscribe: &v5::Unsubscribe) {
         log::debug!("v5_after_unsubscribe(), [{}]", session.client_id());
     }
 
@@ -301,7 +310,9 @@ impl Hook for TestHook {
     async fn v3_before_publish(
         &self,
         session: &SessionV3,
-        publish: &v3::Publish,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        publish: &mut v3::Publish,
     ) -> HookPublishCode {
         log::debug!(
             "v3_before_publish() [{}], topic={}",
@@ -314,26 +325,33 @@ impl Hook for TestHook {
     async fn v3_before_subscribe(
         &self,
         session: &SessionV3,
-        subscribe: v3::Subscribe,
-    ) -> v3::Subscribe {
+        _encode_len: usize,
+        _packet_body: &[u8],
+        subscribe: &mut v3::Subscribe,
+    ) {
         log::debug!(
             "v3_before_subscribe() [{}], {:#?}",
             session.client_id(),
             subscribe
         );
-        subscribe
     }
 
     async fn v3_after_subscribe(
         &self,
         session: &SessionV3,
-        _subscribe: v3::Subscribe,
+        _subscribe: &v3::Subscribe,
         _codes: Option<Vec<v3::SubscribeReturnCode>>,
     ) {
         log::debug!("v3_after_subscribe(), [{}]", session.client_id());
     }
 
-    async fn v3_before_unsubscribe(&self, session: &SessionV3, unsubscribe: &v3::Unsubscribe) {
+    async fn v3_before_unsubscribe(
+        &self,
+        session: &SessionV3,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        unsubscribe: &mut v3::Unsubscribe,
+    ) {
         log::debug!(
             "v3_before_unsubscribe(), [{}], {:#?}",
             session.client_id(),
@@ -341,7 +359,7 @@ impl Hook for TestHook {
         );
     }
 
-    async fn v3_after_unsubscribe(&self, session: &SessionV3, _unsubscribe: v3::Unsubscribe) {
+    async fn v3_after_unsubscribe(&self, session: &SessionV3, _unsubscribe: &v3::Unsubscribe) {
         log::debug!("v3_after_unsubscribe(), [{}]", session.client_id());
     }
 }
