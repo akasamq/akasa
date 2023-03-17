@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use akasa_core::mqtt_proto::{v3, v5};
 use akasa_core::{
     Hook, HookConnectCode, HookConnectedAction, HookPublishCode, SessionV3, SessionV5,
@@ -13,7 +15,7 @@ impl Hook for DefaultHook {
     // ==== MQTT v5.x hooks ====
     // =========================
 
-    async fn v5_before_connect(&self, connect: &v5::Connect) -> HookConnectCode {
+    async fn v5_before_connect(&self, _peer: SocketAddr, connect: &v5::Connect) -> HookConnectCode {
         log::debug!("v5_before_connect(), identifier={}", connect.client_id);
         HookConnectCode::Success
     }
@@ -100,7 +102,7 @@ impl Hook for DefaultHook {
     // ==== MQTT v3.x hooks ====
     // =========================
 
-    async fn v3_before_connect(&self, connect: &v3::Connect) -> HookConnectCode {
+    async fn v3_before_connect(&self, _peer: SocketAddr, connect: &v3::Connect) -> HookConnectCode {
         log::debug!("v3_before_connect(), identifier={}", connect.client_id);
         HookConnectCode::Success
     }

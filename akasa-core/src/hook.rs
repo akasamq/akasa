@@ -44,7 +44,7 @@ use crate::state::{Executor, GlobalState};
 
 #[async_trait]
 pub trait Hook {
-    async fn v5_before_connect(&self, connect: &v5::Connect) -> HookConnectCode;
+    async fn v5_before_connect(&self, peer: SocketAddr, connect: &v5::Connect) -> HookConnectCode;
     async fn v5_after_connect(
         &self,
         session: &SessionV5,
@@ -90,7 +90,7 @@ pub trait Hook {
         unsubscribe: &v5::Unsubscribe,
     );
 
-    async fn v3_before_connect(&self, connect: &v3::Connect) -> HookConnectCode;
+    async fn v3_before_connect(&self, peer: SocketAddr, connect: &v3::Connect) -> HookConnectCode;
     async fn v3_after_connect(
         &self,
         session: &SessionV3,
@@ -375,7 +375,7 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
             sender,
         } => {
             log::debug!("got a v5 before connect request: {peer}, {connect:#?}");
-            let code = handler.v5_before_connect(&connect).await;
+            let code = handler.v5_before_connect(peer, &connect).await;
             if let Err(_err) = sender.send(Ok(code)) {
                 log::debug!("v5 before connect response receiver is closed");
             }
@@ -508,7 +508,7 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
             sender,
         } => {
             log::debug!("got a v3 before connect request: {peer}, {connect:#?}");
-            let code = handler.v3_before_connect(&connect).await;
+            let code = handler.v3_before_connect(peer, &connect).await;
             if let Err(_err) = sender.send(Ok(code)) {
                 log::debug!("v3 before connect response receiver is closed");
             }
