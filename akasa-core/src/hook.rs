@@ -239,21 +239,30 @@ impl HookConnectCode {
 
 #[derive(Debug, Clone)]
 pub enum HookConnectedAction {
-    /// Publish a message
-    Publish {
-        retain: bool,
-        qos: QoS,
-        topic_name: TopicName,
-        payload: Bytes,
-        payload_is_utf8: Option<bool>,
-        message_expiry_interval: Option<u32>,
-        content_type: Option<Arc<String>>,
-    },
-    /// Subscribe to some topic filters (retain message will not send)
-    Subscribe(Vec<(TopicFilter, QoS)>),
-    /// Unsubscribe to some topic filters
-    Unsubscribe(Vec<TopicFilter>),
+    Publish(PublishAction),
+    Subscribe(SubscribeAction),
+    Unsubscribe(UnsubscribeAction),
 }
+
+/// Publish a message
+#[derive(Debug, Clone)]
+pub struct PublishAction {
+    pub retain: bool,
+    pub qos: QoS,
+    pub topic_name: TopicName,
+    pub payload: Bytes,
+    pub payload_is_utf8: Option<bool>,
+    pub message_expiry_interval: Option<u32>,
+    pub content_type: Option<Arc<String>>,
+}
+
+/// Subscribe to some topic filters (retain message will not send)
+#[derive(Debug, Clone)]
+pub struct SubscribeAction(pub Vec<(TopicFilter, QoS)>);
+
+/// Unsubscribe to some topic filters
+#[derive(Debug, Clone)]
+pub struct UnsubscribeAction(pub Vec<TopicFilter>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookPublishCode {

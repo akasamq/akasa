@@ -19,7 +19,10 @@ use mqtt_proto::{
 };
 use tokio::sync::oneshot;
 
-use crate::hook::{HookConnectedAction, HookRequest, HookResult, LockedHookContext};
+use crate::hook::{
+    HookConnectedAction, HookRequest, HookResult, LockedHookContext, PublishAction,
+    SubscribeAction, UnsubscribeAction,
+};
 use crate::protocols::mqtt::{
     BroadcastPackets, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
 };
@@ -617,13 +620,13 @@ async fn after_connect_hook(
     };
     for action in actions {
         match action {
-            HookConnectedAction::Publish {
+            HookConnectedAction::Publish(PublishAction {
                 retain,
                 qos,
                 topic_name,
                 payload,
                 ..
-            } => {
+            }) => {
                 let encode_len = {
                     let qos_pid = match qos {
                         QoS::Level0 => QosPid::Level0,
@@ -654,7 +657,7 @@ async fn after_connect_hook(
                     global,
                 );
             }
-            HookConnectedAction::Subscribe(topics) => {
+            HookConnectedAction::Subscribe(SubscribeAction(topics)) => {
                 let subscribe = Subscribe::new(Pid::default(), topics.clone());
                 match handle_subscribe(session, &subscribe, global) {
                     Ok(packets) => match &packets[0] {
@@ -676,7 +679,7 @@ async fn after_connect_hook(
                     Err(err) => log::error!("action subscribe message invalid: {:?}", err),
                 }
             }
-            HookConnectedAction::Unsubscribe(topics) => {
+            HookConnectedAction::Unsubscribe(UnsubscribeAction(topics)) => {
                 let unsubscribe = Unsubscribe::new(Pid::default(), topics);
                 let _unsuback = handle_unsubscribe(session, &unsubscribe, global);
             }
