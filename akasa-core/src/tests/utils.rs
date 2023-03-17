@@ -260,6 +260,8 @@ impl Hook for TestHook {
     async fn v5_after_subscribe(
         &self,
         session: &SessionV5,
+        _encode_len: usize,
+        _packet_body: &[u8],
         _subscribe: &v5::Subscribe,
         _reason_codes: Option<Vec<v5::SubscribeReasonCode>>,
     ) {
@@ -280,7 +282,13 @@ impl Hook for TestHook {
         );
     }
 
-    async fn v5_after_unsubscribe(&self, session: &SessionV5, _unsubscribe: &v5::Unsubscribe) {
+    async fn v5_after_unsubscribe(
+        &self,
+        session: &SessionV5,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _unsubscribe: &v5::Unsubscribe,
+    ) {
         log::debug!("v5_after_unsubscribe(), [{}]", session.client_id());
     }
 
@@ -339,6 +347,8 @@ impl Hook for TestHook {
     async fn v3_after_subscribe(
         &self,
         session: &SessionV3,
+        _encode_len: usize,
+        _packet_body: &[u8],
         _subscribe: &v3::Subscribe,
         _codes: Option<Vec<v3::SubscribeReturnCode>>,
     ) {
@@ -359,7 +369,13 @@ impl Hook for TestHook {
         );
     }
 
-    async fn v3_after_unsubscribe(&self, session: &SessionV3, _unsubscribe: &v3::Unsubscribe) {
+    async fn v3_after_unsubscribe(
+        &self,
+        session: &SessionV3,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _unsubscribe: &v3::Unsubscribe,
+    ) {
         log::debug!("v3_after_unsubscribe(), [{}]", session.client_id());
     }
 }
