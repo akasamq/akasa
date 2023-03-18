@@ -2,7 +2,8 @@ use std::net::SocketAddr;
 
 use akasa_core::mqtt_proto::{v3, v5};
 use akasa_core::{
-    Hook, HookConnectCode, HookConnectedAction, HookPublishCode, SessionV3, SessionV5,
+    Hook, HookConnectCode, HookConnectedAction, HookPublishCode, HookResult, HookSubscribeCode,
+    HookUnsubscribeCode, SessionV3, SessionV5,
 };
 use async_trait::async_trait;
 
@@ -15,23 +16,27 @@ impl Hook for DefaultHook {
     // ==== MQTT v5.x hooks ====
     // =========================
 
-    async fn v5_before_connect(&self, _peer: SocketAddr, connect: &v5::Connect) -> HookConnectCode {
+    async fn v5_before_connect(
+        &self,
+        _peer: SocketAddr,
+        connect: &v5::Connect,
+    ) -> HookResult<HookConnectCode> {
         log::debug!("v5_before_connect(), identifier={}", connect.client_id);
-        HookConnectCode::Success
+        Ok(HookConnectCode::Success)
     }
 
     async fn v5_after_connect(
         &self,
         session: &SessionV5,
         session_present: bool,
-    ) -> Vec<HookConnectedAction> {
+    ) -> HookResult<Vec<HookConnectedAction>> {
         log::debug!(
             "v5_after_connect(), [{}], identifier={}, session_present={}",
             session.client_id(),
             session.client_identifier(),
             session_present
         );
-        Vec::new()
+        Ok(Vec::new())
     }
 
     async fn v5_before_publish(
@@ -40,13 +45,13 @@ impl Hook for DefaultHook {
         _encode_len: usize,
         _packet_body: &[u8],
         publish: &mut v5::Publish,
-    ) -> HookPublishCode {
+    ) -> HookResult<HookPublishCode> {
         log::debug!(
             "v5_before_publish() [{}], topic={}",
             session.client_id(),
             publish.topic_name
         );
-        HookPublishCode::Success
+        Ok(HookPublishCode::Success)
     }
 
     async fn v5_before_subscribe(
@@ -55,12 +60,13 @@ impl Hook for DefaultHook {
         _encode_len: usize,
         _packet_body: &[u8],
         subscribe: &mut v5::Subscribe,
-    ) {
+    ) -> HookResult<HookSubscribeCode> {
         log::debug!(
             "v5_before_subscribe() [{}], {:#?}",
             session.client_id(),
             subscribe
         );
+        Ok(HookSubscribeCode::Success)
     }
 
     async fn v5_after_subscribe(
@@ -70,8 +76,9 @@ impl Hook for DefaultHook {
         _packet_body: &[u8],
         _subscribe: &v5::Subscribe,
         _reason_codes: Option<Vec<v5::SubscribeReasonCode>>,
-    ) {
+    ) -> HookResult<()> {
         log::debug!("v5_after_subscribe(), [{}]", session.client_id());
+        Ok(())
     }
 
     async fn v5_before_unsubscribe(
@@ -80,12 +87,13 @@ impl Hook for DefaultHook {
         _encode_len: usize,
         _packet_body: &[u8],
         unsubscribe: &mut v5::Unsubscribe,
-    ) {
+    ) -> HookResult<HookUnsubscribeCode> {
         log::debug!(
             "v5_before_unsubscribe(), [{}], {:#?}",
             session.client_id(),
             unsubscribe
         );
+        Ok(HookUnsubscribeCode::Success)
     }
 
     async fn v5_after_unsubscribe(
@@ -94,31 +102,36 @@ impl Hook for DefaultHook {
         _encode_len: usize,
         _packet_body: &[u8],
         _unsubscribe: &v5::Unsubscribe,
-    ) {
+    ) -> HookResult<()> {
         log::debug!("v5_after_unsubscribe(), [{}]", session.client_id());
+        Ok(())
     }
 
     // =========================
     // ==== MQTT v3.x hooks ====
     // =========================
 
-    async fn v3_before_connect(&self, _peer: SocketAddr, connect: &v3::Connect) -> HookConnectCode {
+    async fn v3_before_connect(
+        &self,
+        _peer: SocketAddr,
+        connect: &v3::Connect,
+    ) -> HookResult<HookConnectCode> {
         log::debug!("v3_before_connect(), identifier={}", connect.client_id);
-        HookConnectCode::Success
+        Ok(HookConnectCode::Success)
     }
 
     async fn v3_after_connect(
         &self,
         session: &SessionV3,
         session_present: bool,
-    ) -> Vec<HookConnectedAction> {
+    ) -> HookResult<Vec<HookConnectedAction>> {
         log::debug!(
             "v3_after_connect(), [{}], identifier={}, session_present={}",
             session.client_id(),
             session.client_identifier(),
             session_present
         );
-        Vec::new()
+        Ok(Vec::new())
     }
 
     async fn v3_before_publish(
@@ -127,13 +140,13 @@ impl Hook for DefaultHook {
         _encode_len: usize,
         _packet_body: &[u8],
         publish: &mut v3::Publish,
-    ) -> HookPublishCode {
+    ) -> HookResult<HookPublishCode> {
         log::debug!(
             "v3_before_publish() [{}], topic={}",
             session.client_id(),
             publish.topic_name
         );
-        HookPublishCode::Success
+        Ok(HookPublishCode::Success)
     }
 
     async fn v3_before_subscribe(
@@ -142,12 +155,13 @@ impl Hook for DefaultHook {
         _encode_len: usize,
         _packet_body: &[u8],
         subscribe: &mut v3::Subscribe,
-    ) {
+    ) -> HookResult<HookSubscribeCode> {
         log::debug!(
             "v3_before_subscribe() [{}], {:#?}",
             session.client_id(),
             subscribe
         );
+        Ok(HookSubscribeCode::Success)
     }
 
     async fn v3_after_subscribe(
@@ -157,8 +171,9 @@ impl Hook for DefaultHook {
         _packet_body: &[u8],
         _subscribe: &v3::Subscribe,
         _codes: Option<Vec<v3::SubscribeReturnCode>>,
-    ) {
+    ) -> HookResult<()> {
         log::debug!("v3_after_subscribe(), [{}]", session.client_id());
+        Ok(())
     }
 
     async fn v3_before_unsubscribe(
@@ -167,12 +182,13 @@ impl Hook for DefaultHook {
         _encode_len: usize,
         _packet_body: &[u8],
         unsubscribe: &mut v3::Unsubscribe,
-    ) {
+    ) -> HookResult<HookUnsubscribeCode> {
         log::debug!(
             "v3_before_unsubscribe(), [{}], {:#?}",
             session.client_id(),
             unsubscribe
         );
+        Ok(HookUnsubscribeCode::Success)
     }
 
     async fn v3_after_unsubscribe(
@@ -181,7 +197,8 @@ impl Hook for DefaultHook {
         _encode_len: usize,
         _packet_body: &[u8],
         _unsubscribe: &v3::Unsubscribe,
-    ) {
+    ) -> HookResult<()> {
         log::debug!("v3_after_unsubscribe(), [{}]", session.client_id());
+        Ok(())
     }
 }

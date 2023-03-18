@@ -23,7 +23,7 @@ use mqtt_proto::{
 use tokio::sync::oneshot;
 
 use crate::hook::{
-    HookConnectedAction, HookRequest, HookResult, LockedHookContext, PublishAction,
+    HookConnectedAction, HookReceipt, HookRequest, LockedHookContext, PublishAction,
     SubscribeAction, UnsubscribeAction,
 };
 use crate::protocols::mqtt::{
@@ -434,7 +434,7 @@ impl OnlineSession for Session {
         packet: Self::Packet,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
-    ) -> Result<Option<(HookRequest, oneshot::Receiver<HookResult>)>, Option<io::Error>> {
+    ) -> Result<Option<(HookRequest, oneshot::Receiver<HookReceipt>)>, Option<io::Error>> {
         if encode_len > global.config.max_packet_size_server as usize {
             log::debug!(
                 "packet too large, size={}, max={}",

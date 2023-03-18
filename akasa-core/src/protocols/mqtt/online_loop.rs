@@ -20,7 +20,7 @@ use hashbrown::HashMap;
 use mqtt_proto::{v3, v5, GenericPollPacket, GenericPollPacketState, PollHeader, QoS, VarBytes};
 use tokio::sync::oneshot;
 
-use crate::hook::{HookRequest, HookResult};
+use crate::hook::{HookReceipt, HookRequest};
 use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
 pub struct OnlineLoop<'a, C, S, H>
@@ -42,7 +42,7 @@ where
 
     packet_state: GenericPollPacketState<H>,
     session_state_sender: Option<(SendSink<'static, S::SessionState>, bool)>,
-    hook_message: Option<(Option<HookRequest>, bool, oneshot::Receiver<HookResult>)>,
+    hook_message: Option<(Option<HookRequest>, bool, oneshot::Receiver<HookReceipt>)>,
     write_packets_max: usize,
     write_packets: VecDeque<WritePacket<S::Packet>>,
 }
@@ -698,7 +698,7 @@ pub trait OnlineSession {
         packet: Self::Packet,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
-    ) -> Result<Option<(HookRequest, oneshot::Receiver<HookResult>)>, Option<io::Error>>;
+    ) -> Result<Option<(HookRequest, oneshot::Receiver<HookReceipt>)>, Option<io::Error>>;
     fn after_handle_packet(&mut self, write_packets: &mut VecDeque<WritePacket<Self::Packet>>);
 
     fn handle_control(
