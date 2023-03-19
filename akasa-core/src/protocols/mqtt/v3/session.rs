@@ -27,6 +27,7 @@ pub struct Session {
 
     pub(super) client_id: ClientId,
     pub(super) client_identifier: Arc<String>,
+    pub(super) assigned_client_id: bool,
     pub(super) username: Option<Arc<String>>,
     pub(super) keep_alive: u16,
     pub(super) clean_session: bool,
@@ -71,6 +72,7 @@ impl Session {
 
             client_id: ClientId::max_value(),
             client_identifier: Arc::new(String::new()),
+            assigned_client_id: false,
             username: None,
             keep_alive: 0,
             clean_session: true,
@@ -88,6 +90,10 @@ impl Session {
 
     pub fn client_identifier(&self) -> &Arc<String> {
         &self.client_identifier
+    }
+
+    pub fn assigned_client_id(&self) -> bool {
+        self.assigned_client_id
     }
 
     pub fn username(&self) -> Option<&Arc<String>> {

@@ -102,6 +102,7 @@ clean session : {}
     session.protocol = packet.protocol;
     session.clean_session = packet.clean_session;
     session.client_identifier = if packet.client_id.is_empty() {
+        session.assigned_client_id = true;
         Arc::new(uuid::Uuid::new_v4().to_string())
     } else {
         Arc::clone(&packet.client_id)
