@@ -20,7 +20,7 @@ use hashbrown::HashMap;
 use mqtt_proto::{v3, v5, GenericPollPacket, GenericPollPacketState, PollHeader, QoS, VarBytes};
 use tokio::sync::oneshot;
 
-use crate::hook::{HookReceipt, HookRequest};
+use crate::hook::{HookAction, HookReceipt, HookRequest};
 use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
 pub struct OnlineLoop<'a, C, S, H>
@@ -163,8 +163,13 @@ where
             if *flushed {
                 match Pin::new(&mut *hook_receiver).poll(cx) {
                     Poll::Ready(result) => match result {
-                        Ok(Ok(())) => {
+                        Ok(Ok(actions)) => {
                             log::debug!("hook acked (follow poll)");
+                            for action in actions {
+                                if let Err(err) = session.apply_action(action, global) {
+                                    return Poll::Ready(Some(err));
+                                }
+                            }
                             *hook_message = None;
                         }
                         Ok(Err(err_opt)) => return Poll::Ready(err_opt),
@@ -309,7 +314,16 @@ where
                             if flushed {
                                 match Pin::new(&mut hook_receiver).poll(cx) {
                                     Poll::Ready(result) => match result {
-                                        Ok(Ok(())) => log::debug!("hook acked"),
+                                        Ok(Ok(actions)) => {
+                                            log::debug!("hook acked");
+                                            for action in actions {
+                                                if let Err(err) =
+                                                    session.apply_action(action, global)
+                                                {
+                                                    return Poll::Ready(Some(err));
+                                                }
+                                            }
+                                        }
                                         Ok(Err(err_opt)) => return Poll::Ready(err_opt),
                                         Err(_err) => {
                                             log::error!("hook service stopped");
@@ -700,6 +714,7 @@ pub trait OnlineSession {
         global: &Arc<GlobalState>,
     ) -> Result<Option<(HookRequest, oneshot::Receiver<HookReceipt>)>, Option<io::Error>>;
     fn after_handle_packet(&mut self, write_packets: &mut VecDeque<WritePacket<Self::Packet>>);
+    fn apply_action(&mut self, action: HookAction, global: &Arc<GlobalState>) -> io::Result<()>;
 
     fn handle_control(
         &mut self,

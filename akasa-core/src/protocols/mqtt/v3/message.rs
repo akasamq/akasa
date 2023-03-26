@@ -20,8 +20,8 @@ use mqtt_proto::{
 use tokio::sync::oneshot;
 
 use crate::hook::{
-    HookConnectedAction, HookReceipt, HookRequest, LockedHookContext, PublishAction,
-    SubscribeAction, UnsubscribeAction,
+    HookAction, HookReceipt, HookRequest, LockedHookContext, PublishAction, SubscribeAction,
+    UnsubscribeAction,
 };
 use crate::protocols::mqtt::{
     BroadcastPackets, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
@@ -373,6 +373,75 @@ impl OnlineSession for Session {
         Ok(None)
     }
 
+    fn apply_action(&mut self, action: HookAction, global: &Arc<GlobalState>) -> io::Result<()> {
+        match action {
+            HookAction::Publish(PublishAction {
+                retain,
+                qos,
+                topic_name,
+                payload,
+                ..
+            }) => {
+                let encode_len = {
+                    let qos_pid = match qos {
+                        QoS::Level0 => QosPid::Level0,
+                        QoS::Level1 => QosPid::Level1(Default::default()),
+                        QoS::Level2 => QosPid::Level2(Default::default()),
+                    };
+                    let publish = Publish {
+                        dup: false,
+                        retain,
+                        qos_pid,
+                        topic_name: topic_name.clone(),
+                        payload: payload.clone(),
+                    };
+                    Packet::Publish(publish).encode_len().map_err(|_| {
+                        log::error!("action publish message too large");
+                        io::Error::from(io::ErrorKind::InvalidData)
+                    })?
+                };
+                send_publish(
+                    self,
+                    SendPublish {
+                        qos,
+                        retain,
+                        topic_name: &topic_name,
+                        payload: &payload,
+                        encode_len,
+                    },
+                    global,
+                );
+            }
+            HookAction::Subscribe(SubscribeAction(topics)) => {
+                let subscribe = Subscribe::new(Pid::default(), topics.clone());
+                match handle_subscribe(self, &subscribe, global) {
+                    Ok(packets) => match &packets[0] {
+                        Packet::Suback(suback) => {
+                            for reason_code in &suback.topics {
+                                match reason_code {
+                                    SubscribeReturnCode::MaxLevel0
+                                    | SubscribeReturnCode::MaxLevel1
+                                    | SubscribeReturnCode::MaxLevel2 => {}
+                                    code => {
+                                        log::error!("action subscribe message error return code: {:?}, topics={:?}", code, topics,);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        _ => log::error!("action subscribe message invalid (retain included)"),
+                    },
+                    Err(err) => log::error!("action subscribe message invalid: {:?}", err),
+                }
+            }
+            HookAction::Unsubscribe(UnsubscribeAction(topics)) => {
+                let unsubscribe = Unsubscribe::new(Pid::default(), topics);
+                let _unsuback = handle_unsubscribe(self, &unsubscribe, global);
+            }
+        }
+        Ok(())
+    }
+
     fn after_handle_packet(&mut self, write_packets: &mut VecDeque<WritePacket<Self::Packet>>) {
         let pending_packets = after_handle_packet(self);
         write_packets.extend(pending_packets.into_iter().map(WritePacket::Packet));
@@ -619,71 +688,7 @@ async fn after_connect_hook(
         }
     };
     for action in actions {
-        match action {
-            HookConnectedAction::Publish(PublishAction {
-                retain,
-                qos,
-                topic_name,
-                payload,
-                ..
-            }) => {
-                let encode_len = {
-                    let qos_pid = match qos {
-                        QoS::Level0 => QosPid::Level0,
-                        QoS::Level1 => QosPid::Level1(Default::default()),
-                        QoS::Level2 => QosPid::Level2(Default::default()),
-                    };
-                    let publish = Publish {
-                        dup: false,
-                        retain,
-                        qos_pid,
-                        topic_name: topic_name.clone(),
-                        payload: payload.clone(),
-                    };
-                    Packet::Publish(publish).encode_len().map_err(|_| {
-                        log::error!("action publish message too large");
-                        io::Error::from(io::ErrorKind::InvalidData)
-                    })?
-                };
-                send_publish(
-                    session,
-                    SendPublish {
-                        qos,
-                        retain,
-                        topic_name: &topic_name,
-                        payload: &payload,
-                        encode_len,
-                    },
-                    global,
-                );
-            }
-            HookConnectedAction::Subscribe(SubscribeAction(topics)) => {
-                let subscribe = Subscribe::new(Pid::default(), topics.clone());
-                match handle_subscribe(session, &subscribe, global) {
-                    Ok(packets) => match &packets[0] {
-                        Packet::Suback(suback) => {
-                            for reason_code in &suback.topics {
-                                match reason_code {
-                                    SubscribeReturnCode::MaxLevel0
-                                    | SubscribeReturnCode::MaxLevel1
-                                    | SubscribeReturnCode::MaxLevel2 => {}
-                                    code => {
-                                        log::error!("action subscribe message error return code: {:?}, topics={:?}", code, topics,);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        _ => log::error!("action subscribe message invalid (retain included)"),
-                    },
-                    Err(err) => log::error!("action subscribe message invalid: {:?}", err),
-                }
-            }
-            HookConnectedAction::Unsubscribe(UnsubscribeAction(topics)) => {
-                let unsubscribe = Unsubscribe::new(Pid::default(), topics);
-                let _unsuback = handle_unsubscribe(session, &unsubscribe, global);
-            }
-        }
+        session.apply_action(action, global)?;
     }
     Ok(())
 }

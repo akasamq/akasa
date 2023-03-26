@@ -10,9 +10,9 @@ mod tests;
 
 pub use crate::config::Config;
 pub use crate::hook::{
-    Hook, HookConnectCode, HookConnectedAction, HookError, HookPublishCode, HookRequest,
-    HookResult, HookService, HookSubscribeCode, HookUnsubscribeCode, PublishAction,
-    SubscribeAction, UnsubscribeAction,
+    Hook, HookAction, HookConnectCode, HookError, HookPublishCode, HookRequest, HookResult,
+    HookService, HookSubscribeCode, HookUnsubscribeCode, PublishAction, SubscribeAction,
+    UnsubscribeAction,
 };
 pub use crate::protocols::mqtt::{v3::Session as SessionV3, v5::Session as SessionV5};
 pub use crate::state::GlobalState;

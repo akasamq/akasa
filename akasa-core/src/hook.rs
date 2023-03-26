@@ -51,7 +51,7 @@ pub trait Hook {
         &self,
         session: &SessionV5,
         session_present: bool,
-    ) -> HookResult<Vec<HookConnectedAction>>;
+    ) -> HookResult<Vec<HookAction>>;
 
     async fn v5_before_publish(
         &self,
@@ -60,6 +60,14 @@ pub trait Hook {
         packet_body: &[u8],
         publish: &mut v5::Publish,
     ) -> HookResult<HookPublishCode>;
+
+    async fn v5_after_publish(
+        &self,
+        session: &SessionV5,
+        encode_len: usize,
+        packet_body: &[u8],
+        publish: &v5::Publish,
+    ) -> HookResult<Vec<HookAction>>;
 
     async fn v5_before_subscribe(
         &self,
@@ -76,7 +84,7 @@ pub trait Hook {
         packet_body: &[u8],
         subscribe: &v5::Subscribe,
         codes: Option<Vec<v5::SubscribeReasonCode>>,
-    ) -> HookResult<()>;
+    ) -> HookResult<Vec<HookAction>>;
 
     async fn v5_before_unsubscribe(
         &self,
@@ -92,7 +100,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         unsubscribe: &v5::Unsubscribe,
-    ) -> HookResult<()>;
+    ) -> HookResult<Vec<HookAction>>;
 
     async fn v3_before_connect(
         &self,
@@ -104,7 +112,7 @@ pub trait Hook {
         &self,
         session: &SessionV3,
         session_present: bool,
-    ) -> HookResult<Vec<HookConnectedAction>>;
+    ) -> HookResult<Vec<HookAction>>;
 
     async fn v3_before_publish(
         &self,
@@ -113,6 +121,14 @@ pub trait Hook {
         packet_body: &[u8],
         publish: &mut v3::Publish,
     ) -> HookResult<HookPublishCode>;
+
+    async fn v3_after_publish(
+        &self,
+        session: &SessionV3,
+        encode_len: usize,
+        packet_body: &[u8],
+        publish: &v3::Publish,
+    ) -> HookResult<Vec<HookAction>>;
 
     async fn v3_before_subscribe(
         &self,
@@ -129,7 +145,7 @@ pub trait Hook {
         packet_body: &[u8],
         subscribe: &v3::Subscribe,
         codes: Option<Vec<v3::SubscribeReturnCode>>,
-    ) -> HookResult<()>;
+    ) -> HookResult<Vec<HookAction>>;
 
     async fn v3_before_unsubscribe(
         &self,
@@ -145,7 +161,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         unsubscribe: &v3::Unsubscribe,
-    ) -> HookResult<()>;
+    ) -> HookResult<Vec<HookAction>>;
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -201,7 +217,7 @@ pub enum HookUnsubscribeCode {
 }
 
 #[derive(Debug, Clone)]
-pub enum HookConnectedAction {
+pub enum HookAction {
     Publish(PublishAction),
     Subscribe(SubscribeAction),
     Unsubscribe(UnsubscribeAction),
@@ -333,7 +349,7 @@ impl<S: OnlineSession> LockedHookContext<S> {
     }
 }
 
-pub type HookReceipt = Result<(), Option<io::Error>>;
+pub type HookReceipt = Result<Vec<HookAction>, Option<io::Error>>;
 
 pub enum HookRequest {
     // Shutdown,
@@ -345,7 +361,7 @@ pub enum HookRequest {
     V5AfterConnect {
         context: LockedHookContext<SessionV5>,
         session_present: bool,
-        sender: oneshot::Sender<io::Result<Vec<HookConnectedAction>>>,
+        sender: oneshot::Sender<io::Result<Vec<HookAction>>>,
     },
     V5Publish {
         context: LockedHookContext<SessionV5>,
@@ -377,7 +393,7 @@ pub enum HookRequest {
     V3AfterConnect {
         context: LockedHookContext<SessionV3>,
         session_present: bool,
-        sender: oneshot::Sender<io::Result<Vec<HookConnectedAction>>>,
+        sender: oneshot::Sender<io::Result<Vec<HookAction>>>,
     },
     V3Publish {
         context: LockedHookContext<SessionV3>,
@@ -499,14 +515,21 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
             log::debug!("v5 before publish return code: {:?}", result);
             let receipt = match result {
                 Ok(HookPublishCode::Success) => {
-                    match v5_handle_publish(session, publish, &global) {
-                        // QoS0
-                        Ok(None) => {}
-                        // QoS1, QoS2
-                        Ok(Some(packet)) => write_packets.push_back(packet.into()),
-                        Err(err_pkt) => write_packets.push_back(err_pkt.into()),
+                    match v5_handle_publish(session, publish.clone(), &global) {
+                        Ok(packet_opt) => {
+                            if let Some(packet) = packet_opt {
+                                write_packets.push_back(packet.into());
+                            }
+                            handler
+                                .v5_after_publish(session, encode_len, body, &publish)
+                                .await
+                                .map_err(|err| Some(err.into()))
+                        }
+                        Err(err_pkt) => {
+                            write_packets.push_back(err_pkt.into());
+                            Ok(Vec::new())
+                        }
                     }
-                    Ok(())
                 }
                 Ok(code) => {
                     match publish.qos_pid {
@@ -530,7 +553,7 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                             write_packets.push_back(pkt.into());
                         }
                     }
-                    Ok(())
+                    Ok(Vec::new())
                 }
                 Err(err) => Err(Some(err.into())),
             };
@@ -568,21 +591,17 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                             None
                         }
                     };
-                    if let Err(err) = handler
+                    handler
                         .v5_after_subscribe(session, encode_len, body, &subscribe, codes)
                         .await
-                    {
-                        Err(Some(err.into()))
-                    } else {
-                        Ok(())
-                    }
+                        .map_err(|err| Some(err.into()))
                 }
                 Ok(code) => {
                     let reason_code = code.to_v5_code();
                     let topics = vec![reason_code; subscribe.topics.len()];
                     let pkt: v5::Packet = v5::Suback::new(subscribe.pid, topics).into();
                     write_packets.push_back(pkt.into());
-                    Ok(())
+                    Ok(Vec::new())
                 }
                 Err(err) => Err(Some(err.into())),
             };
@@ -606,21 +625,17 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                 Ok(HookUnsubscribeCode::Success) => {
                     let unsuback = v5_handle_unsubscribe(session, &unsubscribe, &global);
                     write_packets.push_back(unsuback.into());
-                    if let Err(err) = handler
+                    handler
                         .v5_after_unsubscribe(session, encode_len, body, &unsubscribe)
                         .await
-                    {
-                        Err(Some(err.into()))
-                    } else {
-                        Ok(())
-                    }
+                        .map_err(|err| Some(err.into()))
                 }
                 Ok(code) => {
                     let reason_code = code.to_v5_code();
                     let topics = vec![reason_code; unsubscribe.topics.len()];
                     let pkt: v5::Packet = v5::Unsuback::new(unsubscribe.pid, topics).into();
                     write_packets.push_back(pkt.into());
-                    Ok(())
+                    Ok(Vec::new())
                 }
                 Err(err) => Err(Some(err.into())),
             };
@@ -674,12 +689,15 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
             log::debug!("v3 before publish return code: {:?}", result);
             let receipt = match result {
                 Ok(HookPublishCode::Success) => {
-                    match v3_handle_publish(session, publish, &global) {
+                    match v3_handle_publish(session, publish.clone(), &global) {
                         Ok(packet_opt) => {
                             if let Some(packet) = packet_opt {
                                 write_packets.push_back(packet.into());
                             }
-                            Ok(())
+                            handler
+                                .v3_after_publish(session, encode_len, body, &publish)
+                                .await
+                                .map_err(|err| Some(err.into()))
                         }
                         Err(err) => Err(Some(err)),
                     }
@@ -715,7 +733,7 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                                 }
                                 write_packets.push_back(WritePacket::Packet(packet));
                             }
-                            if let Err(err) = handler
+                            handler
                                 .v3_after_subscribe(
                                     session,
                                     encode_len,
@@ -724,11 +742,7 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                                     Some(codes),
                                 )
                                 .await
-                            {
-                                Err(Some(err.into()))
-                            } else {
-                                Ok(())
-                            }
+                                .map_err(|err| Some(err.into()))
                         }
                         Err(err) => {
                             let _result = handler
@@ -762,14 +776,10 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                 Ok(HookUnsubscribeCode::Success) => {
                     let unsuback = v3_handle_unsubscribe(session, &unsubscribe, &global);
                     write_packets.push_back(unsuback.into());
-                    if let Err(err) = handler
+                    handler
                         .v3_after_unsubscribe(session, encode_len, body, &unsubscribe)
                         .await
-                    {
-                        Err(Some(err.into()))
-                    } else {
-                        Ok(())
-                    }
+                        .map_err(|err| Some(err.into()))
                 }
                 // TODO: return error or just ignore the packet?
                 Ok(_code) => Err(Some(io::ErrorKind::InvalidData.into())),
