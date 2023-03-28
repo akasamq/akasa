@@ -241,6 +241,7 @@ impl Hook for TestHook {
         _encode_len: usize,
         _packet_body: &[u8],
         publish: &mut v5::Publish,
+        _changed: &mut bool,
     ) -> HookResult<HookPublishCode> {
         log::debug!(
             "v5_before_publish() [{}], topic={}",
@@ -256,6 +257,7 @@ impl Hook for TestHook {
         _encode_len: usize,
         _packet_body: &[u8],
         publish: &v5::Publish,
+        _changed: bool,
     ) -> HookResult<Vec<HookAction>> {
         log::debug!(
             "v5_after_publish() [{}], topic={}",
@@ -271,6 +273,7 @@ impl Hook for TestHook {
         _encode_len: usize,
         _packet_body: &[u8],
         subscribe: &mut v5::Subscribe,
+        _changed: &mut bool,
     ) -> HookResult<HookSubscribeCode> {
         log::debug!(
             "v5_before_subscribe() [{}], {:#?}",
@@ -286,6 +289,7 @@ impl Hook for TestHook {
         _encode_len: usize,
         _packet_body: &[u8],
         _subscribe: &v5::Subscribe,
+        _changed: bool,
         _reason_codes: Option<Vec<v5::SubscribeReasonCode>>,
     ) -> HookResult<Vec<HookAction>> {
         log::debug!("v5_after_subscribe(), [{}]", session.client_id());
@@ -298,6 +302,7 @@ impl Hook for TestHook {
         _encode_len: usize,
         _packet_body: &[u8],
         unsubscribe: &mut v5::Unsubscribe,
+        _changed: &mut bool,
     ) -> HookResult<HookUnsubscribeCode> {
         log::debug!(
             "v5_before_unsubscribe(), [{}], {:#?}",
@@ -313,6 +318,7 @@ impl Hook for TestHook {
         _encode_len: usize,
         _packet_body: &[u8],
         _unsubscribe: &v5::Unsubscribe,
+        _changed: bool,
     ) -> HookResult<Vec<HookAction>> {
         log::debug!("v5_after_unsubscribe(), [{}]", session.client_id());
         Ok(Vec::new())
@@ -351,6 +357,7 @@ impl Hook for TestHook {
         _encode_len: usize,
         _packet_body: &[u8],
         publish: &mut v3::Publish,
+        _changed: &mut bool,
     ) -> HookResult<HookPublishCode> {
         log::debug!(
             "v3_before_publish() [{}], topic={}",
@@ -366,6 +373,7 @@ impl Hook for TestHook {
         _encode_len: usize,
         _packet_body: &[u8],
         publish: &v3::Publish,
+        _changed: bool,
     ) -> HookResult<Vec<HookAction>> {
         log::debug!(
             "v3_after_publish() [{}], topic={}",
@@ -381,6 +389,7 @@ impl Hook for TestHook {
         _encode_len: usize,
         _packet_body: &[u8],
         subscribe: &mut v3::Subscribe,
+        _changed: &mut bool,
     ) -> HookResult<HookSubscribeCode> {
         log::debug!(
             "v3_before_subscribe() [{}], {:#?}",
@@ -396,6 +405,7 @@ impl Hook for TestHook {
         _encode_len: usize,
         _packet_body: &[u8],
         _subscribe: &v3::Subscribe,
+        _changed: bool,
         _codes: Option<Vec<v3::SubscribeReturnCode>>,
     ) -> HookResult<Vec<HookAction>> {
         log::debug!("v3_after_subscribe(), [{}]", session.client_id());
@@ -408,6 +418,7 @@ impl Hook for TestHook {
         _encode_len: usize,
         _packet_body: &[u8],
         unsubscribe: &mut v3::Unsubscribe,
+        _changed: &mut bool,
     ) -> HookResult<HookUnsubscribeCode> {
         log::debug!(
             "v3_before_unsubscribe(), [{}], {:#?}",
@@ -423,6 +434,7 @@ impl Hook for TestHook {
         _encode_len: usize,
         _packet_body: &[u8],
         _unsubscribe: &v3::Unsubscribe,
+        _changed: bool,
     ) -> HookResult<Vec<HookAction>> {
         log::debug!("v3_after_unsubscribe(), [{}]", session.client_id());
         Ok(Vec::new())

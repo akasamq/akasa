@@ -59,6 +59,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         publish: &mut v5::Publish,
+        changed: &mut bool,
     ) -> HookResult<HookPublishCode>;
 
     async fn v5_after_publish(
@@ -67,6 +68,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         publish: &v5::Publish,
+        changed: bool,
     ) -> HookResult<Vec<HookAction>>;
 
     async fn v5_before_subscribe(
@@ -75,6 +77,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         subscribe: &mut v5::Subscribe,
+        changed: &mut bool,
     ) -> HookResult<HookSubscribeCode>;
 
     async fn v5_after_subscribe(
@@ -83,6 +86,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         subscribe: &v5::Subscribe,
+        changed: bool,
         codes: Option<Vec<v5::SubscribeReasonCode>>,
     ) -> HookResult<Vec<HookAction>>;
 
@@ -92,6 +96,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         unsubscribe: &mut v5::Unsubscribe,
+        changed: &mut bool,
     ) -> HookResult<HookUnsubscribeCode>;
 
     async fn v5_after_unsubscribe(
@@ -100,6 +105,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         unsubscribe: &v5::Unsubscribe,
+        changed: bool,
     ) -> HookResult<Vec<HookAction>>;
 
     async fn v3_before_connect(
@@ -120,6 +126,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         publish: &mut v3::Publish,
+        changed: &mut bool,
     ) -> HookResult<HookPublishCode>;
 
     async fn v3_after_publish(
@@ -128,6 +135,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         publish: &v3::Publish,
+        changed: bool,
     ) -> HookResult<Vec<HookAction>>;
 
     async fn v3_before_subscribe(
@@ -136,6 +144,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         subscribe: &mut v3::Subscribe,
+        changed: &mut bool,
     ) -> HookResult<HookSubscribeCode>;
 
     async fn v3_after_subscribe(
@@ -144,6 +153,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         subscribe: &v3::Subscribe,
+        changed: bool,
         codes: Option<Vec<v3::SubscribeReturnCode>>,
     ) -> HookResult<Vec<HookAction>>;
 
@@ -153,6 +163,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         unsubscribe: &mut v3::Unsubscribe,
+        changed: &mut bool,
     ) -> HookResult<HookUnsubscribeCode>;
 
     async fn v3_after_unsubscribe(
@@ -161,6 +172,7 @@ pub trait Hook {
         encode_len: usize,
         packet_body: &[u8],
         unsubscribe: &v3::Unsubscribe,
+        changed: bool,
     ) -> HookResult<Vec<HookAction>>;
 }
 
@@ -509,8 +521,9 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
             let (session, write_packets) = context.get_mut();
 
             let body: &[u8] = unsafe { mem::transmute(&packet_body[..]) };
+            let mut changed = false;
             let result = handler
-                .v5_before_publish(session, encode_len, body, &mut publish)
+                .v5_before_publish(session, encode_len, body, &mut publish, &mut changed)
                 .await;
             log::debug!("v5 before publish return code: {:?}", result);
             let receipt = match result {
@@ -521,7 +534,7 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                                 write_packets.push_back(packet.into());
                             }
                             handler
-                                .v5_after_publish(session, encode_len, body, &publish)
+                                .v5_after_publish(session, encode_len, body, &publish, changed)
                                 .await
                                 .map_err(|err| Some(err.into()))
                         }
@@ -570,8 +583,9 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
         } => {
             let (session, write_packets) = context.get_mut();
             let body: &[u8] = unsafe { mem::transmute(&packet_body[..]) };
+            let mut changed = false;
             let result = handler
-                .v5_before_subscribe(session, encode_len, body, &mut subscribe)
+                .v5_before_subscribe(session, encode_len, body, &mut subscribe, &mut changed)
                 .await;
             let receipt = match result {
                 Ok(HookSubscribeCode::Success) => {
@@ -592,7 +606,7 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                         }
                     };
                     handler
-                        .v5_after_subscribe(session, encode_len, body, &subscribe, codes)
+                        .v5_after_subscribe(session, encode_len, body, &subscribe, changed, codes)
                         .await
                         .map_err(|err| Some(err.into()))
                 }
@@ -618,15 +632,16 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
         } => {
             let (session, write_packets) = context.get_mut();
             let body: &[u8] = unsafe { mem::transmute(&packet_body[..]) };
+            let mut changed = false;
             let result = handler
-                .v5_before_unsubscribe(session, encode_len, body, &mut unsubscribe)
+                .v5_before_unsubscribe(session, encode_len, body, &mut unsubscribe, &mut changed)
                 .await;
             let receipt = match result {
                 Ok(HookUnsubscribeCode::Success) => {
                     let unsuback = v5_handle_unsubscribe(session, &unsubscribe, &global);
                     write_packets.push_back(unsuback.into());
                     handler
-                        .v5_after_unsubscribe(session, encode_len, body, &unsubscribe)
+                        .v5_after_unsubscribe(session, encode_len, body, &unsubscribe, changed)
                         .await
                         .map_err(|err| Some(err.into()))
                 }
@@ -683,8 +698,9 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
             log::debug!("got a v3 publish request: {publish:#?}");
             let (session, write_packets) = context.get_mut();
             let body: &[u8] = unsafe { mem::transmute(&packet_body[..]) };
+            let mut changed = false;
             let result = handler
-                .v3_before_publish(session, encode_len, body, &mut publish)
+                .v3_before_publish(session, encode_len, body, &mut publish, &mut changed)
                 .await;
             log::debug!("v3 before publish return code: {:?}", result);
             let receipt = match result {
@@ -695,7 +711,7 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                                 write_packets.push_back(packet.into());
                             }
                             handler
-                                .v3_after_publish(session, encode_len, body, &publish)
+                                .v3_after_publish(session, encode_len, body, &publish, changed)
                                 .await
                                 .map_err(|err| Some(err.into()))
                         }
@@ -719,8 +735,9 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
         } => {
             let (session, write_packets) = context.get_mut();
             let body: &[u8] = unsafe { mem::transmute(&packet_body[..]) };
+            let mut changed = false;
             let result = handler
-                .v3_before_subscribe(session, encode_len, body, &mut subscribe)
+                .v3_before_subscribe(session, encode_len, body, &mut subscribe, &mut changed)
                 .await;
             let receipt = match result {
                 Ok(HookSubscribeCode::Success) => {
@@ -739,6 +756,7 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                                     encode_len,
                                     body,
                                     &subscribe,
+                                    changed,
                                     Some(codes),
                                 )
                                 .await
@@ -746,7 +764,9 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
                         }
                         Err(err) => {
                             let _result = handler
-                                .v3_after_subscribe(session, encode_len, body, &subscribe, None)
+                                .v3_after_subscribe(
+                                    session, encode_len, body, &subscribe, changed, None,
+                                )
                                 .await;
                             Err(Some(err))
                         }
@@ -769,15 +789,16 @@ async fn handle_request<H: Hook>(request: HookRequest, handler: H, global: Arc<G
         } => {
             let (session, write_packets) = context.get_mut();
             let body: &[u8] = unsafe { mem::transmute(&packet_body[..]) };
+            let mut changed = false;
             let result = handler
-                .v3_before_unsubscribe(session, encode_len, body, &mut unsubscribe)
+                .v3_before_unsubscribe(session, encode_len, body, &mut unsubscribe, &mut changed)
                 .await;
             let receipt = match result {
                 Ok(HookUnsubscribeCode::Success) => {
                     let unsuback = v3_handle_unsubscribe(session, &unsubscribe, &global);
                     write_packets.push_back(unsuback.into());
                     handler
-                        .v3_after_unsubscribe(session, encode_len, body, &unsubscribe)
+                        .v3_after_unsubscribe(session, encode_len, body, &unsubscribe, changed)
                         .await
                         .map_err(|err| Some(err.into()))
                 }
