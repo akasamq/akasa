@@ -14,7 +14,10 @@ pub use crate::hook::{
     HookService, HookSubscribeCode, HookUnsubscribeCode, PublishAction, SubscribeAction,
     UnsubscribeAction,
 };
-pub use crate::protocols::mqtt::{v3::Session as SessionV3, v5::Session as SessionV5};
+pub use crate::protocols::mqtt::{
+    v3::Session as SessionV3,
+    v5::{Session as SessionV5, SubscriptionData},
+};
 pub use crate::state::GlobalState;
 
 pub use mqtt_proto;
