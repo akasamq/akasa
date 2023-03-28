@@ -33,7 +33,7 @@ impl Hook for DefaultHook {
         log::debug!(
             "v5_after_connect(), [{}], identifier={}, session_present={}",
             session.client_id(),
-            session.client_identifier(),
+            session.client_identifier,
             session_present
         );
         Ok(Vec::new())
@@ -149,7 +149,7 @@ impl Hook for DefaultHook {
         log::debug!(
             "v3_after_connect(), [{}], identifier={}, session_present={}",
             session.client_id(),
-            session.client_identifier(),
+            session.client_identifier,
             session_present
         );
         Ok(Vec::new())

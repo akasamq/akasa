@@ -208,7 +208,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         }
     }
     if session.clean_session {
-        global.remove_client(session.client_id, session.subscribes().keys());
+        global.remove_client(session.client_id, session.subscribes.keys());
         if let Some(err) = io_error {
             return Err(err);
         }

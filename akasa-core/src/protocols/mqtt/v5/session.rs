@@ -19,18 +19,18 @@ use super::super::{BroadcastPackets, PendingPackets};
 
 // FIXME: move OnlineLoop local data to Session
 pub struct Session {
-    pub(super) peer: SocketAddr,
+    pub peer: SocketAddr,
     pub(super) authorizing: bool,
     pub(super) connected: bool,
     pub(super) client_disconnected: bool,
     pub(super) server_disconnected: bool,
     pub(super) protocol: Protocol,
     pub(super) scram_stage: ScramStage,
-    pub(super) connected_time: Option<Instant>,
+    pub connected_time: Option<Instant>,
     // When received a disconnect or tcp connection closed
     pub(super) connection_closed_time: Option<Instant>,
     // last package timestamp
-    pub(super) last_packet_time: Arc<RwLock<Instant>>,
+    pub last_packet_time: Arc<RwLock<Instant>>,
     // For record packet id send from server to client
     pub(super) server_packet_id: Pid,
     pub(super) pending_packets: PendingPackets<PubPacket>,
@@ -41,35 +41,35 @@ pub struct Session {
     pub(super) qos2_pids: HashMap<Pid, u64>,
 
     pub(super) client_id: ClientId,
-    pub(super) client_identifier: Arc<String>,
-    pub(super) assigned_client_id: bool,
+    pub client_identifier: Arc<String>,
+    pub assigned_client_id: bool,
     pub(super) server_keep_alive: bool,
     // (username, Option<role>)
-    pub(super) scram_auth_result: Option<(String, Option<String>)>,
-    pub(super) username: Option<Arc<String>>,
-    pub(super) keep_alive: u16,
-    pub(super) clean_start: bool,
-    pub(super) last_will: Option<LastWill>,
+    pub scram_auth_result: Option<(String, Option<String>)>,
+    pub username: Option<Arc<String>>,
+    pub keep_alive: u16,
+    pub clean_start: bool,
+    pub last_will: Option<LastWill>,
     // The Subscription Identifiers are part of the Session State in the Server
-    pub(super) subscribes: HashMap<TopicFilter, SubscriptionData>,
+    pub subscribes: HashMap<TopicFilter, SubscriptionData>,
     // Topic aliases are connection only data (not session state)
-    pub(super) topic_aliases: HashMap<u16, TopicName>,
+    pub topic_aliases: HashMap<u16, TopicName>,
 
     pub(super) broadcast_packets_max: usize,
     pub(super) broadcast_packets_cnt: usize,
     pub(super) broadcast_packets: HashMap<ClientId, BroadcastPackets>,
 
     // properties
-    pub(super) session_expiry_interval: u32,
-    pub(super) receive_max: u16,
+    pub session_expiry_interval: u32,
+    pub receive_max: u16,
     // to limit the max packet size server can send
-    pub(super) max_packet_size: u32,
+    pub max_packet_size: u32,
     // client topic alias maximum
-    pub(super) topic_alias_max: u16,
+    pub topic_alias_max: u16,
     pub(super) request_response_info: bool,
     pub(super) request_problem_info: bool,
-    pub(super) user_properties: Vec<UserProperty>,
-    pub(super) auth_method: Option<Arc<String>>,
+    pub user_properties: Vec<UserProperty>,
+    pub auth_method: Option<Arc<String>>,
 }
 
 pub struct SessionState {
@@ -135,62 +135,6 @@ impl Session {
 
     pub fn client_id(&self) -> ClientId {
         self.client_id
-    }
-
-    pub fn client_identifier(&self) -> &Arc<String> {
-        &self.client_identifier
-    }
-
-    pub fn assigned_client_id(&self) -> bool {
-        self.assigned_client_id
-    }
-
-    pub fn username(&self) -> Option<&Arc<String>> {
-        self.username.as_ref()
-    }
-
-    pub fn keep_alive(&self) -> u16 {
-        self.keep_alive
-    }
-
-    pub fn clean_start(&self) -> bool {
-        self.clean_start
-    }
-
-    pub fn last_will(&self) -> Option<&LastWill> {
-        self.last_will.as_ref()
-    }
-
-    pub fn subscribes(&self) -> &HashMap<TopicFilter, SubscriptionData> {
-        &self.subscribes
-    }
-
-    pub fn topic_aliases(&self) -> &HashMap<u16, TopicName> {
-        &self.topic_aliases
-    }
-
-    pub fn session_expiry_interval(&self) -> u32 {
-        self.session_expiry_interval
-    }
-
-    pub fn receive_max(&self) -> u16 {
-        self.receive_max
-    }
-
-    pub fn max_packet_size(&self) -> u32 {
-        self.max_packet_size
-    }
-
-    pub fn peer(&self) -> SocketAddr {
-        self.peer
-    }
-
-    pub fn connected_time(&self) -> Option<Instant> {
-        self.connected_time
-    }
-
-    pub fn last_packet_time(&self) -> Instant {
-        *self.last_packet_time.read()
     }
 
     pub(crate) fn incr_server_packet_id(&mut self) -> Pid {

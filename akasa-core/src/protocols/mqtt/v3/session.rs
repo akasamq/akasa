@@ -13,26 +13,26 @@ use crate::state::{ClientId, ClientReceiver};
 use super::super::{BroadcastPackets, PendingPackets};
 
 pub struct Session {
-    pub(super) peer: SocketAddr,
+    pub peer: SocketAddr,
     pub(super) connected: bool,
     pub(super) disconnected: bool,
     pub(super) protocol: Protocol,
-    pub(super) connected_time: Option<Instant>,
+    pub connected_time: Option<Instant>,
     // last package timestamp
-    pub(super) last_packet_time: Arc<RwLock<Instant>>,
+    pub last_packet_time: Arc<RwLock<Instant>>,
     // For record packet id send from server to client
     pub(super) server_packet_id: Pid,
     pub(super) pending_packets: PendingPackets<PubPacket>,
     pub(super) qos2_pids: HashMap<Pid, u64>,
 
     pub(super) client_id: ClientId,
-    pub(super) client_identifier: Arc<String>,
-    pub(super) assigned_client_id: bool,
-    pub(super) username: Option<Arc<String>>,
-    pub(super) keep_alive: u16,
-    pub(super) clean_session: bool,
-    pub(super) last_will: Option<LastWill>,
-    pub(super) subscribes: HashMap<TopicFilter, QoS>,
+    pub client_identifier: Arc<String>,
+    pub assigned_client_id: bool,
+    pub username: Option<Arc<String>>,
+    pub keep_alive: u16,
+    pub clean_session: bool,
+    pub last_will: Option<LastWill>,
+    pub subscribes: HashMap<TopicFilter, QoS>,
 
     pub(super) broadcast_packets_max: usize,
     pub(super) broadcast_packets_cnt: usize,
@@ -86,42 +86,6 @@ impl Session {
 
     pub fn client_id(&self) -> ClientId {
         self.client_id
-    }
-
-    pub fn client_identifier(&self) -> &Arc<String> {
-        &self.client_identifier
-    }
-
-    pub fn assigned_client_id(&self) -> bool {
-        self.assigned_client_id
-    }
-
-    pub fn username(&self) -> Option<&Arc<String>> {
-        self.username.as_ref()
-    }
-
-    pub fn keep_alive(&self) -> u16 {
-        self.keep_alive
-    }
-
-    pub fn clean_session(&self) -> bool {
-        self.clean_session
-    }
-
-    pub fn last_will(&self) -> Option<&LastWill> {
-        self.last_will.as_ref()
-    }
-
-    pub fn subscribes(&self) -> &HashMap<TopicFilter, QoS> {
-        &self.subscribes
-    }
-
-    pub fn peer(&self) -> SocketAddr {
-        self.peer
-    }
-
-    pub fn last_packet_time(&self) -> Instant {
-        *self.last_packet_time.read()
     }
 
     pub(crate) fn incr_server_packet_id(&mut self) -> Pid {
