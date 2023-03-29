@@ -228,7 +228,7 @@ pub enum HookUnsubscribeCode {
     TopicFilterInvalid,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum HookAction {
     Publish(PublishAction),
     Subscribe(SubscribeAction),
@@ -236,7 +236,7 @@ pub enum HookAction {
 }
 
 /// Publish a message
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PublishAction {
     pub retain: bool,
     pub qos: QoS,
@@ -248,11 +248,11 @@ pub struct PublishAction {
 }
 
 /// Subscribe to some topic filters (retain message will not send)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SubscribeAction(pub Vec<(TopicFilter, QoS)>);
 
 /// Unsubscribe to some topic filters
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct UnsubscribeAction(pub Vec<TopicFilter>);
 
 impl HookConnectCode {
