@@ -44,7 +44,12 @@ where
                     hook_receiver.clone(),
                     Arc::clone(&global),
                 );
-                spawn_local(hook_service.start()).detach();
+                if cpu_num == 1 {
+                    spawn_local(hook_service.start()).detach();
+                } else {
+                    // So that current shard can keep running.
+                    hook_service.start().await;
+                }
             }
 
             if cpu_num == 1 || id % 2 == 0 {
