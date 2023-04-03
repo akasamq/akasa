@@ -78,8 +78,6 @@ pub enum AuthType {
     UsernamePassword,
     /// JSON Web Token (JWT)
     Jwt,
-    /// x509 Client Certificates
-    X509ClientCert,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
