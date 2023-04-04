@@ -15,9 +15,11 @@ pub use crate::hook::{
     UnsubscribeAction,
 };
 pub use crate::protocols::mqtt::{
+    dump_passwords, hash_password, load_passwords,
     v3::Session as SessionV3,
     v5::{Session as SessionV5, SubscriptionData},
+    SALT_LEN,
 };
-pub use crate::state::GlobalState;
+pub use crate::state::{AuthPassword, GlobalState, HashAlgorithm};
 
 pub use mqtt_proto;

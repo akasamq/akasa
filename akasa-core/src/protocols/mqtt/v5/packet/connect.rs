@@ -13,8 +13,8 @@ use mqtt_proto::{
 };
 use scram::server::{AuthenticationStatus, ScramServer};
 
-use crate::config::{AuthType, SaslMechanism};
-use crate::protocols::mqtt::start_keep_alive_timer;
+use crate::config::SaslMechanism;
+use crate::protocols::mqtt::{check_password, start_keep_alive_timer};
 use crate::state::{AddClientReceipt, ClientReceiver, Executor, GlobalState};
 
 use super::super::{ScramStage, Session, TracedRng};
@@ -48,27 +48,20 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
     );
 
     let mut reason_code = ConnectReasonCode::Success;
-    // FIXME: auth by plugin
-    for auth_type in &global.config.auth_types {
-        match auth_type {
-            AuthType::UsernamePassword => {
-                if let Some(username) = packet.username.as_ref() {
-                    if global
-                        .config
-                        .users
-                        .get(username.as_str())
-                        .map(|s| s.as_bytes())
-                        != packet.password.as_ref().map(|s| s.as_ref())
-                    {
-                        log::debug!("incorrect password for user: {}", username);
-                        reason_code = ConnectReasonCode::BadUserNameOrPassword;
-                    }
-                } else {
-                    log::debug!("username password not set for client: {}", packet.client_id);
-                    reason_code = ConnectReasonCode::BadUserNameOrPassword;
-                }
+    if global.config.auth.enable {
+        if packet.username.is_none() || packet.password.is_none() {
+            log::debug!(
+                "username or password not set for client: {}",
+                packet.client_id
+            );
+            reason_code = ConnectReasonCode::BadUserNameOrPassword;
+        } else {
+            let username = packet.username.as_ref().unwrap();
+            let password = packet.password.as_ref().unwrap();
+            if !check_password(&global.auth_passwords, username, password) {
+                log::debug!("incorrect password for user: {}", username);
+                reason_code = ConnectReasonCode::BadUserNameOrPassword;
             }
-            _ => panic!("auth method not supported: {auth_type:?}"),
         }
     }
     // FIXME: permission check and return "not authorized"

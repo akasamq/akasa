@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use mqtt_proto::QoS;
 use scram::server::{AuthenticationProvider, PasswordInfo};
@@ -8,9 +9,7 @@ pub const DEFAULT_MAX_PACKET_SIZE: u32 = 5 + 268_435_455;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
-    pub auth_types: Vec<AuthType>,
-    // FIXME: replace it later
-    pub users: HashMap<String, String>,
+    pub auth: AuthConfig,
     // FIXME: replace it with outter data: { username => PasswordInfo }
     pub scram_users: HashMap<String, ScramPasswordInfo>,
     pub sasl_mechanisms: HashSet<SaslMechanism>,
@@ -72,12 +71,10 @@ pub struct ScramPasswordInfo {
     pub salt: Vec<u8>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AuthType {
-    /// Plain username and password
-    UsernamePassword,
-    /// JSON Web Token (JWT)
-    Jwt,
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct AuthConfig {
+    pub enable: bool,
+    pub password_file: Option<PathBuf>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
@@ -111,11 +108,10 @@ impl Default for HookConfig {
 impl Default for Config {
     fn default() -> Config {
         let config = Config {
-            auth_types: vec![AuthType::UsernamePassword],
-            users: vec![("user", "pass")]
-                .into_iter()
-                .map(|(u, p)| (u.to_owned(), p.to_owned()))
-                .collect(),
+            auth: AuthConfig {
+                enable: true,
+                password_file: Some(PathBuf::from("/path/to/passwords/file")),
+            },
             scram_users: vec![("user", (b"***", 4096, b"salt"))]
                 .into_iter()
                 .map(|(u, (p, i, s))| {
@@ -160,13 +156,20 @@ impl Default for Config {
 impl Config {
     pub fn new_allow_anonymous() -> Config {
         Config {
-            auth_types: Vec::new(),
+            auth: AuthConfig {
+                enable: false,
+                password_file: None,
+            },
             ..Default::default()
         }
     }
 
     /// Check if the config is valid
     pub fn is_valid(&self) -> bool {
+        if self.auth.enable && self.auth.password_file.is_none() {
+            log::error!("when authentication enabled, `password_file` must be provided");
+            return false;
+        }
         if self.max_allowed_qos > 2 {
             log::error!(
                 "invalid max_allowed_qos: {}, allowed values: [0, 1, 2]",

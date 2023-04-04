@@ -2,6 +2,7 @@ use std::fmt;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -31,12 +32,28 @@ pub struct GlobalState {
 
     pub bind: SocketAddr,
     pub config: Config,
+    pub auth_passwords: DashMap<String, AuthPassword>,
 
     /// MQTT route table
     pub route_table: RouteTable,
 
     /// MQTT retain table
     pub retain_table: RetainTable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HashAlgorithm {
+    Sha256,
+    Sha512,
+    Sha256Pkbdf2 { iterations: NonZeroU32 },
+    Sha512Pkbdf2 { iterations: NonZeroU32 },
+}
+
+pub struct AuthPassword {
+    pub hash_algorithm: HashAlgorithm,
+    pub hashed_password: Vec<u8>,
+    // salt is suffix
+    pub salt: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -52,7 +69,11 @@ pub struct ClientReceiver {
 }
 
 impl GlobalState {
-    pub fn new(bind: SocketAddr, config: Config) -> GlobalState {
+    pub fn new(
+        bind: SocketAddr,
+        config: Config,
+        auth_passwords: DashMap<String, AuthPassword>,
+    ) -> GlobalState {
         GlobalState {
             // FIXME: load from db (rosksdb or sqlite3)
             next_client_id: Mutex::new(ClientId(0)),
@@ -63,6 +84,7 @@ impl GlobalState {
 
             bind,
             config,
+            auth_passwords,
             route_table: RouteTable::default(),
             retain_table: RetainTable::default(),
         }

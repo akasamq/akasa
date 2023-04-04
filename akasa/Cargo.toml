@@ -13,3 +13,6 @@ serde_yaml = "0.9.14"
 async-trait = "0.1.64"
 env_logger = "0.9.3"
 log = "0.4.17"
+dashmap = "5.4.0"
+rpassword = "7.2.0"
+rand = { version = "0.8.5", features = ["getrandom"] }
