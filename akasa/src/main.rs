@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use akasa_core::{
     dump_passwords, hash_password, load_passwords, server, AuthPassword, Config, GlobalState,
-    HashAlgorithm as CoreHashAlgorithm, SALT_LEN,
+    HashAlgorithm as CoreHashAlgorithm, MIN_SALT_LEN,
 };
 use anyhow::{anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -165,7 +165,7 @@ fn main() -> anyhow::Result<()> {
                     CoreHashAlgorithm::Sha512Pkbdf2 { iterations }
                 }
             };
-            let mut salt = vec![0u8; SALT_LEN];
+            let mut salt = vec![0u8; MIN_SALT_LEN];
             OsRng.fill_bytes(&mut salt);
             let hashed_password = hash_password(hash_algorithm, &salt, password.as_bytes());
 

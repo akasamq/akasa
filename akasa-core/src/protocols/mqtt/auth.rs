@@ -10,7 +10,7 @@ use ring::{
 
 use crate::state::{AuthPassword, HashAlgorithm};
 
-pub const SALT_LEN: usize = 12;
+pub const MIN_SALT_LEN: usize = 12;
 
 pub fn load_passwords<R: Read>(input: R) -> io::Result<DashMap<String, AuthPassword>> {
     let reader = BufReader::with_capacity(2048, input);
@@ -45,7 +45,7 @@ pub fn load_passwords<R: Read>(input: R) -> io::Result<DashMap<String, AuthPassw
         let parse_salt = |s: &str| -> io::Result<Vec<u8>> {
             match STANDARD_NO_PAD.decode(s) {
                 Ok(salt) => {
-                    if salt.len() < SALT_LEN {
+                    if salt.len() < MIN_SALT_LEN {
                         log::error!("password salt not enough(line#{}): {}", line_num, line);
                         Err(io::ErrorKind::InvalidData.into())
                     } else {
