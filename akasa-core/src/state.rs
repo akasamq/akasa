@@ -69,11 +69,7 @@ pub struct ClientReceiver {
 }
 
 impl GlobalState {
-    pub fn new(
-        bind: SocketAddr,
-        config: Config,
-        auth_passwords: DashMap<String, AuthPassword>,
-    ) -> GlobalState {
+    pub fn new(bind: SocketAddr, config: Config) -> GlobalState {
         GlobalState {
             // FIXME: load from db (rosksdb or sqlite3)
             next_client_id: Mutex::new(ClientId(0)),
@@ -84,7 +80,7 @@ impl GlobalState {
 
             bind,
             config,
-            auth_passwords,
+            auth_passwords: DashMap::new(),
             route_table: RouteTable::default(),
             retain_table: RetainTable::default(),
         }

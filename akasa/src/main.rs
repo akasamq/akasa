@@ -76,6 +76,17 @@ enum Commands {
         #[clap(long, value_name = "NUM", default_value = "128")]
         iterations: Option<NonZeroU32>,
     },
+
+    /// Remove a password from the password file
+    RemovePassword {
+        /// The password file path
+        #[clap(long, value_name = "FILE")]
+        path: PathBuf,
+
+        /// The user name
+        #[clap(long, value_name = "STRING")]
+        username: String,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -124,7 +135,9 @@ fn main() -> anyhow::Result<()> {
             } else {
                 DashMap::new()
             };
-            let global = Arc::new(GlobalState::new(bind, config, auth_passwords));
+            let mut global_state = GlobalState::new(bind, config);
+            global_state.auth_passwords = auth_passwords;
+            let global = Arc::new(global_state);
             match runtime {
                 #[cfg(target_os = "linux")]
                 Runtime::Glommio => server::rt_glommio::start(hook_handler, global)?,
@@ -185,7 +198,17 @@ fn main() -> anyhow::Result<()> {
             );
             let file = fs::File::create(&path)?;
             dump_passwords(&file, &auth_passwords)?;
-            println!("add/update username: {username} to {path:?}");
+            println!("add/update user={username} to {path:?}");
+        }
+        Commands::RemovePassword { path, username } => {
+            let auth_passwords = load_passwords(&fs::File::open(&path)?)?;
+            if auth_passwords.remove(&username).is_some() {
+                let file = fs::File::create(&path)?;
+                dump_passwords(&file, &auth_passwords)?;
+                println!("removed user={username} from {path:?}");
+            } else {
+                println!("user={username} not found");
+            }
         }
     }
     Ok(())

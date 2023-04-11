@@ -7,7 +7,8 @@ use mqtt_proto::*;
 use tokio::time::sleep;
 use ConnectReasonCode::*;
 
-use crate::config::{AuthType, Config};
+use crate::config::Config;
+use crate::state::{GlobalState, HashAlgorithm};
 use crate::tests::utils::MockConn;
 
 use super::super::ClientV5;
@@ -134,12 +135,10 @@ async fn test_connect_auth() {
     }
     // empty username/password
     {
-        let mut config = Config::new_allow_anonymous();
-        config.auth_types = vec![AuthType::UsernamePassword];
-        config.users = [("user".to_owned(), "pass".to_owned())]
-            .into_iter()
-            .collect();
-        let (_task, mut client) = MockConn::start(3333, config);
+        let mut global_state =
+            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        global_state.insert_password("user", "pass", HashAlgorithm::Sha256);
+        let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
         client
             .connect_with(
                 "client id",
@@ -150,12 +149,10 @@ async fn test_connect_auth() {
     }
     // wrong username/password
     {
-        let mut config = Config::new_allow_anonymous();
-        config.auth_types = vec![AuthType::UsernamePassword];
-        config.users = [("user".to_owned(), "pass".to_owned())]
-            .into_iter()
-            .collect();
-        let (_task, mut client) = MockConn::start(3333, config);
+        let mut global_state =
+            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        global_state.insert_password("user", "pass", HashAlgorithm::Sha256);
+        let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
         client
             .connect_with(
                 "client id",
@@ -169,12 +166,10 @@ async fn test_connect_auth() {
     }
     // wrong password
     {
-        let mut config = Config::new_allow_anonymous();
-        config.auth_types = vec![AuthType::UsernamePassword];
-        config.users = [("user".to_owned(), "pass".to_owned())]
-            .into_iter()
-            .collect();
-        let (_task, mut client) = MockConn::start(3333, config);
+        let mut global_state =
+            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        global_state.insert_password("user", "pass", HashAlgorithm::Sha256);
+        let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
         client
             .connect_with(
                 "client",
@@ -186,14 +181,36 @@ async fn test_connect_auth() {
             )
             .await;
     }
-    // right username/password
+    // right username/password (hash-algorithm: sha256)
     {
-        let mut config = Config::new_allow_anonymous();
-        config.auth_types = vec![AuthType::UsernamePassword];
-        config.users = [("user".to_owned(), "pass".to_owned())]
-            .into_iter()
-            .collect();
-        let (_task, mut client) = MockConn::start(3333, config);
+        let mut global_state =
+            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        global_state.insert_password("user", "pass", HashAlgorithm::Sha256);
+        let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
+        client
+            .connect_with(
+                "client id",
+                |c| {
+                    c.username = Some(Arc::new("user".to_owned()));
+                    c.password = Some(Bytes::from(b"pass".to_vec()));
+                },
+                |_| (),
+            )
+            .await;
+    }
+
+    // right username/password (hash-algorithm: sha256)
+    {
+        let mut global_state =
+            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        global_state.insert_password(
+            "user",
+            "pass",
+            HashAlgorithm::Sha256Pkbdf2 {
+                iterations: 10.try_into().unwrap(),
+            },
+        );
+        let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
         client
             .connect_with(
                 "client id",

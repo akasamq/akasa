@@ -11,6 +11,7 @@ use flume::bounded;
 use futures_lite::io::{AsyncRead, AsyncWrite};
 use futures_sink::Sink;
 use mqtt_proto::{v3, v5};
+use rand::{rngs::OsRng, RngCore};
 use tokio::{
     sync::mpsc::{channel, error::TryRecvError, Receiver, Sender},
     task::JoinHandle,
@@ -23,8 +24,24 @@ use crate::hook::{
     HookUnsubscribeCode,
 };
 use crate::server::{handle_accept, rt_tokio::TokioExecutor};
-use crate::state::GlobalState;
-use crate::{SessionV3, SessionV5};
+use crate::state::{AuthPassword, GlobalState, HashAlgorithm};
+use crate::{hash_password, SessionV3, SessionV5, MIN_SALT_LEN};
+
+impl GlobalState {
+    pub(crate) fn insert_password(&mut self, username: &str, password: &str, algo: HashAlgorithm) {
+        let mut salt = vec![0u8; MIN_SALT_LEN];
+        OsRng.fill_bytes(&mut salt);
+        let hashed_password = hash_password(algo, &salt, password.as_bytes());
+        self.auth_passwords.insert(
+            username.to_owned(),
+            AuthPassword {
+                hash_algorithm: algo,
+                hashed_password,
+                salt,
+            },
+        );
+    }
+}
 
 pub struct MockConnControl {
     pub chan_in: Sender<Vec<u8>>,

@@ -7,7 +7,8 @@ use mqtt_proto::*;
 use tokio::time::sleep;
 use ConnectReturnCode::*;
 
-use crate::config::{AuthType, Config};
+use crate::config::Config;
+use crate::state::{GlobalState, HashAlgorithm};
 use crate::tests::utils::MockConn;
 
 use super::ClientV3;
@@ -183,24 +184,20 @@ async fn test_connect_auth() {
     }
     // empty username/password
     {
-        let mut config = Config::new_allow_anonymous();
-        config.auth_types = vec![AuthType::UsernamePassword];
-        config.users = [("user".to_owned(), "pass".to_owned())]
-            .into_iter()
-            .collect();
-        let (_task, mut client) = MockConn::start(3333, config);
+        let mut global_state =
+            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        global_state.insert_password("user", "pass", HashAlgorithm::Sha256);
+        let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
         client
             .connect_with("client id", |_| (), |a| a.code = BadUserNameOrPassword)
             .await;
     }
     // wrong username/password
     {
-        let mut config = Config::new_allow_anonymous();
-        config.auth_types = vec![AuthType::UsernamePassword];
-        config.users = [("user".to_owned(), "pass".to_owned())]
-            .into_iter()
-            .collect();
-        let (_task, mut client) = MockConn::start(3333, config);
+        let mut global_state =
+            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        global_state.insert_password("user", "pass", HashAlgorithm::Sha256);
+        let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
         client
             .connect_with(
                 "client id",
@@ -214,12 +211,10 @@ async fn test_connect_auth() {
     }
     // wrong password
     {
-        let mut config = Config::new_allow_anonymous();
-        config.auth_types = vec![AuthType::UsernamePassword];
-        config.users = [("user".to_owned(), "pass".to_owned())]
-            .into_iter()
-            .collect();
-        let (_task, mut client) = MockConn::start(3333, config);
+        let mut global_state =
+            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        global_state.insert_password("user", "pass", HashAlgorithm::Sha256);
+        let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
         client
             .connect_with(
                 "client",
@@ -231,14 +226,12 @@ async fn test_connect_auth() {
             )
             .await;
     }
-    // right username/password
+    // correct username/password
     {
-        let mut config = Config::new_allow_anonymous();
-        config.auth_types = vec![AuthType::UsernamePassword];
-        config.users = [("user".to_owned(), "pass".to_owned())]
-            .into_iter()
-            .collect();
-        let (_task, mut client) = MockConn::start(3333, config);
+        let mut global_state =
+            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        global_state.insert_password("user", "pass", HashAlgorithm::Sha256);
+        let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
         client
             .connect_with(
                 "client id",
