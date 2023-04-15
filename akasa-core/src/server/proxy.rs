@@ -14,18 +14,14 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use futures_lite::io::{AsyncRead, AsyncReadExt};
 
 /// The prefix of the PROXY protocol header.
-pub const PROTOCOL_PREFIX: &[u8] = b"\r\n\r\n\0\r\nQUIT\n";
-/// The minimum length in bytes of a PROXY protocol header.
-pub const MINIMUM_LENGTH: usize = 16;
-/// The minimum length in bytes of a Type-Length-Value payload.
-pub const MINIMUM_TLV_LENGTH: usize = 3;
+const PROTOCOL_PREFIX: &[u8] = b"\r\n\r\n\0\r\nQUIT\n";
 
 /// The number of bytes for an IPv4 addresses payload.
-const IPV4_ADDRESSES_BYTES: usize = 12;
+const IPV4_ADDRS_LEN: usize = (4 + 2) * 2;
 /// The number of bytes for an IPv6 addresses payload.
-const IPV6_ADDRESSES_BYTES: usize = 36;
+const IPV6_ADDRS_LEN: usize = (16 + 2) * 2;
 /// The number of bytes for a unix addresses payload.
-const UNIX_ADDRESSES_BYTES: usize = 216;
+const UNIX_ADDRS_LEN: usize = 108 * 2;
 
 /// Masks the right 4-bits so only the left 4-bits are present.
 const LEFT_MASK: u8 = 0xF0;
@@ -38,13 +34,13 @@ pub struct Header {
     pub protocol: Protocol,
     pub addresses: Addresses,
     /// Contains the host name value passed by the client, read from
-    /// `PP2_TYPE_AUTHORITY` tlv field, only presented when tls=true.
+    /// `PP2_TYPE_AUTHORITY` tlv field, only presented when tls=true (TLS termination enabled).
     pub tls_sni: Option<String>,
 }
 
 /// The supported `AddressFamily` for a PROXY protocol header.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum AddressFamily {
+enum AddressFamily {
     IPv4 = 0x10,
     IPv6 = 0x20,
     Unix = 0x30,
@@ -80,31 +76,16 @@ pub enum Addresses {
     },
 }
 
-/// Supported types for `TypeLengthValue` payloads.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Type {
-    ALPN = 0x01,
-    Authority,
-    CRC32C,
-    NoOp,
-    UniqueId,
-    SSL = 0x20,
-    SSLVersion,
-    SSLCommonName,
-    SSLCipher,
-    SSLSignatureAlgorithm,
-    SSLKeyAlgorithm,
-    NetworkNamespace = 0x30,
-}
-
 /// Return `Some(Header)` when handle proxy connection, return `None` when
 /// handle local(health-check) connection.
 pub async fn parse_header<T: AsyncRead + Unpin>(
     reader: &mut T,
     tls: bool,
 ) -> io::Result<Option<Header>> {
-    let mut prefix = [0u8; 16];
-    reader.read_exact(&mut prefix).await?;
+    let mut buffer = [0u8; 256];
+    reader.read_exact(&mut buffer[0..16]).await?;
+
+    let prefix = &buffer[0..16];
     if &prefix[..PROTOCOL_PREFIX.len()] != PROTOCOL_PREFIX {
         log::warn!(
             "invalid proxy protocol fixed prefix: {:?}",
@@ -115,7 +96,7 @@ pub async fn parse_header<T: AsyncRead + Unpin>(
 
     let byte_13th = prefix[12];
     let byte_14th = prefix[13];
-    let length = u16::from_be_bytes([prefix[14], prefix[15]]) as usize;
+    let extra_length = u16::from_be_bytes([prefix[14], prefix[15]]) as usize;
 
     match byte_13th & LEFT_MASK {
         0x20 => {}
@@ -127,7 +108,7 @@ pub async fn parse_header<T: AsyncRead + Unpin>(
     match byte_13th & RIGHT_MASK {
         // Local
         0x00 => {
-            if !(byte_14th == 0 && length == 0) {
+            if !(byte_14th == 0 && extra_length == 0) {
                 log::warn!("invalid proxy protocol local command: {:?}", prefix);
                 return Err(io::ErrorKind::InvalidData.into());
             }
@@ -156,14 +137,14 @@ pub async fn parse_header<T: AsyncRead + Unpin>(
         }
     };
     let address_length = match address_family {
-        AddressFamily::IPv4 => IPV4_ADDRESSES_BYTES,
-        AddressFamily::IPv6 => IPV6_ADDRESSES_BYTES,
-        AddressFamily::Unix => UNIX_ADDRESSES_BYTES,
+        AddressFamily::IPv4 => IPV4_ADDRS_LEN,
+        AddressFamily::IPv6 => IPV6_ADDRS_LEN,
+        AddressFamily::Unix => UNIX_ADDRS_LEN,
     };
-    if length < address_length {
+    if extra_length < address_length {
         log::warn!(
-            "invalid proxy protocol length or address, length={}, expected={}",
-            length,
+            "invalid proxy protocol length or address, length={} < address-length={}",
+            extra_length,
             address_length
         );
         return Err(io::ErrorKind::InvalidData.into());
@@ -180,31 +161,11 @@ pub async fn parse_header<T: AsyncRead + Unpin>(
         }
     };
 
-    let mut address_bytes = [0u8; UNIX_ADDRESSES_BYTES];
-    let address_bytes_slice = match address_family {
-        AddressFamily::IPv4 => {
-            reader
-                .read_exact(&mut address_bytes[..IPV4_ADDRESSES_BYTES])
-                .await?;
-            &address_bytes[..IPV4_ADDRESSES_BYTES]
-        }
-        AddressFamily::IPv6 => {
-            reader
-                .read_exact(&mut address_bytes[..IPV6_ADDRESSES_BYTES])
-                .await?;
-            &address_bytes[..IPV6_ADDRESSES_BYTES]
-        }
-        AddressFamily::Unix => {
-            reader
-                .read_exact(&mut address_bytes[..UNIX_ADDRESSES_BYTES])
-                .await?;
-            &address_bytes[..UNIX_ADDRESSES_BYTES]
-        }
-    };
-
-    let addresses = parse_addresses(address_bytes_slice, address_family);
-    let remaining_len = length - address_length;
-    let tls_sni = parse_tlvs(reader, tls, &prefix[..], address_bytes_slice, remaining_len).await?;
+    reader
+        .read_exact(&mut buffer[16..16 + address_length])
+        .await?;
+    let addresses = parse_addresses(&buffer[16..16 + address_length], address_family);
+    let tls_sni = parse_tlvs(reader, tls, &buffer, extra_length, address_length).await?;
 
     Ok(Some(Header {
         protocol,
@@ -265,15 +226,21 @@ fn parse_addresses(bytes: &[u8], family: AddressFamily) -> Addresses {
 async fn parse_tlvs<T: AsyncRead + Unpin>(
     mut reader: T,
     tls: bool,
-    prefix_bytes: &[u8],
-    address_bytes: &[u8],
-    remaining_len: usize,
+    buffer: &[u8],
+    extra_length: usize,
+    address_length: usize,
 ) -> io::Result<Option<String>> {
     let mut pp2_type_ssl = false;
     let mut pp2_type_authority = false;
 
-    let mut tlv_bytes = vec![0u8; remaining_len];
-    reader.read_exact(&mut tlv_bytes).await?;
+    let remaining_len = extra_length - address_length;
+    if remaining_len > 256 {
+        log::warn!("invalid proxy protocol tlv data length: {remaining_len} (expected <= 256)");
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    let mut tlv_bytes_buf = [0u8; 256];
+    let tlv_bytes = &mut tlv_bytes_buf[0..remaining_len];
+    reader.read_exact(tlv_bytes).await?;
 
     let mut offset: usize = 0;
     let mut tls_sni = None;
@@ -327,13 +294,11 @@ async fn parse_tlvs<T: AsyncRead + Unpin>(
                 tlv_bytes[offset + 1] = 0;
                 tlv_bytes[offset + 2] = 0;
                 tlv_bytes[offset + 3] = 0;
-                let mut value = crc32c::crc32c(prefix_bytes);
-                value = crc32c::crc32c_append(value, address_bytes);
-                value = crc32c::crc32c_append(value, &tlv_bytes);
+                let mut value = crc32c::crc32c(&buffer[..16 + address_length]);
+                value = crc32c::crc32c_append(value, tlv_bytes);
                 if expected_value != value {
                     log::warn!(
-                        "invalid proxy protocol PP2_TYPE_CRC32C field: {:?}",
-                        &tlv_bytes[offset..offset + length]
+                        "invalid proxy protocol PP2_TYPE_CRC32C value={value}, expected={expected_value}"
                     );
                     return Err(io::ErrorKind::InvalidData.into());
                 }
