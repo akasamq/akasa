@@ -80,7 +80,7 @@ async fn server(
     executor: Rc<GlommioExecutor>,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
-    let listener = TcpListener::bind(global.bind)?;
+    let listener = TcpListener::bind(global.config.bind)?;
     loop {
         let conn = listener.accept().await?.buffered();
         let fd = conn.as_raw_fd();

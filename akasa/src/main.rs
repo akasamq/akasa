@@ -2,7 +2,6 @@ mod default_hook;
 mod logger;
 
 use std::fs;
-use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,10 +29,6 @@ struct Cli {
 enum Commands {
     /// Start the server
     Start {
-        /// The socket address to bind
-        #[clap(long, value_name = "IP:PORT", default_value = "127.0.0.1:1883")]
-        bind: SocketAddr,
-
         /// The config file path
         #[clap(long, value_name = "FILE")]
         config: PathBuf,
@@ -111,11 +106,7 @@ fn main() -> anyhow::Result<()> {
     log::debug!("{:#?}", cli);
 
     match cli.command {
-        Commands::Start {
-            bind,
-            config,
-            runtime,
-        } => {
+        Commands::Start { config, runtime } => {
             let config: Config = {
                 let content = fs::read_to_string(config)?;
                 serde_yaml::from_str(&content)
@@ -125,7 +116,7 @@ fn main() -> anyhow::Result<()> {
             if !config.is_valid() {
                 bail!("invalid config");
             }
-            log::info!("Listen on {}", bind);
+            log::info!("Listen on {:#?}", config.listeners);
             let hook_handler = DefaultHook;
             let auth_passwords = if config.auth.enable {
                 let path = config.auth.password_file.as_ref().expect("pass file");
@@ -135,7 +126,7 @@ fn main() -> anyhow::Result<()> {
             } else {
                 DashMap::new()
             };
-            let mut global_state = GlobalState::new(bind, config);
+            let mut global_state = GlobalState::new(config);
             global_state.auth_passwords = auth_passwords;
             let global = Arc::new(global_state);
             match runtime {

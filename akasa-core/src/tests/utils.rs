@@ -62,7 +62,7 @@ impl MockConn {
         let (in_tx, in_rx) = channel(1);
         let (out_tx, out_rx) = channel(1);
         let conn = MockConn {
-            bind: global.bind,
+            bind: global.config.bind,
             peer: format!("127.0.0.1:{}", port).parse().unwrap(),
             data_in: Vec::new(),
             chan_in: in_rx,
@@ -77,8 +77,7 @@ impl MockConn {
     }
 
     pub fn new(port: u16, config: Config) -> (MockConn, MockConnControl) {
-        let bind = "127.0.0.1:1883".parse().unwrap();
-        let global = Arc::new(GlobalState::new(bind, config));
+        let global = Arc::new(GlobalState::new(config));
         Self::new_with_global(port, global)
     }
 

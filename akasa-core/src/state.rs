@@ -1,7 +1,6 @@
 use std::fmt;
 use std::future::Future;
 use std::io;
-use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,7 +29,6 @@ pub struct GlobalState {
     // All clients (online/offline clients)
     clients: DashMap<ClientId, ClientSender>,
 
-    pub bind: SocketAddr,
     pub config: Config,
     pub auth_passwords: DashMap<String, AuthPassword>,
 
@@ -69,7 +67,7 @@ pub struct ClientReceiver {
 }
 
 impl GlobalState {
-    pub fn new(bind: SocketAddr, config: Config) -> GlobalState {
+    pub fn new(config: Config) -> GlobalState {
         GlobalState {
             // FIXME: load from db (rosksdb or sqlite3)
             next_client_id: Mutex::new(ClientId(0)),
@@ -78,7 +76,6 @@ impl GlobalState {
             client_identifier_map: DashMap::new(),
             clients: DashMap::new(),
 
-            bind,
             config,
             auth_passwords: DashMap::new(),
             route_table: RouteTable::default(),

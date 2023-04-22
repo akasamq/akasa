@@ -80,7 +80,7 @@ pub enum Addresses {
 /// handle local(health-check) connection.
 pub async fn parse_header<T: AsyncRead + Unpin>(
     reader: &mut T,
-    tls: bool,
+    tls_termination: bool,
 ) -> io::Result<Option<Header>> {
     let mut buffer = [0u8; 256];
     reader.read_exact(&mut buffer[0..16]).await?;
@@ -165,7 +165,14 @@ pub async fn parse_header<T: AsyncRead + Unpin>(
         .read_exact(&mut buffer[16..16 + address_length])
         .await?;
     let addresses = parse_addresses(&buffer[16..16 + address_length], address_family);
-    let tls_sni = parse_tlvs(reader, tls, &buffer, extra_length, address_length).await?;
+    let tls_sni = parse_tlvs(
+        reader,
+        tls_termination,
+        &buffer,
+        extra_length,
+        address_length,
+    )
+    .await?;
 
     Ok(Some(Header {
         protocol,
@@ -225,7 +232,7 @@ fn parse_addresses(bytes: &[u8], family: AddressFamily) -> Addresses {
 // * Parse `PP2_TYPE_CRC32C` field and verify the checksum if exists
 async fn parse_tlvs<T: AsyncRead + Unpin>(
     mut reader: T,
-    tls: bool,
+    tls_termination: bool,
     buffer: &[u8],
     extra_length: usize,
     address_length: usize,
@@ -330,7 +337,7 @@ async fn parse_tlvs<T: AsyncRead + Unpin>(
         log::warn!("invalid proxy protocol tlv data: {:?}", tlv_bytes);
         return Err(io::ErrorKind::InvalidData.into());
     }
-    if tls {
+    if tls_termination {
         if !pp2_type_ssl {
             log::warn!("invalid proxy protocol PP2_TYPE_SSL not presented in TLS mode");
             return Err(io::ErrorKind::InvalidData.into());

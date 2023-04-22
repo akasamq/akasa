@@ -33,6 +33,8 @@ async-trait = "0.1.64"
 base64 = "0.21.0"
 ring = "0.16"
 crc32c = "0.6.3"
+async-native-tls = "0.5.0"
+native-tls = "0.2.11"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 glommio = { version = "0.8.0" }

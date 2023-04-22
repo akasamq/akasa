@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
 use mqtt_proto::QoS;
@@ -9,6 +10,7 @@ pub const DEFAULT_MAX_PACKET_SIZE: u32 = 5 + 268_435_455;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
+    pub listeners: Listeners,
     pub auth: AuthConfig,
     // FIXME: replace it with outter data: { username => PasswordInfo }
     pub scram_users: HashMap<String, ScramPasswordInfo>,
@@ -48,6 +50,57 @@ pub struct Config {
     pub wildcard_subscription_available: bool,
 
     pub hook: HookConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct Listeners {
+    /// default port: 1883
+    pub mqtt: Option<Listener>,
+    /// default port: 8883
+    pub mqtts: Option<TlsListener>,
+    /// default port: 8080
+    pub ws: Option<Listener>,
+    /// default port: 8443
+    pub wss: Option<TlsListener>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct Listener {
+    pub addr: SocketAddr,
+    /// The proxy protocol v2 mode
+    pub proxy_mode: Option<ProxyMode>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct TlsListener {
+    pub addr: SocketAddr,
+    /// Enable proxy protocol v2 or not
+    pub proxy: bool,
+    /// DER-formatted PKCS #12 archive
+    pub identity: PathBuf,
+    pub identity_password: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProxyMode {
+    /// Client side non-TLS, server side non-TLS
+    Normal,
+    /// Client side TLS, proxy handle TLS, server side non-TLS (read host name(SNI) from proxy protocol header)
+    TlsTermination,
+}
+
+impl Default for Listeners {
+    fn default() -> Listeners {
+        Listeners {
+            mqtt: Some(Listener {
+                addr: (Ipv4Addr::LOCALHOST, 1883).into(),
+                proxy_mode: None,
+            }),
+            mqtts: None,
+            ws: None,
+            wss: None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -108,6 +161,7 @@ impl Default for HookConfig {
 impl Default for Config {
     fn default() -> Config {
         let config = Config {
+            listeners: Listeners::default(),
             auth: AuthConfig {
                 enable: true,
                 password_file: Some(PathBuf::from("/path/to/passwords/file")),
@@ -199,6 +253,16 @@ impl Config {
                 log::error!("scram_users password iterations must >= 4096 (see RFC-7677)");
                 return false;
             }
+        }
+        if let Listeners {
+            mqtt: None,
+            mqtts: None,
+            ws: None,
+            wss: None,
+        } = self.listeners
+        {
+            log::error!("No listen address found");
+            return false;
         }
         true
     }
