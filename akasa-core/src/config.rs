@@ -77,8 +77,8 @@ pub struct TlsListener {
     /// Enable proxy protocol v2 or not
     pub proxy: bool,
     /// DER-formatted PKCS #12 archive
-    pub identity: PathBuf,
-    pub identity_password: String,
+    pub keyfile: PathBuf,
+    pub cacertfile: PathBuf,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq)]

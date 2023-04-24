@@ -1,7 +1,10 @@
-pub mod proxy;
+mod io_compat;
+mod proxy;
 #[cfg(target_os = "linux")]
 pub mod rt_glommio;
 pub mod rt_tokio;
+#[allow(dead_code)]
+mod tls;
 
 use std::cmp;
 use std::io;
@@ -11,7 +14,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use async_native_tls::{TlsAcceptor, TlsStream};
 use async_tungstenite::{tungstenite::Message, WebSocketStream};
 use flume::{bounded, Sender};
 use futures_lite::{
@@ -21,12 +23,15 @@ use futures_lite::{
 use futures_sink::Sink;
 use futures_util::TryFutureExt;
 use mqtt_proto::{decode_raw_header, v3, v5, Error, Protocol};
+use openssl::ssl::{Ssl, SslAcceptor};
 
 use crate::hook::HookRequest;
 use crate::protocols::mqtt;
 use crate::state::{Executor, GlobalState};
 
+use io_compat::IoWrapper;
 use proxy::{parse_header, Addresses};
+use tls::SslStream;
 
 const CONNECT_TIMEOUT_SECS: u64 = 5;
 
@@ -83,9 +88,18 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         }
     }
 
-    let tls_wrapper = if let Some(tls_acceptor) = conn_args.tls_acceptor {
-        let tls_stream = tls_acceptor
-            .accept(conn)
+    // Handle TLS
+    let tls_wrapper = if let Some(acceptor) = conn_args.tls_acceptor {
+        let ssl = Ssl::new(acceptor.context()).map_err(|err| {
+            log::error!("Create TLS session failed: {:?}", err);
+            io::Error::from(io::ErrorKind::BrokenPipe)
+        })?;
+        let mut tls_stream = SslStream::new(ssl, conn).map_err(|err| {
+            log::error!("create TLS stream error: {:?}", err);
+            io::Error::from(io::ErrorKind::BrokenPipe)
+        })?;
+        Pin::new(&mut tls_stream)
+            .accept()
             .map_err(|err| {
                 log::debug!("accept tls connection error: {:?}", err);
                 io::Error::from(io::ErrorKind::InvalidData)
@@ -100,6 +114,7 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         TlsWrapper::Raw(conn)
     };
 
+    // Handle WebSocket
     let mut ws_wrapper = if conn_args.websocket {
         let stream = match async_tungstenite::accept_async(tls_wrapper).await {
             Ok(stream) => stream,
@@ -168,17 +183,17 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     Ok(())
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ConnectionArgs {
     proxy: bool,
     proxy_tls_termination: bool,
     websocket: bool,
-    tls_acceptor: Option<TlsAcceptor>,
+    tls_acceptor: Option<SslAcceptor>,
 }
 
 enum TlsWrapper<S> {
     Raw(S),
-    Tls(TlsStream<S>),
+    Tls(SslStream<S>),
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TlsWrapper<S> {
@@ -277,51 +292,44 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WebSocketWrapper<S> {
                 pending_pong,
                 closed,
             } => {
-                if !*closed {
-                    ws_send_pong(stream, pending_pong, cx)?;
-                }
                 fn copy_data(buf: &mut [u8], data: &[u8], data_idx: &mut usize) -> usize {
                     let amt = cmp::min(data.len() - *data_idx, buf.len());
                     buf.copy_from_slice(&data[*data_idx..*data_idx + amt]);
                     *data_idx += amt;
                     amt
                 }
+                if !*closed {
+                    ws_send_pong(stream, pending_pong, cx)?;
+                }
                 if *read_data_idx < read_data.len() {
                     return Poll::Ready(Ok(copy_data(buf, read_data, read_data_idx)));
                 }
                 loop {
                     match Pin::new(&mut *stream).poll_next(cx) {
-                        Poll::Ready(Some(Ok(msg))) => {
-                            log::debug!("WebSocket receive message: {:?}", msg);
-                            match msg {
-                                Message::Binary(bin) => {
-                                    *read_data = bin;
-                                    *read_data_idx = 0;
-                                    return Poll::Ready(Ok(copy_data(
-                                        buf,
-                                        read_data,
-                                        read_data_idx,
-                                    )));
-                                }
-                                Message::Close(_) => return Poll::Ready(Ok(0)),
-                                Message::Ping(data) => {
-                                    *pending_pong = Some(data);
-                                    ws_send_pong(stream, pending_pong, cx)?;
-                                }
-                                Message::Pong(_) => {
-                                    log::debug!("WebSocket pong message not allowed!");
-                                    return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
-                                }
-                                Message::Text(_) => {
-                                    log::debug!("WebSocket text message not allowed!");
-                                    return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
-                                }
-                                Message::Frame(_) => {
-                                    log::debug!("WebSocket frame message not allowed!");
-                                    return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
-                                }
+                        Poll::Ready(Some(Ok(msg))) => match msg {
+                            Message::Binary(bin) => {
+                                *read_data = bin;
+                                *read_data_idx = 0;
+                                return Poll::Ready(Ok(copy_data(buf, read_data, read_data_idx)));
                             }
-                        }
+                            Message::Close(_) => return Poll::Ready(Ok(0)),
+                            Message::Ping(data) => {
+                                *pending_pong = Some(data);
+                                ws_send_pong(stream, pending_pong, cx)?;
+                            }
+                            Message::Pong(_) => {
+                                log::debug!("WebSocket pong message not allowed!");
+                                return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+                            }
+                            Message::Text(_) => {
+                                log::debug!("WebSocket text message not allowed!");
+                                return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+                            }
+                            Message::Frame(_) => {
+                                log::debug!("WebSocket frame message not allowed!");
+                                return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+                            }
+                        },
                         Poll::Ready(Some(Err(err))) => {
                             log::debug!("WebSocket read error: {:?}", err);
                             return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));

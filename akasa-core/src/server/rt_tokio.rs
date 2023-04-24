@@ -1,23 +1,16 @@
 use std::cmp;
-use std::fs;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
-use std::pin::Pin;
+use std::path::Path;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::time::Duration;
 
 use flume::{bounded, Sender};
-use futures_lite::io::{AsyncRead, AsyncWrite};
-use tokio::{
-    io::{self as tokio_io, ReadBuf},
-    net::{TcpListener, TcpStream},
-    runtime::Runtime,
-    task::JoinHandle,
-};
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+use tokio::{net::TcpListener, runtime::Runtime, task::JoinHandle};
 
-use super::{handle_accept, ConnectionArgs};
+use super::{handle_accept, ConnectionArgs, IoWrapper};
 use crate::config::{Listener, ProxyMode, TlsListener};
 use crate::hook::{Hook, HookRequest, HookService};
 use crate::state::{Executor, GlobalState};
@@ -29,27 +22,38 @@ where
     let rt = Runtime::new()?;
     let (hook_sender, hook_receiver) = bounded(64);
 
-    let mqtts_tls_acceptor = if let Some(TlsListener {
-        identity,
-        identity_password,
-        ..
-    }) = &global.config.listeners.mqtts
-    {
-        let identity_content = fs::read(identity)?;
-        let identity =
-            native_tls::Identity::from_pkcs12(&identity_content, identity_password.as_str())
-                .map_err(|err| {
-                    log::error!("Parse mqtts TLS identity file failed: {:?}", err);
-                    io::Error::from(io::ErrorKind::InvalidData)
-                })?;
-        let tls_acceptor = native_tls::TlsAcceptor::new(identity).map_err(|err| {
-            log::error!("Create mqtts TLS acceptor failed: {:?}", err);
-            io::Error::from(io::ErrorKind::InvalidData)
-        })?;
-        Some(tls_acceptor)
-    } else {
-        None
-    };
+    let mqtts_tls_acceptor = global
+        .config
+        .listeners
+        .mqtts
+        .as_ref()
+        .map(
+            |TlsListener {
+                 keyfile,
+                 cacertfile,
+                 ..
+             }| {
+                log::info!("Building TLS context for mqtts...");
+                build_tls_context(keyfile, cacertfile)
+            },
+        )
+        .transpose()?;
+    let wss_tls_acceptor = global
+        .config
+        .listeners
+        .wss
+        .as_ref()
+        .map(
+            |TlsListener {
+                 keyfile,
+                 cacertfile,
+                 ..
+             }| {
+                log::info!("Building TLS context for wss...");
+                build_tls_context(keyfile, cacertfile)
+            },
+        )
+        .transpose()?;
 
     rt.block_on(async move {
         let executor = Arc::new(TokioExecutor {});
@@ -88,7 +92,7 @@ where
                 proxy,
                 proxy_tls_termination: false,
                 websocket: false,
-                tls_acceptor: mqtts_tls_acceptor.clone().map(Into::into),
+                tls_acceptor: mqtts_tls_acceptor.map(Into::into),
             };
             let task = listen(addr, conn_args, hook_sender, executor, global);
             last_task = Some(task);
@@ -114,7 +118,7 @@ where
                 proxy,
                 proxy_tls_termination: false,
                 websocket: true,
-                tls_acceptor: mqtts_tls_acceptor.map(Into::into),
+                tls_acceptor: wss_tls_acceptor.map(Into::into),
             };
             let task = listen(addr, conn_args, hook_sender, executor, global);
             last_task = Some(task);
@@ -127,6 +131,23 @@ where
         }
     });
     Ok(())
+}
+
+fn build_tls_context(keyfile: &Path, cacertfile: &Path) -> io::Result<SslAcceptor> {
+    let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls_server()).unwrap();
+    acceptor
+        .set_private_key_file(keyfile, SslFiletype::PEM)
+        .map_err(|err| {
+            log::error!("Invalid keyfile: {}", err);
+            io::Error::from(io::ErrorKind::InvalidInput)
+        })?;
+    acceptor
+        .set_certificate_chain_file(cacertfile)
+        .map_err(|err| {
+            log::error!("Invalid cacertfile: {}", err);
+            io::Error::from(io::ErrorKind::InvalidInput)
+        })?;
+    Ok(acceptor.build())
 }
 
 fn listen<E: Executor + Send + Sync + 'static>(
@@ -153,7 +174,7 @@ fn listen<E: Executor + Send + Sync + 'static>(
         loop {
             let (conn, peer) = listener.accept().await.unwrap();
             log::debug!("{} connected", peer,);
-            let conn_wrapper = ConnWrapper(conn);
+            let conn_wrapper = IoWrapper::new(conn);
             let conn_args = conn_args.clone();
             let hook_requests = hook_sender.clone();
             let executor = Arc::clone(&executor);
@@ -171,36 +192,6 @@ fn listen<E: Executor + Send + Sync + 'static>(
             });
         }
     })
-}
-
-struct ConnWrapper(TcpStream);
-
-impl AsyncRead for ConnWrapper {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        let mut read_buf = ReadBuf::new(buf);
-        tokio_io::AsyncRead::poll_read(Pin::new(&mut self.0), cx, &mut read_buf)
-            .map_ok(|()| read_buf.capacity() - read_buf.remaining())
-    }
-}
-
-impl AsyncWrite for ConnWrapper {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        tokio_io::AsyncWrite::poll_write(Pin::new(&mut self.0), cx, buf)
-    }
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        tokio_io::AsyncWrite::poll_flush(Pin::new(&mut self.0), cx)
-    }
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        tokio_io::AsyncWrite::poll_shutdown(Pin::new(&mut self.0), cx)
-    }
 }
 
 pub struct TokioExecutor {}
