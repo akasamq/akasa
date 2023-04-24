@@ -2,22 +2,24 @@ use std::cmp;
 use std::fs;
 use std::future::Future;
 use std::io;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use flume::bounded;
+use flume::{bounded, Sender};
 use futures_lite::io::{AsyncRead, AsyncWrite};
 use tokio::{
     io::{self as tokio_io, ReadBuf},
     net::{TcpListener, TcpStream},
     runtime::Runtime,
+    task::JoinHandle,
 };
 
 use super::{handle_accept, ConnectionArgs};
 use crate::config::{Listener, ProxyMode, TlsListener};
-use crate::hook::{Hook, HookService};
+use crate::hook::{Hook, HookRequest, HookService};
 use crate::state::{Executor, GlobalState};
 
 pub fn start<H>(hook_handler: H, global: Arc<GlobalState>) -> io::Result<()>
@@ -65,7 +67,7 @@ where
 
         let listeners = &global.config.listeners;
         let mut last_task = None;
-        if let Some(Listener { addr, proxy_mode }) = global.config.listeners.mqtt {
+        if let Some(Listener { addr, proxy_mode }) = listeners.mqtt {
             let global = Arc::clone(&global);
             let hook_sender = hook_sender.clone();
             let executor = Arc::clone(&executor);
@@ -75,30 +77,7 @@ where
                 websocket: false,
                 tls_acceptor: None,
             };
-            let task = tokio::spawn(async move {
-                let listener = TcpListener::bind(addr).await.unwrap();
-                log::info!("Listen mqtt@{addr} success!");
-                loop {
-                    let (conn, peer) = listener.accept().await.unwrap();
-                    log::debug!("{} connected", peer,);
-                    let conn_wrapper = ConnWrapper(conn);
-                    let conn_args = conn_args.clone();
-                    let hook_requests = hook_sender.clone();
-                    let executor = Arc::clone(&executor);
-                    let global = Arc::clone(&global);
-                    tokio::spawn(async move {
-                        let _ = handle_accept(
-                            conn_wrapper,
-                            conn_args,
-                            peer,
-                            hook_requests,
-                            executor,
-                            Arc::clone(&global),
-                        )
-                        .await;
-                    });
-                }
-            });
+            let task = listen(addr, conn_args, hook_sender, executor, global);
             last_task = Some(task);
         }
         if let Some(TlsListener { addr, proxy, .. }) = listeners.mqtts {
@@ -109,33 +88,35 @@ where
                 proxy,
                 proxy_tls_termination: false,
                 websocket: false,
+                tls_acceptor: mqtts_tls_acceptor.clone().map(Into::into),
+            };
+            let task = listen(addr, conn_args, hook_sender, executor, global);
+            last_task = Some(task);
+        }
+        if let Some(Listener { addr, proxy_mode }) = listeners.ws {
+            let global = Arc::clone(&global);
+            let hook_sender = hook_sender.clone();
+            let executor = Arc::clone(&executor);
+            let conn_args = ConnectionArgs {
+                proxy: proxy_mode.is_some(),
+                proxy_tls_termination: proxy_mode == Some(ProxyMode::TlsTermination),
+                websocket: true,
+                tls_acceptor: None,
+            };
+            let task = listen(addr, conn_args, hook_sender, executor, global);
+            last_task = Some(task);
+        }
+        if let Some(TlsListener { addr, proxy, .. }) = listeners.wss {
+            let global = Arc::clone(&global);
+            let hook_sender = hook_sender.clone();
+            let executor = Arc::clone(&executor);
+            let conn_args = ConnectionArgs {
+                proxy,
+                proxy_tls_termination: false,
+                websocket: true,
                 tls_acceptor: mqtts_tls_acceptor.map(Into::into),
             };
-
-            let task = tokio::spawn(async move {
-                let listener = TcpListener::bind(addr).await.unwrap();
-                log::info!("Listen mqtts@{addr} success!");
-                loop {
-                    let (conn, peer) = listener.accept().await.unwrap();
-                    log::debug!("{} connected", peer,);
-                    let conn_wrapper = ConnWrapper(conn);
-                    let conn_args = conn_args.clone();
-                    let hook_requests = hook_sender.clone();
-                    let executor = Arc::clone(&executor);
-                    let global = Arc::clone(&global);
-                    tokio::spawn(async move {
-                        let _ = handle_accept(
-                            conn_wrapper,
-                            conn_args,
-                            peer,
-                            hook_requests,
-                            executor,
-                            Arc::clone(&global),
-                        )
-                        .await;
-                    });
-                }
-            });
+            let task = listen(addr, conn_args, hook_sender, executor, global);
             last_task = Some(task);
         }
 
@@ -146,6 +127,50 @@ where
         }
     });
     Ok(())
+}
+
+fn listen<E: Executor + Send + Sync + 'static>(
+    addr: SocketAddr,
+    conn_args: ConnectionArgs,
+    hook_sender: Sender<HookRequest>,
+    executor: Arc<E>,
+    global: Arc<GlobalState>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let listener = TcpListener::bind(addr).await.unwrap();
+        let listen_type = match (conn_args.websocket, conn_args.tls_acceptor.is_some()) {
+            (false, false) => "mqtt",
+            (false, true) => "mqtts",
+            (true, false) => "ws",
+            (true, true) => "wss",
+        };
+        let listen_type = if conn_args.proxy {
+            format!("{listen_type}(proxy)")
+        } else {
+            listen_type.to_owned()
+        };
+        log::info!("Listen {listen_type}@{addr} success!");
+        loop {
+            let (conn, peer) = listener.accept().await.unwrap();
+            log::debug!("{} connected", peer,);
+            let conn_wrapper = ConnWrapper(conn);
+            let conn_args = conn_args.clone();
+            let hook_requests = hook_sender.clone();
+            let executor = Arc::clone(&executor);
+            let global = Arc::clone(&global);
+            tokio::spawn(async move {
+                let _ = handle_accept(
+                    conn_wrapper,
+                    conn_args,
+                    peer,
+                    hook_requests,
+                    executor,
+                    Arc::clone(&global),
+                )
+                .await;
+            });
+        }
+    })
 }
 
 struct ConnWrapper(TcpStream);
