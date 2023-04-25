@@ -62,10 +62,7 @@ async fn test_session_persist() {
 
 #[tokio::test]
 async fn test_session_take_over() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
     let client_id = "client id";
 
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));

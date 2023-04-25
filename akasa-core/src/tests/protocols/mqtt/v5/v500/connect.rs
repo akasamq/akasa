@@ -14,10 +14,7 @@ use crate::tests::utils::MockConn;
 use super::super::ClientV5;
 
 async fn test_session_expired_with(first_clean_start: bool) {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
     let client_id = "client id";
 
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
@@ -62,10 +59,7 @@ async fn test_session_expired_not_clean_start() {
 
 #[tokio::test]
 async fn test_session_not_expired() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
     let client_id = "client id";
 
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
@@ -102,7 +96,7 @@ async fn test_session_not_expired() {
 async fn test_receive_max_client() {
     let mut config = Config::new_allow_anonymous();
     config.max_inflight_client = 8;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
     let (_task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
     let (_task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));
 
@@ -175,7 +169,7 @@ async fn test_receive_max_client() {
 async fn test_receive_max_server() {
     let mut config = Config::new_allow_anonymous();
     config.max_inflight_server = 4;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     client.connect("client id", true, false).await;
@@ -206,10 +200,7 @@ async fn test_receive_max_server() {
 // to limit server
 #[tokio::test]
 async fn test_max_packet_size_client() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
 
     // Without reason string
     {
@@ -329,7 +320,7 @@ async fn test_max_packet_size_server() {
 
     let mut config = Config::new_allow_anonymous();
     config.max_packet_size_server = encode_len_ok as u32;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     client.connect("client id", true, false).await;
@@ -366,7 +357,7 @@ async fn test_connack_properties() {
     config.wildcard_subscription_available = false;
     assert!(config.is_valid());
 
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     let connect = {
@@ -410,7 +401,7 @@ async fn test_connack_properties() {
 async fn test_retain_not_supported() {
     let mut config = Config::new_allow_anonymous();
     config.retain_available = false;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     let mut connect = Connect::new(Arc::new("client".to_owned()), 32);
@@ -438,7 +429,7 @@ async fn test_retain_not_supported() {
 async fn test_will_qos_not_supported() {
     let mut config = Config::new_allow_anonymous();
     config.max_allowed_qos = 1;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     let mut connect = Connect::new(Arc::new("client".to_owned()), 32);
@@ -464,10 +455,7 @@ async fn test_will_qos_not_supported() {
 
 #[tokio::test]
 async fn test_will_delay_interval_reached() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
     let (task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
     let (task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));
 
@@ -510,10 +498,7 @@ async fn test_will_delay_interval_reached() {
 
 #[tokio::test]
 async fn test_will_delay_interval_not_reached() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
     let (_task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
     let (task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));
 

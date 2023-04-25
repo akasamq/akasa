@@ -3,9 +3,9 @@
 //!
 //! The basic backend options are:
 //!
-//!     backend {backend_name}
-//!       mode tcp
-//!       server {name} {ip}:{port} send-proxy-v2-ssl proxy-v2-options authority
+//! backend {backend_name}
+//!   mode tcp
+//!   server {name} {ip}:{port} send-proxy-v2-ssl proxy-v2-options authority
 //!
 
 use std::io;

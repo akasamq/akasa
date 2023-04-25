@@ -33,7 +33,7 @@ async fn test_auth_simple_success() {
     );
     config.sasl_mechanisms = vec![SaslMechanism::ScramSha256].into_iter().collect();
 
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     let auth_method = Arc::new("SCRAM-SHA-256".to_owned());
@@ -90,7 +90,7 @@ async fn test_auth_simple_success() {
 #[tokio::test]
 async fn test_auth_missing_auth_method() {
     let config = Config::new_allow_anonymous();
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     let mut connect = Connect::new(Arc::new("client".to_owned()), 32);
@@ -116,7 +116,7 @@ async fn test_auth_missing_auth_method() {
 async fn test_auth_method_not_support() {
     for method in ["SCRAM-SHA-256-PLUS", "SCRAM-xxx", "xxx"] {
         let config = Config::new_allow_anonymous();
-        let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+        let global = Arc::new(GlobalState::new(config));
         let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
         let mut connect = Connect::new(Arc::new("client".to_owned()), 32);
@@ -159,7 +159,7 @@ async fn test_auth_invalid_client_first() {
     );
     config.sasl_mechanisms = vec![SaslMechanism::ScramSha256].into_iter().collect();
 
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     let auth_method = Arc::new("SCRAM-SHA-256".to_owned());
@@ -204,7 +204,7 @@ async fn test_auth_invalid_password() {
     );
     config.sasl_mechanisms = vec![SaslMechanism::ScramSha256].into_iter().collect();
 
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     let auth_method = Arc::new("SCRAM-SHA-256".to_owned());
@@ -274,7 +274,7 @@ async fn test_auth_invalid_client_final() {
     );
     config.sasl_mechanisms = vec![SaslMechanism::ScramSha256].into_iter().collect();
 
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     let auth_method = Arc::new("SCRAM-SHA-256".to_owned());

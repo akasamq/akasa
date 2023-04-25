@@ -14,10 +14,7 @@ use super::super::{build_publish, ClientV5};
 
 #[tokio::test]
 async fn test_publish_qos0() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
 
     // publisher
     let (_task0, mut client0) = MockConn::start_with_global(100, Arc::clone(&global));
@@ -84,10 +81,7 @@ async fn test_publish_qos0() {
 
 #[tokio::test]
 async fn test_publish_qos1() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
 
     // publisher
     let (_task0, mut client0) = MockConn::start_with_global(100, Arc::clone(&global));
@@ -161,7 +155,7 @@ async fn test_publish_qos1() {
 async fn test_publish_qos2() {
     let mut config = Config::new_allow_anonymous();
     config.max_inflight_server = 60;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
 
     // publisher
     let (_task0, mut client0) = MockConn::start_with_global(100, Arc::clone(&global));

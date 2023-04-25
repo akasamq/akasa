@@ -191,10 +191,10 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 
 #[derive(Clone)]
 pub struct ConnectionArgs {
-    proxy: bool,
-    proxy_tls_termination: bool,
-    websocket: bool,
-    tls_acceptor: Option<SslAcceptor>,
+    pub(crate) proxy: bool,
+    pub(crate) proxy_tls_termination: bool,
+    pub(crate) websocket: bool,
+    pub(crate) tls_acceptor: Option<SslAcceptor>,
 }
 
 enum TlsWrapper<S> {

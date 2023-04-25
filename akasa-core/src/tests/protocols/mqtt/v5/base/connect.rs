@@ -135,8 +135,7 @@ async fn test_connect_auth() {
     }
     // empty username/password
     {
-        let mut global_state =
-            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        let mut global_state = GlobalState::new(Config::default());
         global_state.insert_password("user", "pass", HashAlgorithm::Sha256);
         let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
         client
@@ -149,8 +148,7 @@ async fn test_connect_auth() {
     }
     // wrong username/password
     {
-        let mut global_state =
-            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        let mut global_state = GlobalState::new(Config::default());
         global_state.insert_password("user", "pass", HashAlgorithm::Sha256);
         let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
         client
@@ -166,8 +164,7 @@ async fn test_connect_auth() {
     }
     // wrong password
     {
-        let mut global_state =
-            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        let mut global_state = GlobalState::new(Config::default());
         global_state.insert_password("user", "pass", HashAlgorithm::Sha256);
         let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
         client
@@ -183,8 +180,7 @@ async fn test_connect_auth() {
     }
     // right username/password (hash-algorithm: sha256)
     {
-        let mut global_state =
-            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        let mut global_state = GlobalState::new(Config::default());
         global_state.insert_password("user", "pass", HashAlgorithm::Sha256);
         let (_task, mut client) = MockConn::start_with_global(3333, Arc::new(global_state));
         client
@@ -201,8 +197,7 @@ async fn test_connect_auth() {
 
     // right username/password (hash-algorithm: sha256)
     {
-        let mut global_state =
-            GlobalState::new("127.0.0.1:1883".parse().unwrap(), Config::default());
+        let mut global_state = GlobalState::new(Config::default());
         global_state.insert_password(
             "user",
             "pass",

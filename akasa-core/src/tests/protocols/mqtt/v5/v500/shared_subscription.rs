@@ -17,7 +17,7 @@ use super::super::ClientV5;
 async fn test_shared_one_group() {
     let mut config = Config::new_allow_anonymous();
     config.shared_subscription_mode = SharedSubscriptionMode::Random;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
 
     // publisher
     let (_task0, mut client0) = MockConn::start_with_global(100, Arc::clone(&global));
@@ -121,7 +121,7 @@ async fn test_shared_one_group() {
 async fn test_shared_two_group() {
     let mut config = Config::new_allow_anonymous();
     config.shared_subscription_mode = SharedSubscriptionMode::Random;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
 
     // publisher
     let (_task0, mut client0) = MockConn::start_with_global(100, Arc::clone(&global));
@@ -227,7 +227,7 @@ async fn test_shared_two_group() {
 async fn test_shared_with_normal_filter() {
     let mut config = Config::new_allow_anonymous();
     config.shared_subscription_mode = SharedSubscriptionMode::Random;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
 
     // publisher
     let (_task0, mut client0) = MockConn::start_with_global(100, Arc::clone(&global));
@@ -332,7 +332,7 @@ async fn test_shared_with_normal_filter() {
 async fn test_shared_wildcard_filter_one_group() {
     let mut config = Config::new_allow_anonymous();
     config.shared_subscription_mode = SharedSubscriptionMode::Random;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
 
     // publisher
     let (_task0, mut client0) = MockConn::start_with_global(100, Arc::clone(&global));
@@ -439,7 +439,7 @@ async fn test_shared_wildcard_filter_one_group() {
 async fn test_shared_hash_topic() {
     let mut config = Config::new_allow_anonymous();
     config.shared_subscription_mode = SharedSubscriptionMode::HashTopicName;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
 
     // publisher
     let (_task0, mut client0) = MockConn::start_with_global(100, Arc::clone(&global));
@@ -545,7 +545,7 @@ async fn test_shared_hash_topic() {
 async fn test_shared_hash_client_id() {
     let mut config = Config::new_allow_anonymous();
     config.shared_subscription_mode = SharedSubscriptionMode::HashClientId;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
 
     // publisher
     let mut publishers = Vec::with_capacity(64);

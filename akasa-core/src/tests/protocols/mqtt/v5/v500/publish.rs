@@ -14,10 +14,7 @@ use super::super::ClientV5;
 
 #[tokio::test]
 async fn test_payload_is_not_utf8() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
 
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
     client.connect("client id", true, false).await;
@@ -43,10 +40,7 @@ async fn test_payload_is_not_utf8() {
 
 #[tokio::test]
 async fn test_message_expiry() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
 
     let (task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
     let (task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));
@@ -89,10 +83,7 @@ async fn test_message_expiry() {
 
 #[tokio::test]
 async fn test_topic_name_empty() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
 
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
     client.connect("client", true, false).await;
@@ -112,10 +103,7 @@ async fn test_topic_name_empty() {
 
 #[tokio::test]
 async fn test_topic_alias_ok() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
 
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
     client.connect("client", true, false).await;
@@ -179,10 +167,7 @@ async fn test_topic_alias_ok() {
 
 #[tokio::test]
 async fn test_topic_alias_update() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
 
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
     client.connect("client", true, false).await;
@@ -247,10 +232,7 @@ async fn test_topic_alias_update() {
 
 #[tokio::test]
 async fn test_topic_alias_zero_value() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
 
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
     client.connect("client", true, false).await;
@@ -280,7 +262,7 @@ async fn test_topic_alias_zero_value() {
 async fn test_topic_alias_too_large() {
     let mut config = Config::new_allow_anonymous();
     config.topic_alias_max = 256;
-    let global = Arc::new(GlobalState::new("127.0.0.1:1883".parse().unwrap(), config));
+    let global = Arc::new(GlobalState::new(config));
 
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
     client.connect("client", true, false).await;
@@ -308,10 +290,7 @@ async fn test_topic_alias_too_large() {
 
 #[tokio::test]
 async fn test_topic_alias_not_found() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
 
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
     client.connect("client", true, false).await;
@@ -339,10 +318,7 @@ async fn test_topic_alias_not_found() {
 
 #[tokio::test]
 async fn test_forbid_publish_subscription_id() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
 
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
     client.connect("client", true, false).await;
@@ -367,10 +343,7 @@ async fn test_forbid_publish_subscription_id() {
 
 #[tokio::test]
 async fn test_request_response() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
 
     let (task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
     let (task2, mut client2) = MockConn::start_with_global(222, Arc::clone(&global));

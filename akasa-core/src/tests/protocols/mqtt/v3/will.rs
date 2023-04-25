@@ -15,10 +15,7 @@ use super::ClientV3;
 
 #[tokio::test]
 async fn test_will_publish() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
     let (task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
     let (task2, mut client2) = MockConn::start_with_global(222, global);
 
@@ -59,10 +56,7 @@ async fn test_will_publish() {
 
 #[tokio::test]
 async fn test_will_disconnect_not_publish() {
-    let global = Arc::new(GlobalState::new(
-        "127.0.0.1:1883".parse().unwrap(),
-        Config::new_allow_anonymous(),
-    ));
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
     let (task1, mut client1) = MockConn::start_with_global(111, Arc::clone(&global));
     let (task2, mut client2) = MockConn::start_with_global(222, global);
 
