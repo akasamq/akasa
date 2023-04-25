@@ -23,7 +23,7 @@ use futures_lite::{
 use futures_sink::Sink;
 use futures_util::TryFutureExt;
 use mqtt_proto::{decode_raw_header, v3, v5, Error, Protocol};
-use openssl::ssl::{Ssl, SslAcceptor};
+use openssl::ssl::{NameType, Ssl, SslAcceptor};
 
 use crate::hook::HookRequest;
 use crate::protocols::mqtt;
@@ -109,10 +109,16 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
                 Err(io::ErrorKind::TimedOut.into())
             })
             .await?;
+        tls_sni = tls_stream
+            .ssl()
+            .servername(NameType::HOST_NAME)
+            .map(ToOwned::to_owned);
         TlsWrapper::Tls(tls_stream)
     } else {
         TlsWrapper::Raw(conn)
     };
+
+    log::debug!("TLS host name(SNI): {:?}", tls_sni);
 
     // Handle WebSocket
     let mut ws_wrapper = if conn_args.websocket {

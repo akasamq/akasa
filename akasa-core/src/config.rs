@@ -76,9 +76,13 @@ pub struct TlsListener {
     pub addr: SocketAddr,
     /// Enable proxy protocol v2 or not
     pub proxy: bool,
-    /// DER-formatted PKCS #12 archive
-    pub keyfile: PathBuf,
-    pub cacertfile: PathBuf,
+    /// This CA file is for verify client certificate, if `verify_peer` is true
+    /// this field MUST be presented.
+    pub ca_file: Option<PathBuf>,
+    pub key_file: PathBuf,
+    pub cert_file: PathBuf,
+    pub verify_peer: bool,
+    pub fail_if_no_peer_cert: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq)]

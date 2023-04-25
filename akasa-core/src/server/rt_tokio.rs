@@ -2,12 +2,11 @@ use std::cmp;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use flume::{bounded, Sender};
-use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod, SslVerifyMode};
 use tokio::{net::TcpListener, runtime::Runtime, task::JoinHandle};
 
 use super::{handle_accept, ConnectionArgs, IoWrapper};
@@ -27,32 +26,20 @@ where
         .listeners
         .mqtts
         .as_ref()
-        .map(
-            |TlsListener {
-                 keyfile,
-                 cacertfile,
-                 ..
-             }| {
-                log::info!("Building TLS context for mqtts...");
-                build_tls_context(keyfile, cacertfile)
-            },
-        )
+        .map(|listener| {
+            log::info!("Building TLS context for mqtts...");
+            build_tls_context(listener)
+        })
         .transpose()?;
     let wss_tls_acceptor = global
         .config
         .listeners
         .wss
         .as_ref()
-        .map(
-            |TlsListener {
-                 keyfile,
-                 cacertfile,
-                 ..
-             }| {
-                log::info!("Building TLS context for wss...");
-                build_tls_context(keyfile, cacertfile)
-            },
-        )
+        .map(|listener| {
+            log::info!("Building TLS context for wss...");
+            build_tls_context(listener)
+        })
         .transpose()?;
 
     rt.block_on(async move {
@@ -133,20 +120,41 @@ where
     Ok(())
 }
 
-fn build_tls_context(keyfile: &Path, cacertfile: &Path) -> io::Result<SslAcceptor> {
-    let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls_server()).unwrap();
+fn build_tls_context(listener: &TlsListener) -> io::Result<SslAcceptor> {
+    if listener.verify_peer && listener.ca_file.is_none() {
+        log::error!("When `verify_peer` is true `ca_file` must be presented!");
+        return Err(io::Error::from(io::ErrorKind::InvalidInput));
+    }
+    let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).map_err(|err| {
+        log::error!("Initialize SslAcceptor failed: {:?}", err);
+        io::Error::from(io::ErrorKind::InvalidInput)
+    })?;
+    if let Some(ca_file) = listener.ca_file.as_ref() {
+        acceptor.set_ca_file(ca_file).map_err(|err| {
+            log::error!("Invalid CA-certfile: {}", err);
+            io::Error::from(io::ErrorKind::InvalidInput)
+        })?;
+    }
     acceptor
-        .set_private_key_file(keyfile, SslFiletype::PEM)
+        .set_private_key_file(&listener.key_file, SslFiletype::PEM)
         .map_err(|err| {
             log::error!("Invalid keyfile: {}", err);
             io::Error::from(io::ErrorKind::InvalidInput)
         })?;
     acceptor
-        .set_certificate_chain_file(cacertfile)
+        .set_certificate_chain_file(&listener.cert_file)
         .map_err(|err| {
-            log::error!("Invalid cacertfile: {}", err);
+            log::error!("Invalid certfile: {}", err);
             io::Error::from(io::ErrorKind::InvalidInput)
         })?;
+    let mut verify_mode = SslVerifyMode::NONE;
+    if listener.verify_peer {
+        verify_mode.insert(SslVerifyMode::PEER);
+    }
+    if listener.fail_if_no_peer_cert {
+        verify_mode.insert(SslVerifyMode::FAIL_IF_NO_PEER_CERT);
+    }
+    acceptor.set_verify(verify_mode);
     Ok(acceptor.build())
 }
 
