@@ -112,7 +112,7 @@ clean session : {}
     let mut session_present = false;
     match global
         .add_client(session.client_identifier.as_str(), session.protocol)
-        .await
+        .await?
     {
         AddClientReceipt::PresentV3(old_state) => {
             log::debug!("Got exists session for {}", old_state.client_id);

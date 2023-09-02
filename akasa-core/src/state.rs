@@ -145,7 +145,7 @@ impl GlobalState {
         &self,
         client_identifier: &str,
         protocol: Protocol,
-    ) -> AddClientReceipt {
+    ) -> io::Result<AddClientReceipt> {
         let mut round = 0;
         loop {
             let control_sender = {
@@ -176,13 +176,13 @@ impl GlobalState {
                     };
                     self.clients.insert(client_id, sender);
                     next_client_id.0 += 1;
-                    return AddClientReceipt::New {
+                    return Ok(AddClientReceipt::New {
                         client_id,
                         receiver: ClientReceiver {
                             control: control_receiver,
                             normal: normal_receiver,
                         },
-                    };
+                    });
                 }
             };
 
@@ -203,8 +203,11 @@ impl GlobalState {
                     round += 1;
                     continue;
                 }
-                let session_state = receiver.recv_async().await.unwrap();
-                return AddClientReceipt::PresentV3(session_state);
+                let session_state = receiver
+                    .recv_async()
+                    .await
+                    .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+                return Ok(AddClientReceipt::PresentV3(session_state));
             } else {
                 let (sender, receiver) = bounded(1);
                 if control_sender
@@ -216,8 +219,11 @@ impl GlobalState {
                     round += 1;
                     continue;
                 }
-                let session_state = receiver.recv_async().await.unwrap();
-                return AddClientReceipt::PresentV5(session_state);
+                let session_state = receiver
+                    .recv_async()
+                    .await
+                    .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+                return Ok(AddClientReceipt::PresentV5(session_state));
             }
         }
     }

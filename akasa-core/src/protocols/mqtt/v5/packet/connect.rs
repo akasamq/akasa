@@ -224,7 +224,7 @@ pub(crate) async fn session_connect<T: AsyncWrite + Unpin, E: Executor>(
     let mut session_present = false;
     match global
         .add_client(session.client_identifier.as_str(), session.protocol)
-        .await
+        .await?
     {
         // not allowed, so this is dead branch.
         AddClientReceipt::PresentV3(_) => unreachable!(),
