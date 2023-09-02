@@ -1,15 +1,13 @@
 use std::cmp;
 use std::future::Future;
 use std::io;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use flume::{bounded, Sender};
-use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod, SslVerifyMode};
-use tokio::{net::TcpListener, runtime::Runtime, task::JoinHandle};
+use tokio::{net::TcpListener, runtime::Runtime};
 
-use super::{handle_accept, ConnectionArgs, IoWrapper};
+use super::{build_tls_context, handle_accept, ConnectionArgs, IoWrapper};
 use crate::config::{Listener, ProxyMode, TlsListener};
 use crate::hook::{Hook, HookRequest, HookService};
 use crate::state::{Executor, GlobalState};
@@ -57,149 +55,119 @@ where
         }
 
         let listeners = &global.config.listeners;
-        let mut last_task = None;
-        if let Some(Listener { addr, proxy_mode }) = listeners.mqtt {
+        let tasks: Vec<_> = [
+            listeners
+                .mqtt
+                .as_ref()
+                .map(|Listener { addr, proxy_mode }| ConnectionArgs {
+                    addr: *addr,
+                    proxy: proxy_mode.is_some(),
+                    proxy_tls_termination: *proxy_mode == Some(ProxyMode::TlsTermination),
+                    websocket: false,
+                    tls_acceptor: None,
+                }),
+            listeners
+                .mqtts
+                .as_ref()
+                .map(|TlsListener { addr, proxy, .. }| ConnectionArgs {
+                    addr: *addr,
+                    proxy: *proxy,
+                    proxy_tls_termination: false,
+                    websocket: false,
+                    tls_acceptor: mqtts_tls_acceptor.map(Into::into),
+                }),
+            listeners
+                .ws
+                .as_ref()
+                .map(|Listener { addr, proxy_mode }| ConnectionArgs {
+                    addr: *addr,
+                    proxy: proxy_mode.is_some(),
+                    proxy_tls_termination: *proxy_mode == Some(ProxyMode::TlsTermination),
+                    websocket: true,
+                    tls_acceptor: None,
+                }),
+            listeners
+                .wss
+                .as_ref()
+                .map(|TlsListener { addr, proxy, .. }| ConnectionArgs {
+                    addr: *addr,
+                    proxy: *proxy,
+                    proxy_tls_termination: false,
+                    websocket: true,
+                    tls_acceptor: wss_tls_acceptor.map(Into::into),
+                }),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|conn_args| {
             let global = Arc::clone(&global);
             let hook_sender = hook_sender.clone();
             let executor = Arc::clone(&executor);
-            let conn_args = ConnectionArgs {
-                proxy: proxy_mode.is_some(),
-                proxy_tls_termination: proxy_mode == Some(ProxyMode::TlsTermination),
-                websocket: false,
-                tls_acceptor: None,
-            };
-            let task = listen(addr, conn_args, hook_sender, executor, global);
-            last_task = Some(task);
-        }
-        if let Some(TlsListener { addr, proxy, .. }) = listeners.mqtts {
-            let global = Arc::clone(&global);
-            let hook_sender = hook_sender.clone();
-            let executor = Arc::clone(&executor);
-            let conn_args = ConnectionArgs {
-                proxy,
-                proxy_tls_termination: false,
-                websocket: false,
-                tls_acceptor: mqtts_tls_acceptor.map(Into::into),
-            };
-            let task = listen(addr, conn_args, hook_sender, executor, global);
-            last_task = Some(task);
-        }
-        if let Some(Listener { addr, proxy_mode }) = listeners.ws {
-            let global = Arc::clone(&global);
-            let hook_sender = hook_sender.clone();
-            let executor = Arc::clone(&executor);
-            let conn_args = ConnectionArgs {
-                proxy: proxy_mode.is_some(),
-                proxy_tls_termination: proxy_mode == Some(ProxyMode::TlsTermination),
-                websocket: true,
-                tls_acceptor: None,
-            };
-            let task = listen(addr, conn_args, hook_sender, executor, global);
-            last_task = Some(task);
-        }
-        if let Some(TlsListener { addr, proxy, .. }) = listeners.wss {
-            let global = Arc::clone(&global);
-            let hook_sender = hook_sender.clone();
-            let executor = Arc::clone(&executor);
-            let conn_args = ConnectionArgs {
-                proxy,
-                proxy_tls_termination: false,
-                websocket: true,
-                tls_acceptor: wss_tls_acceptor.map(Into::into),
-            };
-            let task = listen(addr, conn_args, hook_sender, executor, global);
-            last_task = Some(task);
-        }
+            tokio::spawn(async move {
+                loop {
+                    let global = Arc::clone(&global);
+                    let hook_sender = hook_sender.clone();
+                    let executor = Arc::clone(&executor);
+                    if let Err(err) = listen(conn_args.clone(), hook_sender, executor, global).await
+                    {
+                        log::error!("Listen error: {:?}", err);
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                }
+            })
+        })
+        .collect();
 
-        if let Some(task) = last_task {
-            let _ = task.await;
-        } else {
+        if tasks.is_empty() {
             log::error!("No binding address in config");
+        }
+        for task in tasks {
+            let _ = task.await;
         }
     });
     Ok(())
 }
 
-fn build_tls_context(listener: &TlsListener) -> io::Result<SslAcceptor> {
-    if listener.verify_peer && listener.ca_file.is_none() {
-        log::error!("When `verify_peer` is true `ca_file` must be presented!");
-        return Err(io::Error::from(io::ErrorKind::InvalidInput));
-    }
-    let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).map_err(|err| {
-        log::error!("Initialize SslAcceptor failed: {:?}", err);
-        io::Error::from(io::ErrorKind::InvalidInput)
-    })?;
-    if let Some(ca_file) = listener.ca_file.as_ref() {
-        acceptor.set_ca_file(ca_file).map_err(|err| {
-            log::error!("Invalid CA-certfile: {}", err);
-            io::Error::from(io::ErrorKind::InvalidInput)
-        })?;
-    }
-    acceptor
-        .set_private_key_file(&listener.key_file, SslFiletype::PEM)
-        .map_err(|err| {
-            log::error!("Invalid keyfile: {}", err);
-            io::Error::from(io::ErrorKind::InvalidInput)
-        })?;
-    acceptor
-        .set_certificate_chain_file(&listener.cert_file)
-        .map_err(|err| {
-            log::error!("Invalid certfile: {}", err);
-            io::Error::from(io::ErrorKind::InvalidInput)
-        })?;
-    let mut verify_mode = SslVerifyMode::NONE;
-    if listener.verify_peer {
-        verify_mode.insert(SslVerifyMode::PEER);
-    }
-    if listener.fail_if_no_peer_cert {
-        verify_mode.insert(SslVerifyMode::FAIL_IF_NO_PEER_CERT);
-    }
-    acceptor.set_verify(verify_mode);
-    Ok(acceptor.build())
-}
-
-fn listen<E: Executor + Send + Sync + 'static>(
-    addr: SocketAddr,
+async fn listen<E: Executor + Send + Sync + 'static>(
     conn_args: ConnectionArgs,
     hook_sender: Sender<HookRequest>,
     executor: Arc<E>,
     global: Arc<GlobalState>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let listener = TcpListener::bind(addr).await.unwrap();
-        let listen_type = match (conn_args.websocket, conn_args.tls_acceptor.is_some()) {
-            (false, false) => "mqtt",
-            (false, true) => "mqtts",
-            (true, false) => "ws",
-            (true, true) => "wss",
-        };
-        let listen_type = if conn_args.proxy {
-            format!("{listen_type}(proxy)")
-        } else {
-            listen_type.to_owned()
-        };
-        log::info!("Listen {listen_type}@{addr} success!");
-        loop {
-            let (conn, peer) = listener.accept().await.unwrap();
-            log::debug!("{} connected", peer,);
-            let conn_wrapper = IoWrapper::new(conn);
-            let conn_args = conn_args.clone();
-            let hook_requests = hook_sender.clone();
-            let executor = Arc::clone(&executor);
-            let global = Arc::clone(&global);
-            tokio::spawn(async move {
-                let _ = handle_accept(
-                    conn_wrapper,
-                    conn_args,
-                    peer,
-                    hook_requests,
-                    executor,
-                    Arc::clone(&global),
-                )
-                .await;
-            });
-        }
-    })
+) -> io::Result<()> {
+    let addr = conn_args.addr;
+    let listener = TcpListener::bind(addr).await?;
+    let listen_type = match (conn_args.websocket, conn_args.tls_acceptor.is_some()) {
+        (false, false) => "mqtt",
+        (false, true) => "mqtts",
+        (true, false) => "ws",
+        (true, true) => "wss",
+    };
+    let listen_type = if conn_args.proxy {
+        format!("{listen_type}(proxy)")
+    } else {
+        listen_type.to_owned()
+    };
+    log::info!("Listen {listen_type}@{addr} success! (tokio)");
+    loop {
+        let (conn, peer) = listener.accept().await?;
+        log::debug!("{} connected", peer,);
+        let conn_wrapper = IoWrapper::new(conn);
+        let conn_args = conn_args.clone();
+        let hook_requests = hook_sender.clone();
+        let executor = Arc::clone(&executor);
+        let global = Arc::clone(&global);
+        tokio::spawn(async move {
+            let _ = handle_accept(
+                conn_wrapper,
+                conn_args,
+                peer,
+                hook_requests,
+                executor,
+                Arc::clone(&global),
+            )
+            .await;
+        });
+    }
 }
 
 pub struct TokioExecutor {}

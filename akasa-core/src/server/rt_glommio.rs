@@ -13,7 +13,8 @@ use glommio::{
     CpuSet, Latency, LocalExecutorPoolBuilder, PoolPlacement, Shares, TaskQueueHandle,
 };
 
-use super::handle_accept;
+use super::{build_tls_context, handle_accept, ConnectionArgs};
+use crate::config::{Listener, ProxyMode, TlsListener};
 use crate::hook::{Hook, HookRequest, HookService};
 use crate::state::{Executor, GlobalState};
 
@@ -25,6 +26,28 @@ where
     let cpu_num = num_cpus::get();
     let placement = PoolPlacement::MaxSpread(cpu_num, Some(cpu_set));
     let (hook_sender, hook_receiver) = bounded(64);
+
+    let mqtts_tls_acceptor = global
+        .config
+        .listeners
+        .mqtts
+        .as_ref()
+        .map(|listener| {
+            log::info!("Building TLS context for mqtts...");
+            build_tls_context(listener)
+        })
+        .transpose()?;
+    let wss_tls_acceptor = global
+        .config
+        .listeners
+        .wss
+        .as_ref()
+        .map(|listener| {
+            log::info!("Building TLS context for wss...");
+            build_tls_context(listener)
+        })
+        .transpose()?;
+
     LocalExecutorPoolBuilder::new(placement)
         .on_all_shards(move || async move {
             let id = glommio::executor().id();
@@ -53,20 +76,77 @@ where
             }
 
             if cpu_num == 1 || id % 2 == 0 {
-                loop {
-                    log::info!("Starting executor for server {}", id);
-                    if let Err(err) = server(
-                        hook_sender.clone(),
-                        Rc::clone(&executor),
-                        Arc::clone(&global),
-                    )
-                    .await
-                    {
-                        log::error!("Executor {} stopped with error: {}", id, err);
-                        sleep(Duration::from_secs(1)).await;
-                    } else {
-                        log::info!("Executor {} stopped successfully!", id);
-                    }
+                let listeners = &global.config.listeners;
+                let tasks: Vec<_> = [
+                    listeners
+                        .mqtt
+                        .as_ref()
+                        .map(|Listener { addr, proxy_mode }| ConnectionArgs {
+                            addr: *addr,
+                            proxy: proxy_mode.is_some(),
+                            proxy_tls_termination: *proxy_mode == Some(ProxyMode::TlsTermination),
+                            websocket: false,
+                            tls_acceptor: None,
+                        }),
+                    listeners
+                        .mqtts
+                        .as_ref()
+                        .map(|TlsListener { addr, proxy, .. }| ConnectionArgs {
+                            addr: *addr,
+                            proxy: *proxy,
+                            proxy_tls_termination: false,
+                            websocket: false,
+                            tls_acceptor: mqtts_tls_acceptor.map(Into::into),
+                        }),
+                    listeners
+                        .ws
+                        .as_ref()
+                        .map(|Listener { addr, proxy_mode }| ConnectionArgs {
+                            addr: *addr,
+                            proxy: proxy_mode.is_some(),
+                            proxy_tls_termination: *proxy_mode == Some(ProxyMode::TlsTermination),
+                            websocket: true,
+                            tls_acceptor: None,
+                        }),
+                    listeners
+                        .wss
+                        .as_ref()
+                        .map(|TlsListener { addr, proxy, .. }| ConnectionArgs {
+                            addr: *addr,
+                            proxy: *proxy,
+                            proxy_tls_termination: false,
+                            websocket: true,
+                            tls_acceptor: wss_tls_acceptor.map(Into::into),
+                        }),
+                ]
+                .into_iter()
+                .flatten()
+                .map(|conn_args| {
+                    let global = Arc::clone(&global);
+                    let hook_sender = hook_sender.clone();
+                    let executor = Rc::clone(&executor);
+                    spawn_local(async move {
+                        loop {
+                            let global = Arc::clone(&global);
+                            let hook_sender = hook_sender.clone();
+                            let executor = Rc::clone(&executor);
+                            if let Err(err) =
+                                listen(conn_args.clone(), hook_sender, executor, global).await
+                            {
+                                log::error!("Listen error: {:?}", err);
+                                sleep(Duration::from_secs(1)).await;
+                            }
+                        }
+                    })
+                    .detach()
+                })
+                .collect();
+
+                if tasks.is_empty() {
+                    log::error!("No binding address in config");
+                }
+                for task in tasks {
+                    let _ = task.await;
                 }
             }
         })
@@ -75,24 +155,46 @@ where
     Ok(())
 }
 
-async fn server(
-    hook_requests: Sender<HookRequest>,
-    executor: Rc<GlommioExecutor>,
+async fn listen<E: Executor + Send + Sync + 'static>(
+    conn_args: ConnectionArgs,
+    hook_sender: Sender<HookRequest>,
+    executor: Rc<E>,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
-    let listener = TcpListener::bind(global.config.bind)?;
+    let addr = conn_args.addr;
+    let listener = TcpListener::bind(addr)?;
+    let listen_type = match (conn_args.websocket, conn_args.tls_acceptor.is_some()) {
+        (false, false) => "mqtt",
+        (false, true) => "mqtts",
+        (true, false) => "ws",
+        (true, true) => "wss",
+    };
+    let listen_type = if conn_args.proxy {
+        format!("{listen_type}(proxy)")
+    } else {
+        listen_type.to_owned()
+    };
+    log::info!("Listen {listen_type}@{addr} success! (glommio)");
     loop {
         let conn = listener.accept().await?.buffered();
+        let conn_args = conn_args.clone();
         let fd = conn.as_raw_fd();
         let peer = conn.peer_addr()?;
         log::debug!("executor {:03}, #{} {} connected", executor.id(), fd, peer);
         spawn_local({
-            let hook_requests = hook_requests.clone();
+            let hook_requests = hook_sender.clone();
             let executor = Rc::clone(&executor);
             let global = Arc::clone(&global);
             async move {
-                let _ =
-                    handle_accept(conn, peer, hook_requests, executor, Arc::clone(&global)).await;
+                let _ = handle_accept(
+                    conn,
+                    conn_args,
+                    peer,
+                    hook_requests,
+                    executor,
+                    Arc::clone(&global),
+                )
+                .await;
             }
         })
         .detach();

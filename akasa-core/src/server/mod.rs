@@ -23,8 +23,9 @@ use futures_lite::{
 use futures_sink::Sink;
 use futures_util::TryFutureExt;
 use mqtt_proto::{decode_raw_header, v3, v5, Error, Protocol};
-use openssl::ssl::{NameType, Ssl, SslAcceptor};
+use openssl::ssl::{NameType, Ssl, SslAcceptor, SslFiletype, SslMethod, SslVerifyMode};
 
+use crate::config::TlsListener;
 use crate::hook::HookRequest;
 use crate::protocols::mqtt;
 use crate::state::{Executor, GlobalState};
@@ -189,8 +190,47 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     Ok(())
 }
 
+fn build_tls_context(listener: &TlsListener) -> io::Result<SslAcceptor> {
+    if listener.verify_peer && listener.ca_file.is_none() {
+        log::error!("When `verify_peer` is true `ca_file` must be presented!");
+        return Err(io::Error::from(io::ErrorKind::InvalidInput));
+    }
+    let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).map_err(|err| {
+        log::error!("Initialize SslAcceptor failed: {:?}", err);
+        io::Error::from(io::ErrorKind::InvalidInput)
+    })?;
+    if let Some(ca_file) = listener.ca_file.as_ref() {
+        acceptor.set_ca_file(ca_file).map_err(|err| {
+            log::error!("Invalid CA-certfile: {}", err);
+            io::Error::from(io::ErrorKind::InvalidInput)
+        })?;
+    }
+    acceptor
+        .set_private_key_file(&listener.key_file, SslFiletype::PEM)
+        .map_err(|err| {
+            log::error!("Invalid keyfile: {}", err);
+            io::Error::from(io::ErrorKind::InvalidInput)
+        })?;
+    acceptor
+        .set_certificate_chain_file(&listener.cert_file)
+        .map_err(|err| {
+            log::error!("Invalid certfile: {}", err);
+            io::Error::from(io::ErrorKind::InvalidInput)
+        })?;
+    let mut verify_mode = SslVerifyMode::NONE;
+    if listener.verify_peer {
+        verify_mode.insert(SslVerifyMode::PEER);
+    }
+    if listener.fail_if_no_peer_cert {
+        verify_mode.insert(SslVerifyMode::FAIL_IF_NO_PEER_CERT);
+    }
+    acceptor.set_verify(verify_mode);
+    Ok(acceptor.build())
+}
+
 #[derive(Clone)]
 pub struct ConnectionArgs {
+    pub(crate) addr: SocketAddr,
     pub(crate) proxy: bool,
     pub(crate) proxy_tls_termination: bool,
     pub(crate) websocket: bool,
