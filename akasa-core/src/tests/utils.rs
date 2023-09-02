@@ -112,6 +112,7 @@ impl MockConnControl {
             Arc::clone(&global),
         );
         let conn_args = ConnectionArgs {
+            addr: conn.bind,
             proxy: false,
             proxy_tls_termination: false,
             websocket: false,
