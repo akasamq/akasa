@@ -146,87 +146,72 @@ impl GlobalState {
         client_identifier: &str,
         protocol: Protocol,
     ) -> io::Result<AddClientReceipt> {
-        let mut round = 0;
-        loop {
-            let control_sender = {
-                let mut next_client_id = self.next_client_id.lock();
-                self.online_clients.fetch_add(1, Ordering::AcqRel);
-                let client_id_opt: Option<ClientId> = self
-                    .client_identifier_map
-                    .get(client_identifier)
-                    .map(|pair| *pair.value());
-                if let Some(old_id) = client_id_opt {
-                    if let Some(mut pair) = self.client_id_map.get_mut(&old_id) {
-                        pair.value_mut().1 = true;
-                    }
-                    self.get_client_control_sender(&old_id).unwrap()
-                } else {
-                    let client_id = *next_client_id;
-                    self.client_id_map
-                        .insert(client_id, (client_identifier.to_string(), true));
-                    self.client_identifier_map
-                        .insert(client_identifier.to_string(), client_id);
-                    // FIXME: if some one subscribe topic "#" and never receive the message it will block all sender clients.
-                    //   Suggestion: Add QoS0 message to pending queue
-                    let (control_sender, control_receiver) = bounded(1);
-                    let (normal_sender, normal_receiver) = bounded(8);
-                    let sender = ClientSender {
-                        normal: normal_sender,
-                        control: control_sender,
-                    };
-                    self.clients.insert(client_id, sender);
-                    next_client_id.0 += 1;
-                    return Ok(AddClientReceipt::New {
-                        client_id,
-                        receiver: ClientReceiver {
-                            control: control_receiver,
-                            normal: normal_receiver,
-                        },
-                    });
+        let control_sender = {
+            let mut next_client_id = self.next_client_id.lock();
+            self.online_clients.fetch_add(1, Ordering::AcqRel);
+            let client_id_opt: Option<ClientId> = self
+                .client_identifier_map
+                .get(client_identifier)
+                .map(|pair| *pair.value());
+            if let Some(old_id) = client_id_opt {
+                if let Some(mut pair) = self.client_id_map.get_mut(&old_id) {
+                    pair.value_mut().1 = true;
                 }
-            };
-
-            // NOTE: only 0 retry is allowed in unit tests
-            debug_assert!(round == 0, "add client round: {round}");
-            // NOTE: only 2 retry is allowed in production
-            if round > 2 {
-                log::error!("add client round: {}, which is more than 2", round);
-                return Err(io::Error::from(io::ErrorKind::TimedOut));
-            }
-
-            if protocol < Protocol::V500 {
-                let (sender, receiver) = bounded(1);
-                if control_sender
-                    .send_async(ControlMessage::OnlineV3 { sender })
-                    .await
-                    .is_err()
-                {
-                    // old client may already removed, retry to create new one
-                    round += 1;
-                    continue;
-                }
-                let session_state = receiver
-                    .recv_async()
-                    .await
-                    .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-                return Ok(AddClientReceipt::PresentV3(session_state));
+                self.get_client_control_sender(&old_id).unwrap()
             } else {
-                let (sender, receiver) = bounded(1);
-                if control_sender
-                    .send_async(ControlMessage::OnlineV5 { sender })
-                    .await
-                    .is_err()
-                {
-                    // old client may already removed, retry to crate new one
-                    round += 1;
-                    continue;
-                }
-                let session_state = receiver
-                    .recv_async()
-                    .await
-                    .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-                return Ok(AddClientReceipt::PresentV5(session_state));
+                let client_id = *next_client_id;
+                self.client_id_map
+                    .insert(client_id, (client_identifier.to_string(), true));
+                self.client_identifier_map
+                    .insert(client_identifier.to_string(), client_id);
+                // FIXME: if some one subscribe topic "#" and never receive the message it will block all sender clients.
+                //   Suggestion: Add QoS0 message to pending queue
+                let (control_sender, control_receiver) = bounded(1);
+                let (normal_sender, normal_receiver) = bounded(8);
+                let sender = ClientSender {
+                    normal: normal_sender,
+                    control: control_sender,
+                };
+                self.clients.insert(client_id, sender);
+                next_client_id.0 += 1;
+                return Ok(AddClientReceipt::New {
+                    client_id,
+                    receiver: ClientReceiver {
+                        control: control_receiver,
+                        normal: normal_receiver,
+                    },
+                });
             }
+        };
+
+        if protocol < Protocol::V500 {
+            let (sender, receiver) = bounded(1);
+            if let Err(err) = control_sender
+                .send_async(ControlMessage::OnlineV3 { sender })
+                .await
+            {
+                log::warn!("send online control message error: {:?}", err);
+                return Err(io::Error::from(io::ErrorKind::InvalidData));
+            }
+            let session_state = receiver.recv_async().await.map_err(|err| {
+                log::warn!("receive session state error: {:?}", err);
+                io::Error::from(io::ErrorKind::InvalidData)
+            })?;
+            return Ok(AddClientReceipt::PresentV3(session_state));
+        } else {
+            let (sender, receiver) = bounded(1);
+            if let Err(err) = control_sender
+                .send_async(ControlMessage::OnlineV5 { sender })
+                .await
+            {
+                log::warn!("send online control message error: {:?}", err);
+                return Err(io::Error::from(io::ErrorKind::InvalidData));
+            }
+            let session_state = receiver.recv_async().await.map_err(|err| {
+                log::warn!("receive session state error: {:?}", err);
+                io::Error::from(io::ErrorKind::InvalidData)
+            })?;
+            return Ok(AddClientReceipt::PresentV5(session_state));
         }
     }
 }
