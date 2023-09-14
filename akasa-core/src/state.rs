@@ -186,10 +186,12 @@ impl GlobalState {
                 }
             };
 
-            // NOTE: only one retry is allowed
+            // NOTE: only 0 retry is allowed in unit tests
             debug_assert!(round == 0, "add client round: {round}");
-            if round > 0 {
-                log::error!("add client round: {}, which is more than 0", round);
+            // NOTE: only 2 retry is allowed in production
+            if round > 2 {
+                log::error!("add client round: {}, which is more than 2", round);
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
             }
 
             if protocol < Protocol::V500 {
