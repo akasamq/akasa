@@ -640,7 +640,7 @@ impl OnlineSession for Session {
         msg: ControlMessage,
         global: &Arc<GlobalState>,
     ) -> (bool, Option<Sender<SessionState>>) {
-        handle_control(self, msg, global)
+        handle_control(self, msg, global, false)
     }
 
     fn handle_normal(
@@ -662,7 +662,7 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: 
         tokio::select! {
             result = receiver.control.recv_async() => match result {
                 Ok(msg) => {
-                    let (stop, sender_opt) = handle_control(&mut session, msg, &global);
+                    let (stop, sender_opt) = handle_control(&mut session, msg, &global, true);
                     if let Some(sender) = sender_opt {
                         let old_state = session.build_state(receiver);
                         if let Err(err) = sender.send_async(old_state).await {
@@ -740,6 +740,7 @@ fn handle_control(
     session: &mut Session,
     msg: ControlMessage,
     global: &Arc<GlobalState>,
+    offline: bool,
 ) -> (bool, Option<Sender<SessionState>>) {
     let mut stop = false;
     match msg {
@@ -748,13 +749,17 @@ fn handle_control(
         }
         ControlMessage::OnlineV5 { sender } => return (false, Some(sender)),
         ControlMessage::Kick { reason } => {
-            log::info!(
-                "kick \"{}\", reason: {}, online: {}",
-                session.client_identifier,
-                reason,
-                !session.disconnected(),
-            );
-            stop = !session.disconnected();
+            if offline {
+                log::info!("ignore kick message when client is offline");
+            } else {
+                log::info!(
+                    "kick \"{}\", reason: {}, online: {}",
+                    session.client_identifier,
+                    reason,
+                    !session.disconnected(),
+                );
+                stop = true;
+            }
         }
         ControlMessage::SessionExpired { connected_time } => {
             log::debug!("client \"{}\" session expired", session.client_identifier);

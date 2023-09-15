@@ -197,7 +197,7 @@ impl GlobalState {
                 log::warn!("receive session state error: {:?}", err);
                 io::Error::from(io::ErrorKind::InvalidData)
             })?;
-            return Ok(AddClientReceipt::PresentV3(session_state));
+            Ok(AddClientReceipt::PresentV3(session_state))
         } else {
             let (sender, receiver) = bounded(1);
             if let Err(err) = control_sender
@@ -211,7 +211,7 @@ impl GlobalState {
                 log::warn!("receive session state error: {:?}", err);
                 io::Error::from(io::ErrorKind::InvalidData)
             })?;
-            return Ok(AddClientReceipt::PresentV5(session_state));
+            Ok(AddClientReceipt::PresentV5(session_state))
         }
     }
 }

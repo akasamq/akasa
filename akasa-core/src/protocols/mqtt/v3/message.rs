@@ -452,7 +452,7 @@ impl OnlineSession for Session {
         msg: ControlMessage,
         _global: &Arc<GlobalState>,
     ) -> (bool, Option<Sender<SessionState>>) {
-        handle_control(self, msg)
+        handle_control(self, msg, false)
     }
 
     fn handle_normal(
@@ -474,7 +474,7 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, _global:
         tokio::select! {
             result = receiver.control.recv_async() => match result {
                 Ok(msg) => {
-                    let (stop, sender_opt) = handle_control(&mut session, msg);
+                    let (stop, sender_opt) = handle_control(&mut session, msg, true);
                     if let Some(sender) = sender_opt {
                         let old_state = session.build_state(receiver);
                         if let Err(err) = sender.send_async(old_state).await {
@@ -545,6 +545,7 @@ async fn handle_will(session: &mut Session, global: &Arc<GlobalState>) -> io::Re
 fn handle_control(
     session: &mut Session,
     msg: ControlMessage,
+    offline: bool,
 ) -> (bool, Option<Sender<SessionState>>) {
     // FIXME: call receiver.try_recv() to clear the channel, if the pending
     // queue is full, set a marker to the global state so that the sender stop
@@ -556,13 +557,17 @@ fn handle_control(
             log::info!("take over v3.x by v5.x client is not allowed");
         }
         ControlMessage::Kick { reason } => {
-            log::info!(
-                "kick \"{}\", reason: {}, online: {}",
-                session.client_id,
-                reason,
-                !session.disconnected,
-            );
-            stop = !session.disconnected;
+            if offline {
+                log::info!("ignore kick message when client is offline");
+            } else {
+                log::info!(
+                    "kick \"{}\", reason: {}, online: {}",
+                    session.client_id,
+                    reason,
+                    !session.disconnected,
+                );
+                stop = true;
+            }
         }
         ControlMessage::WillDelayReached { .. } | ControlMessage::SessionExpired { .. } => {
             unreachable!();
