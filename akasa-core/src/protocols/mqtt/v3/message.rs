@@ -470,6 +470,7 @@ impl OnlineSession for Session {
 }
 
 async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: Arc<GlobalState>) {
+    let mut taken_over = false;
     loop {
         tokio::select! {
             result = receiver.control.recv_async() => match result {
@@ -479,7 +480,8 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: 
                         let old_state = session.build_state(receiver);
                         if let Err(err) = sender.send_async(old_state).await {
                             log::warn!("offline send session state failed: {err:?}");
-                            global.remove_client(session.client_id, session.subscribes.keys());
+                        } else {
+                            taken_over = true;
                         }
                         break;
                     }
@@ -489,7 +491,6 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: 
                 }
                 Err(err) => {
                     log::warn!("offline client receive control message error: {:?}", err);
-                    global.remove_client(session.client_id, session.subscribes.keys());
                     break;
                 }
             },
@@ -499,11 +500,13 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: 
                 }
                 Err(err) => {
                     log::warn!("offline client receive normal message error: {:?}", err);
-                    global.remove_client(session.client_id, session.subscribes.keys());
                     break;
                 }
             }
         }
+    }
+    if !taken_over {
+        global.remove_client(session.client_id, session.subscribes.keys());
     }
     log::debug!("offline client finished: {:?}", session.client_id());
 }
