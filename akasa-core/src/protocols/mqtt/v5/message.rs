@@ -74,8 +74,9 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     {
         Ok(Some((session, receiver))) => {
             log::info!(
-                "executor {:03}, {} go to offline, total {} clients ({} online)",
+                "executor {:03}, {}({}) go to offline, total {} clients ({} online)",
                 executor.id(),
+                session.client_id,
                 peer,
                 global.clients_count(),
                 global.online_clients_count(),
