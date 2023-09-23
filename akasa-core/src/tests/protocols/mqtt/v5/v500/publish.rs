@@ -246,7 +246,7 @@ async fn test_topic_alias_zero_value() {
         .await;
     let received_pkt = client.read_packet().await;
     if let Packet::Disconnect(pkt) = received_pkt {
-        assert_eq!(pkt.reason_code, DisconnectReasonCode::ProtocolError);
+        assert_eq!(pkt.reason_code, DisconnectReasonCode::TopicAliasInvalid);
         assert_eq!(
             pkt.properties.reason_string.unwrap().as_str(),
             "topic alias is 0"

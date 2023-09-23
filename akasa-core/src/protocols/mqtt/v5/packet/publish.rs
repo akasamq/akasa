@@ -68,9 +68,10 @@ topic name : {}
     let mut topic_name = packet.topic_name.clone();
     if let Some(alias) = properties.topic_alias {
         if alias == 0 {
+            // See: 3.3.4 PUBLISH Actions
             let err_pkt = build_error_disconnect(
                 session,
-                DisconnectReasonCode::ProtocolError,
+                DisconnectReasonCode::TopicAliasInvalid,
                 "topic alias is 0",
             );
             return Err(err_pkt);
