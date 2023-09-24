@@ -171,12 +171,12 @@ impl AsyncWrite for MockConn {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        let peer = self.peer.clone();
+        let peer = self.peer;
         let mut sink = Pin::new(&mut self.chan_out);
         match sink.as_mut().poll_ready(cx) {
             Poll::Ready(Ok(())) => {
                 log::debug!("send to [{}]", peer);
-                if let Err(_) = sink.as_mut().start_send(buf.to_vec()) {
+                if sink.as_mut().start_send(buf.to_vec()).is_err() {
                     return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)));
                 }
                 match sink.as_mut().poll_flush(cx) {
