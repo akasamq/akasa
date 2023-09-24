@@ -1,5 +1,8 @@
 # Akasa (आकाश)
-English | [简体中文](README-CN.md)
+
+![CI](https://github.com/akasamq/akasa/actions/workflows/rust.yml/badge.svg)
+
+English | [简体中文](README-CN.md) 
 
 Akasa is a high performance, low latency and high extendable MQTT server in Rust.
 
