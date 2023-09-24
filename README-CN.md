@@ -1,7 +1,7 @@
 # Akasa (आकाश)
 [English](README.md) | 简体中文
 
-Akas 是一个高性能，低延迟，高度可扩展的 MQTT 服务器。
+Akasa 是一个 Rust 写的高性能，低延迟，高度可扩展的 MQTT 服务器。
 
 Akasa 用 [glommio][glommio] 来实现高性能低延迟的网络 IO. 它底层的 MQTT 协议消息编解码器 ([mqtt-proto][mqtt-proto]) 是为了高性能和 async 环境而精心设计实现的。
 
