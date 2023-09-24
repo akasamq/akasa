@@ -38,6 +38,15 @@ TODO
 
 底层的编解码器 ([mqtt-proto][mqtt-proto]) 也包含了相当数量的测试和一些 [fuzz][mqtt-proto-fuzz] 测试。
 
+## 社区
+
+如果你有任何问题或者想参与到我们的社区中来，可以通过以下方式进入：
+
+- [GitHub][github-group] 英文社区
+- [Discord][discord-group] 英文社区
+- [Telegram][telegram-group] 中文社区
+- QQ 群 (号码：862039269)
+
 ## License
 Akasa 使用 **MIT** license ([LICENSE](LICENSE))
 
@@ -61,3 +70,6 @@ Akasa 会有一个企业版本, 它会提供一个受限的二进制程序作为
 [bsl]: https://mariadb.com/bsl-faq-mariadb/
 [hook-trait]: https://github.com/akasamq/akasa/blob/5ade2d788d9a919671f81b01d720155caf8e4e2d/akasa-core/src/hook.rs#L43
 [tensorflow]: https://blog.tensorflow.org/2020/09/supercharging-tensorflowjs-webassembly.html
+[github-group]: https://github.com/akasamq/akasa/discussions
+[discord-group]: https://discord.gg/Geg7hXWM
+[telegram-group]: https://t.me/+UCBpJs-6ddI4MjE1

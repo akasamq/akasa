@@ -41,6 +41,15 @@ Testing is very important for reliable software. Akasa currently include 100+ te
 
 The underlying codec ([mqtt-proto][mqtt-proto]) also include significant amount of test cases and also some [fuzz][mqtt-proto-fuzz] testing.
 
+## Community
+
+If you have any questions or if you would like to get involved in our community, please check out:
+
+- English Community on [GitHub Discussions][github-group]
+- English Community on [Discord][discord-group]
+- Chinese Community on [Telegram][telegram-group]
+- Chinese Community on QQ Group (862039269)
+
 ## License
 Akasa is licensed under **MIT** license ([LICENSE](LICENSE))
 
@@ -64,3 +73,6 @@ Akasa will have an enterprise edition, it will release a limited binary program 
 [bsl]: https://mariadb.com/bsl-faq-mariadb/
 [hook-trait]: https://github.com/akasamq/akasa/blob/5ade2d788d9a919671f81b01d720155caf8e4e2d/akasa-core/src/hook.rs#L43
 [tensorflow]: https://blog.tensorflow.org/2020/09/supercharging-tensorflowjs-webassembly.html
+[github-group]: https://github.com/akasamq/akasa/discussions
+[discord-group]: https://discord.gg/Geg7hXWM
+[telegram-group]: https://t.me/+UCBpJs-6ddI4MjE1
