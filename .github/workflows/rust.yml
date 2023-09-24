@@ -14,5 +14,5 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v2
-    - name: check format + clippy
+    - name: format + clippy + tests
       run: make ci
