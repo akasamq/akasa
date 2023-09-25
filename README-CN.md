@@ -51,7 +51,7 @@ TODO
 Akasa 使用 **MIT** license ([LICENSE](LICENSE))
 
 ## 企业版
-Akasa 会有一个企业版本, 它会提供一个受限的二进制程序作为公开的使用和测试。对于商业用户, Akasa 企业版的源码可以以类似 MariaDB Business Source License ([BSL][bsl]) 来提供， 而且还会提供相应的技术支持。企业版中的额外功能包括:
+Akasa 会有一个企业版本，企业版中的额外功能包括:
 
 - [x] 基于 Webassembly 的规则引擎
   * 可以跑非常复杂的业务逻辑 (比如 [TensorFlow][tensorflow])

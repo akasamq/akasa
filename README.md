@@ -54,7 +54,8 @@ If you have any questions or if you would like to get involved in our community,
 Akasa is licensed under **MIT** license ([LICENSE](LICENSE))
 
 ## Enterprise Edition
-Akasa will have an enterprise edition, it will release a limited binary program for the public to use and test. For commercial user, the enterprise edition source code can be provided under a MariaDB Business Source License ([BSL][bsl]) like license, and also with technical support. In this edition, it provides:
+
+Akasa will have an enterprise edition. In this edition, it provides:
 
 - [x] Webassembly based Rule Engine
   * can run very complex logic (such as [TensorFlow][tensorflow])
