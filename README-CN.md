@@ -53,7 +53,7 @@ Akasa 使用 **MIT** license ([LICENSE](LICENSE))
 ## 企业版
 Akasa 会有一个企业版本，企业版中的额外功能包括:
 
-- [x] 基于 Webassembly 的规则引擎
+- [x] 基于 WebAssembly 的规则引擎
   * 可以跑非常复杂的业务逻辑 (比如 [TensorFlow][tensorflow])
   * 相对于脚本语言来说有绝对的性能优势
   * 在线更新

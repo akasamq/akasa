@@ -57,7 +57,7 @@ Akasa is licensed under **MIT** license ([LICENSE](LICENSE))
 
 Akasa will have an enterprise edition. In this edition, it provides:
 
-- [x] Webassembly based Rule Engine
+- [x] WebAssembly based Rule Engine
   * can run very complex logic (such as [TensorFlow][tensorflow])
   * very high performance compare to scripting language
   * hot reload
