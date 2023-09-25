@@ -22,6 +22,7 @@ It uses [glommio][glommio] for high performance and low latency network IO. The 
 
 ```shell
 git clone https://github.com/akasamq/akasa.git && cd akasa
+# You may also need to install openssl: https://docs.rs/openssl/latest/openssl/#automatic
 cargo build --release
 
 ./target/release/akasa --help
@@ -32,6 +33,10 @@ cargo build --release
 #  remove-password  Remove a password from the password file
 #  help             Print this message or the help of the given subcommand(s)
 ```
+
+For more documentation:
+
+- [Config Options Explanation](docs/english/config.md)
 
 ## Benchmark
 TODO

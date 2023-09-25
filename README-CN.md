@@ -19,6 +19,7 @@ Akasa 用 [glommio][glommio] 来实现高性能低延迟的网络 IO. 它底层�
 
 ```shell
 git clone https://github.com/akasamq/akasa.git && cd akasa
+# 可能你需要先安装 openssl: https://docs.rs/openssl/latest/openssl/#automatic
 cargo build --release
 
 ./target/release/akasa --help
