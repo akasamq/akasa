@@ -34,8 +34,9 @@ cargo build --release
 #  help             Print this message or the help of the given subcommand(s)
 ```
 
-For more documentation:
+More documentation:
 
+- [Getting Started Guide](docs/english/getting-started.md)
 - [Config Options Explanation](docs/english/config.md)
 
 ## Benchmark
