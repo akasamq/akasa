@@ -23,7 +23,7 @@ pub struct Config {
     /// max allowed qos, allowed values: [0, 1, 2], default: 2
     pub max_allowed_qos: u8,
 
-    /// Timeout seconds to resend inflight pending messages
+    /// Timeout seconds to re-send inflight pending messages
     pub inflight_timeout: u64,
     /// max inflight pending messages for client default value
     pub max_inflight_client: u16,

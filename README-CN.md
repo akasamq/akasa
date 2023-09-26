@@ -31,6 +31,11 @@ cargo build --release
 #  help             Print this message or the help of the given subcommand(s)
 ```
 
+更多文档:
+
+- [入门指南](docs/chinese/getting-started.md)
+- [配置项说明](docs/chinese/config.md)
+
 ## 性能测试
 TODO
 
