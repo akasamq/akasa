@@ -153,11 +153,11 @@ pub struct HookConfig {
 impl Default for HookConfig {
     fn default() -> HookConfig {
         HookConfig {
-            enable_before_connect: true,
-            enable_after_connect: true,
-            enable_publish: true,
-            enable_subscribe: true,
-            enable_unsubscribe: true,
+            enable_before_connect: false,
+            enable_after_connect: false,
+            enable_publish: false,
+            enable_subscribe: false,
+            enable_unsubscribe: false,
         }
     }
 }
