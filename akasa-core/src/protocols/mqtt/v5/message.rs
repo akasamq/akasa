@@ -757,7 +757,10 @@ fn handle_control(
         ControlMessage::OnlineV5 { sender } => return (false, Some(sender)),
         ControlMessage::Kick { reason } => {
             if offline {
-                log::info!("ignore kick message when client is offline");
+                log::info!(
+                    "ignore kick message when client {} is offline",
+                    session.client_id
+                );
             } else {
                 log::info!(
                     "kick \"{}\", reason: {}, online: {}",
