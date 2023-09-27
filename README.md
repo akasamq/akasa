@@ -40,7 +40,21 @@ More documentation:
 - [Config Options Explanation](docs/english/config.md)
 
 ## Benchmark
-TODO
+```yaml
+# Environment
+CPU    : Intel® Xeon® E5-2678 v3 × 48
+Memory : 32GB DDR4/2133
+System : Arch Linux
+
+# Connections (clean_session=false)
+Akasa   : 250k connections,  5GB memory
+VerneMQ :  50k connections, 20GB memory
+
+# Message/s
+Akasa   : 35k connections, 500k message/s, 2.3GB memory, CPU 1050%
+VerneMQ : 15k connections, 220k message/s, 3.5GB memory, CPU 2600%
+```
+
 
 ## Testing
 Testing is very important for reliable software. Akasa currently include 100+ test cases, those test cases are collected by reading the specification and catch the functional points and limitations.
