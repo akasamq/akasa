@@ -49,7 +49,7 @@ System : Arch Linux
 # Players
 FlashMQ : v1.6.9
   Akasa : v0.1.0
-    EMQ : v5.2.1
+   EMQX : v5.2.1
 VerneMQ : v1.13.0
 
 # Connections (clean_session=false)
@@ -61,7 +61,7 @@ VerneMQ :  50k connections,  20GB memory
 # Message/s
 FlashMQ : 40k coonections, 600k message/s, 1.0GB memory, CPU  550%
   Akasa : 35k connections, 500k message/s, 2.3GB memory, CPU 1050%
-    EMQ : 20k connections, 300k message/s, 3.2GB memory, CPU 3000%
+   EMQX : 20k connections, 300k message/s, 3.2GB memory, CPU 3000%
 VerneMQ : 25k connections, 370k message/s, 6.0GB memory, CPU 2600%
 ```
 
