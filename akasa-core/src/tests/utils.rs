@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use async_trait::async_trait;
-use flume::bounded;
 use futures_lite::io::{AsyncRead, AsyncWrite};
 use futures_sink::Sink;
 use mqtt_proto::{v3, v5};
@@ -20,7 +19,7 @@ use tokio_util::sync::PollSender;
 
 use crate::config::Config;
 use crate::hook::{
-    Hook, HookAction, HookConnectCode, HookPublishCode, HookResult, HookService, HookSubscribeCode,
+    Hook, HookAction, HookConnectCode, HookPublishCode, HookResult, HookSubscribeCode,
     HookUnsubscribeCode,
 };
 use crate::server::{handle_accept, rt_tokio::TokioExecutor, ConnectionArgs};
@@ -104,13 +103,6 @@ impl MockConnControl {
         let global = Arc::clone(&self.global);
 
         let hook_handler = TestHook;
-        let (hook_sender, hook_receiver) = bounded(2);
-        let hook_service = HookService::new(
-            Arc::clone(&executor),
-            hook_handler,
-            hook_receiver,
-            Arc::clone(&global),
-        );
         let conn_args = ConnectionArgs {
             addr: conn.bind,
             proxy: false,
@@ -118,12 +110,11 @@ impl MockConnControl {
             websocket: false,
             tls_acceptor: None,
         };
-        tokio::spawn(hook_service.start());
         tokio::spawn(handle_accept(
             conn,
             conn_args,
             peer,
-            hook_sender,
+            hook_handler,
             executor,
             global,
         ))

@@ -15,7 +15,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use async_tungstenite::{tungstenite::Message, WebSocketStream};
-use flume::{bounded, Sender};
+use flume::bounded;
 use futures_lite::{
     io::{AsyncRead, AsyncWrite},
     FutureExt, Stream,
@@ -26,7 +26,7 @@ use mqtt_proto::{decode_raw_header, v3, v5, Error, Protocol};
 use openssl::ssl::{NameType, Ssl, SslAcceptor, SslFiletype, SslMethod, SslVerifyMode};
 
 use crate::config::TlsListener;
-use crate::hook::HookRequest;
+use crate::hook::Hook;
 use crate::protocols::mqtt;
 use crate::state::{Executor, GlobalState};
 
@@ -36,11 +36,15 @@ use tls::SslStream;
 
 const CONNECT_TIMEOUT_SECS: u64 = 5;
 
-pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
+pub async fn handle_accept<
+    T: AsyncRead + AsyncWrite + Unpin,
+    E: Executor,
+    H: Hook + Clone + Send + Sync + 'static,
+>(
     mut conn: T,
     conn_args: ConnectionArgs,
     mut peer: SocketAddr,
-    hook_requests: Sender<HookRequest>,
+    hook_handler: H,
     executor: E,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
@@ -166,7 +170,7 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
                 header,
                 protocol,
                 timeout_receiver,
-                hook_requests,
+                hook_handler,
                 executor,
                 global,
             )
@@ -180,7 +184,7 @@ pub async fn handle_accept<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
                 header,
                 protocol,
                 timeout_receiver,
-                hook_requests,
+                hook_handler,
                 executor,
                 global,
             )
