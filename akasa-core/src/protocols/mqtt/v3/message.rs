@@ -17,11 +17,10 @@ use mqtt_proto::{
     },
     Error, Pid, Protocol, QoS, QosPid,
 };
-use tokio::sync::oneshot;
 
 use crate::hook::{
-    HookAction, HookReceipt, HookRequest, LockedHookContext, PublishAction, SubscribeAction,
-    UnsubscribeAction,
+    handle_request, Hook, HookAction, HookRequest, HookResponse, LockedHookContext, PublishAction,
+    SubscribeAction, UnsubscribeAction,
 };
 use crate::protocols::mqtt::{
     BroadcastPackets, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
@@ -44,13 +43,17 @@ use super::{
 };
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
+pub async fn handle_connection<
+    T: AsyncRead + AsyncWrite + Unpin,
+    E: Executor,
+    H: Hook + Clone + Send + Sync + 'static,
+>(
     conn: T,
     peer: SocketAddr,
     header: Header,
     protocol: Protocol,
     timeout_receiver: Receiver<()>,
-    hook_requests: Sender<HookRequest>,
+    hook_handler: H,
     executor: E,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
@@ -60,7 +63,7 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
         header,
         protocol,
         timeout_receiver,
-        &hook_requests,
+        &hook_handler,
         &executor,
         &global,
     )
@@ -102,13 +105,17 @@ pub async fn handle_connection<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
+async fn handle_online<
+    T: AsyncRead + AsyncWrite + Unpin,
+    E: Executor,
+    H: Hook + Clone + Send + Sync + 'static,
+>(
     mut conn: T,
     peer: SocketAddr,
     _header: Header,
     protocol: Protocol,
     timeout_receiver: Receiver<()>,
-    hook_requests: &Sender<HookRequest>,
+    hook_handler: &H,
     executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<Option<(Session, ClientReceiver)>> {
@@ -133,7 +140,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 
     // Run before connect hook
     if global.config.hook.enable_before_connect {
-        before_connect_hook(peer, &packet, hook_requests).await?;
+        before_connect_hook(peer, &packet, hook_handler, global).await?;
     }
 
     let session_present = handle_connect(
@@ -153,7 +160,7 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
 
     // Run after connect hook
     if global.config.hook.enable_before_connect {
-        after_connect_hook(&mut session, session_present, hook_requests, global).await?;
+        after_connect_hook(&mut session, session_present, hook_handler, global).await?;
     }
 
     for packet in after_handle_packet(&mut session) {
@@ -173,10 +180,10 @@ async fn handle_online<T: AsyncRead + AsyncWrite + Unpin, E: Executor>(
     let online_loop = OnlineLoop::new(
         &mut session,
         global,
+        hook_handler,
         &receiver,
         receiver.control.stream(),
         receiver.normal.stream(),
-        hook_requests.sink(),
         &mut conn,
         &mut taken_over,
         PollPacketState::default(),
@@ -294,7 +301,7 @@ impl OnlineSession for Session {
         packet: Self::Packet,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
-    ) -> Result<Option<(HookRequest, oneshot::Receiver<HookReceipt>)>, Option<io::Error>> {
+    ) -> Result<Option<HookRequest>, Option<io::Error>> {
         if encode_len > global.config.max_packet_size_server as usize {
             log::debug!(
                 "packet too large, size={}, max={}",
@@ -308,15 +315,13 @@ impl OnlineSession for Session {
             Packet::Publish(pkt) => {
                 if global.config.hook.enable_publish {
                     let locked_hook_context = LockedHookContext::new(self, write_packets);
-                    let (hook_sender, hook_receiver) = oneshot::channel();
                     let hook_request = HookRequest::V3Publish {
                         context: locked_hook_context,
                         encode_len,
                         packet_body,
                         publish: pkt,
-                        sender: hook_sender,
                     };
-                    return Ok(Some((hook_request, hook_receiver)));
+                    return Ok(Some(hook_request));
                 } else if let Some(packet) = handle_publish(self, pkt, global).map_err(Some)? {
                     write_packets.push_back(packet.into());
                 }
@@ -328,15 +333,13 @@ impl OnlineSession for Session {
             Packet::Subscribe(pkt) => {
                 if global.config.hook.enable_subscribe {
                     let locked_hook_context = LockedHookContext::new(self, write_packets);
-                    let (hook_sender, hook_receiver) = oneshot::channel();
                     let hook_request = HookRequest::V3Subscribe {
                         context: locked_hook_context,
                         encode_len,
                         packet_body,
                         subscribe: pkt,
-                        sender: hook_sender,
                     };
-                    return Ok(Some((hook_request, hook_receiver)));
+                    return Ok(Some(hook_request));
                 } else {
                     let retain_packets = handle_subscribe(self, &pkt, global)?;
                     write_packets.extend(retain_packets.into_iter().map(WritePacket::Packet));
@@ -345,15 +348,13 @@ impl OnlineSession for Session {
             Packet::Unsubscribe(pkt) => {
                 if global.config.hook.enable_unsubscribe {
                     let locked_hook_context = LockedHookContext::new(self, write_packets);
-                    let (hook_sender, hook_receiver) = oneshot::channel();
                     let hook_request = HookRequest::V3Unsubscribe {
                         context: locked_hook_context,
                         encode_len,
                         packet_body,
                         unsubscribe: pkt,
-                        sender: hook_sender,
                     };
-                    return Ok(Some((hook_request, hook_receiver)));
+                    return Ok(Some(hook_request));
                 } else {
                     write_packets.push_back(handle_unsubscribe(self, &pkt, global).into());
                 }
@@ -650,27 +651,19 @@ fn handle_normal(
     }
 }
 
-async fn before_connect_hook(
+async fn before_connect_hook<H: Hook + Clone + Send + Sync>(
     peer: SocketAddr,
     packet: &Connect,
-    hook_requests: &Sender<HookRequest>,
+    hook_handler: &H,
+    global: &Arc<GlobalState>,
 ) -> io::Result<()> {
-    let (hook_tx, hook_rx) = oneshot::channel();
     let hook_request = HookRequest::V3BeforeConnect {
         peer,
         connect: packet.clone(),
-        sender: hook_tx,
     };
-    if let Err(err) = hook_requests.send_async(hook_request).await {
-        log::error!("No hook service found: {err:?}");
-        return Err(io::ErrorKind::InvalidData.into());
-    }
-    let code = match hook_rx.await {
-        Ok(resp) => resp?.to_v3_code(),
-        Err(err) => {
-            log::error!("Hook service stopped: {err:?}");
-            return Err(io::ErrorKind::InvalidData.into());
-        }
+    let code = match handle_request(hook_request, hook_handler.clone(), global.clone()).await {
+        HookResponse::BeforeConnect(result) => result?.to_v3_code(),
+        _ => panic!("invalid response"),
     };
     if code != ConnectReturnCode::Accepted {
         return Err(io::ErrorKind::InvalidData.into());
@@ -678,29 +671,20 @@ async fn before_connect_hook(
     Ok(())
 }
 
-async fn after_connect_hook(
+async fn after_connect_hook<H: Hook + Clone + Send + Sync>(
     session: &mut Session,
     session_present: bool,
-    hook_requests: &Sender<HookRequest>,
+    hook_handler: &H,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     let locked_hook_context = LockedHookContext::new(session, &mut Default::default());
-    let (hook_tx, hook_rx) = oneshot::channel();
     let hook_request = HookRequest::V3AfterConnect {
         context: locked_hook_context,
         session_present,
-        sender: hook_tx,
     };
-    if let Err(err) = hook_requests.send_async(hook_request).await {
-        log::error!("No hook service found: {err:?}");
-        return Err(io::ErrorKind::InvalidData.into());
-    }
-    let actions = match hook_rx.await {
-        Ok(resp) => resp?,
-        Err(err) => {
-            log::error!("Hook service stopped: {err:?}");
-            return Err(io::ErrorKind::InvalidData.into());
-        }
+    let actions = match handle_request(hook_request, hook_handler.clone(), global.clone()).await {
+        HookResponse::AfterConnect(result) => result?,
+        _ => panic!("invalid response"),
     };
     for action in actions {
         session.apply_action(action, global)?;

@@ -141,7 +141,7 @@ pub enum SharedSubscriptionMode {
     HashTopicName,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct HookConfig {
     pub enable_before_connect: bool,
     pub enable_after_connect: bool,
@@ -150,17 +150,17 @@ pub struct HookConfig {
     pub enable_unsubscribe: bool,
 }
 
-impl Default for HookConfig {
-    fn default() -> HookConfig {
-        HookConfig {
-            enable_before_connect: false,
-            enable_after_connect: false,
-            enable_publish: false,
-            enable_subscribe: false,
-            enable_unsubscribe: false,
-        }
-    }
-}
+// impl Default for HookConfig {
+//     fn default() -> HookConfig {
+//         HookConfig {
+//             enable_before_connect: false,
+//             enable_after_connect: false,
+//             enable_publish: false,
+//             enable_subscribe: false,
+//             enable_unsubscribe: false,
+//         }
+//     }
+// }
 
 impl Default for Config {
     fn default() -> Config {

@@ -18,22 +18,22 @@ use futures_lite::{
 use futures_sink::Sink;
 use hashbrown::HashMap;
 use mqtt_proto::{v3, v5, GenericPollPacket, GenericPollPacketState, PollHeader, QoS, VarBytes};
-use tokio::sync::oneshot;
 
-use crate::hook::{HookAction, HookReceipt, HookRequest};
+use crate::hook::{handle_request, Hook, HookAction, HookRequest, HookResponse};
 use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
-pub struct OnlineLoop<'a, C, S, H>
+pub struct OnlineLoop<'a, C, S, H, Hk>
 where
     S: OnlineSession,
     S::SessionState: 'static,
+    Hk: Hook + Clone + Send + Sync,
 {
     session: &'a mut S,
     global: &'a Arc<GlobalState>,
+    handler: &'a Hk,
     receiver: &'a ClientReceiver,
     control_stream: RecvStream<'a, ControlMessage>,
     normal_stream: RecvStream<'a, (ClientId, NormalMessage)>,
-    hook_sink: SendSink<'a, HookRequest>,
     conn: &'a mut C,
     taken_over: &'a mut bool,
 
@@ -41,25 +41,26 @@ where
     normal_stream_unfinish: bool,
 
     packet_state: GenericPollPacketState<H>,
+    hook_fut: Option<Pin<Box<dyn Future<Output = HookResponse> + Send + 'static>>>,
     session_state_sender: Option<(SendSink<'static, S::SessionState>, bool)>,
-    hook_message: Option<(Option<HookRequest>, bool, oneshot::Receiver<HookReceipt>)>,
     write_packets_max: usize,
     write_packets: VecDeque<WritePacket<S::Packet>>,
 }
 
-impl<'a, C, S, H> OnlineLoop<'a, C, S, H>
+impl<'a, C, S, H, Hk> OnlineLoop<'a, C, S, H, Hk>
 where
     S: OnlineSession,
     S::SessionState: 'static,
+    Hk: Hook + Clone + Send + Sync,
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         session: &'a mut S,
         global: &'a Arc<GlobalState>,
+        handler: &'a Hk,
         receiver: &'a ClientReceiver,
         control_stream: RecvStream<'a, ControlMessage>,
         normal_stream: RecvStream<'a, (ClientId, NormalMessage)>,
-        hook_sink: SendSink<'a, HookRequest>,
         conn: &'a mut C,
         taken_over: &'a mut bool,
         packet_state: GenericPollPacketState<H>,
@@ -67,30 +68,31 @@ where
         OnlineLoop {
             session,
             global,
+            handler,
             receiver,
             control_stream,
             normal_stream,
-            hook_sink,
             conn,
             taken_over,
             packet_state,
             read_unfinish: false,
             normal_stream_unfinish: false,
-            hook_message: None,
             write_packets_max: 4,
             write_packets: VecDeque::with_capacity(4),
             session_state_sender: None,
+            hook_fut: None,
         }
     }
 }
 
-impl<'a, C, S, H> Future for OnlineLoop<'a, C, S, H>
+impl<'a, C, S, H, Hk> Future for OnlineLoop<'a, C, S, H, Hk>
 where
     C: AsyncRead + AsyncWrite + Unpin, // connection
     S: OnlineSession,
     H: PollHeader<Packet = S::Packet, Error = S::Error> + Copy + Debug + Unpin,
     S::Error: From<io::Error> + From<mqtt_proto::Error> + Debug,
     S::Packet: MqttPacket + Debug + Unpin,
+    Hk: Hook + Clone + Send + Sync + 'static,
 {
     type Output = Option<io::Error>;
 
@@ -112,17 +114,17 @@ where
 
         let OnlineLoop {
             ref mut session,
+            handler,
             global,
             receiver,
             ref mut control_stream,
             ref mut normal_stream,
-            ref mut hook_sink,
             ref mut conn,
             ref mut read_unfinish,
             ref mut normal_stream_unfinish,
             packet_state,
             session_state_sender,
-            hook_message,
+            hook_fut,
             write_packets_max,
             write_packets,
             taken_over,
@@ -131,56 +133,21 @@ where
         let current_client_id = session.client_id();
         log::trace!("@@@@ [{}] poll()", current_client_id);
 
-        if let Some((request_opt, flushed, hook_receiver)) = hook_message.as_mut() {
-            // NOTE: `session` and `write_packets` are
-            // locked into hook_request, so currently
-            // handle hook logic is the highest priority.
-            if request_opt.is_some() {
-                match Pin::new(&mut *hook_sink).poll_ready(cx) {
-                    Poll::Ready(Ok(())) => {}
-                    Poll::Ready(Err(_)) => {
-                        log::error!("hook service stopped");
-                        return Poll::Ready(Some(io::ErrorKind::InvalidData.into()));
-                    }
-                    Poll::Pending => return Poll::Pending,
-                }
-                let hook_request = request_opt.take().expect("some");
-                if Pin::new(&mut *hook_sink).start_send(hook_request).is_err() {
-                    log::error!("hook service stopped");
-                    return Poll::Ready(Some(io::ErrorKind::InvalidData.into()));
+        if let Some(fut) = hook_fut.as_mut() {
+            let actions = match fut.as_mut().poll(cx) {
+                Poll::Ready(resp) => match resp {
+                    HookResponse::Normal(Ok(actions)) => actions,
+                    HookResponse::Normal(Err(err_opt)) => return Poll::Ready(err_opt),
+                    _ => panic!("invalid hook response"),
+                },
+                Poll::Pending => return Poll::Pending,
+            };
+            for action in actions {
+                if let Err(err) = session.apply_action(action, global) {
+                    return Poll::Ready(Some(err));
                 }
             }
-            if !(*flushed) {
-                match Pin::new(&mut *hook_sink).poll_flush(cx) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Ok(())) => *flushed = true,
-                    Poll::Ready(Err(_err)) => {
-                        log::error!("hook service stopped");
-                        return Poll::Ready(Some(io::ErrorKind::InvalidData.into()));
-                    }
-                }
-            }
-            if *flushed {
-                match Pin::new(&mut *hook_receiver).poll(cx) {
-                    Poll::Ready(result) => match result {
-                        Ok(Ok(actions)) => {
-                            log::debug!("hook acked (follow poll)");
-                            for action in actions {
-                                if let Err(err) = session.apply_action(action, global) {
-                                    return Poll::Ready(Some(err));
-                                }
-                            }
-                            *hook_message = None;
-                        }
-                        Ok(Err(err_opt)) => return Poll::Ready(err_opt),
-                        Err(_err) => {
-                            log::error!("hook service stopped");
-                            return Poll::Ready(Some(io::ErrorKind::InvalidData.into()));
-                        }
-                    },
-                    Poll::Pending => return Poll::Pending,
-                }
-            }
+            session.after_handle_packet(write_packets);
         }
 
         // Send SessionState to new connection (been taken over)
@@ -283,70 +250,14 @@ where
                         write_packets,
                         global,
                     ) {
-                        Ok(Some((hook_request, mut hook_receiver))) => {
-                            match Pin::new(&mut *hook_sink).poll_ready(cx) {
-                                Poll::Ready(Ok(())) => {}
-                                Poll::Ready(Err(_)) => {
-                                    log::error!("hook service stopped");
-                                    return Poll::Ready(Some(io::ErrorKind::InvalidData.into()));
-                                }
-                                Poll::Pending => {
-                                    *hook_message =
-                                        Some((Some(hook_request), false, hook_receiver));
-                                    // NOTE: `session` and `write_packets` are
-                                    // locked into hook_request, so currently
-                                    // handle hook logic is the highest priority.
-                                    return Poll::Pending;
-                                }
-                            }
-                            if Pin::new(&mut *hook_sink).start_send(hook_request).is_err() {
-                                log::error!("hook service stopped");
-                                return Poll::Ready(Some(io::ErrorKind::InvalidData.into()));
-                            }
-                            let flushed = match Pin::new(&mut *hook_sink).poll_flush(cx) {
-                                Poll::Pending => false,
-                                Poll::Ready(Ok(())) => true,
-                                Poll::Ready(Err(_err)) => {
-                                    log::error!("hook service stopped");
-                                    return Poll::Ready(Some(io::ErrorKind::InvalidData.into()));
-                                }
-                            };
-                            if flushed {
-                                match Pin::new(&mut hook_receiver).poll(cx) {
-                                    Poll::Ready(result) => match result {
-                                        Ok(Ok(actions)) => {
-                                            log::debug!("hook acked");
-                                            for action in actions {
-                                                if let Err(err) =
-                                                    session.apply_action(action, global)
-                                                {
-                                                    return Poll::Ready(Some(err));
-                                                }
-                                            }
-                                        }
-                                        Ok(Err(err_opt)) => return Poll::Ready(err_opt),
-                                        Err(_err) => {
-                                            log::error!("hook service stopped");
-                                            return Poll::Ready(Some(
-                                                io::ErrorKind::InvalidData.into(),
-                                            ));
-                                        }
-                                    },
-                                    Poll::Pending => {
-                                        // NOTE: `session` and `write_packets` are
-                                        // locked into hook_request, so currently
-                                        // handle hook logic is the highest priority.
-                                        *hook_message = Some((None, true, hook_receiver));
-                                        return Poll::Pending;
-                                    }
-                                }
-                            } else {
-                                // NOTE: `session` and `write_packets` are
-                                // locked into hook_request, so currently
-                                // handle hook logic is the highest priority.
-                                *hook_message = Some((None, false, hook_receiver));
-                                return Poll::Pending;
-                            }
+                        Ok(Some(request)) => {
+                            *hook_fut = Some(Box::pin(handle_request(
+                                request,
+                                handler.clone(),
+                                global.clone(),
+                            )));
+                            cx.waker().wake_by_ref();
+                            return Poll::Pending;
                         }
                         Ok(None) => {}
                         Err(err_opt) => return Poll::Ready(err_opt),
@@ -712,7 +623,7 @@ pub trait OnlineSession {
         packet: Self::Packet,
         write_packets: &mut VecDeque<WritePacket<Self::Packet>>,
         global: &Arc<GlobalState>,
-    ) -> Result<Option<(HookRequest, oneshot::Receiver<HookReceipt>)>, Option<io::Error>>;
+    ) -> Result<Option<HookRequest>, Option<io::Error>>;
     fn after_handle_packet(&mut self, write_packets: &mut VecDeque<WritePacket<Self::Packet>>);
     fn apply_action(&mut self, action: HookAction, global: &Arc<GlobalState>) -> io::Result<()>;
 

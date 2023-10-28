@@ -10,8 +10,8 @@ mod tests;
 
 pub use crate::config::Config;
 pub use crate::hook::{
-    Hook, HookAction, HookConnectCode, HookError, HookPublishCode, HookRequest, HookResult,
-    HookService, HookSubscribeCode, HookUnsubscribeCode, PublishAction, SubscribeAction,
+    Hook, HookAction, HookConnectCode, HookError, HookPublishCode, HookRequest, HookResponse,
+    HookResult, HookSubscribeCode, HookUnsubscribeCode, PublishAction, SubscribeAction,
     UnsubscribeAction,
 };
 pub use crate::protocols::mqtt::{

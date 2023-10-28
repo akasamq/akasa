@@ -185,7 +185,7 @@ pub(crate) fn send_publish(session: &mut Session, msg: SendPublish, global: &Arc
            payload : {:?}
                qos : {:?}"#,
                 old_content.client_identifier,
-                &old_content.topic_name.deref().deref(),
+                &old_content.topic_name.deref(),
                 old_content.payload.as_ref(),
                 old_content.qos,
             );

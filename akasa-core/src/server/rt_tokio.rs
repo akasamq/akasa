@@ -1,15 +1,13 @@
-use std::cmp;
 use std::future::Future;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
-use flume::{bounded, Sender};
 use tokio::{net::TcpListener, runtime::Runtime};
 
 use super::{build_tls_context, handle_accept, ConnectionArgs, IoWrapper};
 use crate::config::{Listener, ProxyMode, TlsListener};
-use crate::hook::{Hook, HookRequest, HookService};
+use crate::hook::Hook;
 use crate::state::{Executor, GlobalState};
 
 pub fn start<H>(hook_handler: H, global: Arc<GlobalState>) -> io::Result<()>
@@ -17,7 +15,6 @@ where
     H: Hook + Clone + Send + Sync + 'static,
 {
     let rt = Runtime::new()?;
-    let (hook_sender, hook_receiver) = bounded(64);
 
     let mqtts_tls_acceptor = global
         .config
@@ -42,17 +39,6 @@ where
 
     rt.block_on(async move {
         let executor = Arc::new(TokioExecutor {});
-
-        let hook_service_tasks = cmp::max(num_cpus::get() / 2, 1);
-        for _ in 0..hook_service_tasks {
-            let hook_service = HookService::new(
-                Arc::clone(&executor),
-                hook_handler.clone(),
-                hook_receiver.clone(),
-                Arc::clone(&global),
-            );
-            tokio::spawn(hook_service.start());
-        }
 
         let listeners = &global.config.listeners;
         let tasks: Vec<_> = [
@@ -101,14 +87,15 @@ where
         .flatten()
         .map(|conn_args| {
             let global = Arc::clone(&global);
-            let hook_sender = hook_sender.clone();
+            let hook_handler = hook_handler.clone();
             let executor = Arc::clone(&executor);
             tokio::spawn(async move {
                 loop {
                     let global = Arc::clone(&global);
-                    let hook_sender = hook_sender.clone();
+                    let hook_handler = hook_handler.clone();
                     let executor = Arc::clone(&executor);
-                    if let Err(err) = listen(conn_args.clone(), hook_sender, executor, global).await
+                    if let Err(err) =
+                        listen(conn_args.clone(), hook_handler, executor, global).await
                     {
                         log::error!("Listen error: {:?}", err);
                         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -128,9 +115,9 @@ where
     Ok(())
 }
 
-async fn listen<E: Executor + Send + Sync + 'static>(
+async fn listen<E: Executor + Send + Sync + 'static, H: Hook + Clone + Send + Sync + 'static>(
     conn_args: ConnectionArgs,
-    hook_sender: Sender<HookRequest>,
+    hook_handler: H,
     executor: Arc<E>,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
@@ -153,7 +140,7 @@ async fn listen<E: Executor + Send + Sync + 'static>(
         log::debug!("{} connected", peer,);
         let conn_wrapper = IoWrapper::new(conn);
         let conn_args = conn_args.clone();
-        let hook_requests = hook_sender.clone();
+        let hook_handler = hook_handler.clone();
         let executor = Arc::clone(&executor);
         let global = Arc::clone(&global);
         tokio::spawn(async move {
@@ -161,7 +148,7 @@ async fn listen<E: Executor + Send + Sync + 'static>(
                 conn_wrapper,
                 conn_args,
                 peer,
-                hook_requests,
+                hook_handler,
                 executor,
                 Arc::clone(&global),
             )
