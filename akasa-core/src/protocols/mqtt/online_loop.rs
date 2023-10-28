@@ -135,11 +135,14 @@ where
 
         if let Some(fut) = hook_fut.as_mut() {
             let actions = match fut.as_mut().poll(cx) {
-                Poll::Ready(resp) => match resp {
-                    HookResponse::Normal(Ok(actions)) => actions,
-                    HookResponse::Normal(Err(err_opt)) => return Poll::Ready(err_opt),
-                    _ => panic!("invalid hook response"),
-                },
+                Poll::Ready(resp) => {
+                    *hook_fut = None;
+                    match resp {
+                        HookResponse::Normal(Ok(actions)) => actions,
+                        HookResponse::Normal(Err(err_opt)) => return Poll::Ready(err_opt),
+                        _ => panic!("invalid hook response"),
+                    }
+                }
                 Poll::Pending => return Poll::Pending,
             };
             for action in actions {
