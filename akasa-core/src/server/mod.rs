@@ -134,6 +134,13 @@ pub async fn handle_accept<
             tls_wrapper,
             |req: &http::Request<_>, mut resp: http::Response<_>| {
                 if let Some(protocol) = req.headers().get("Sec-WebSocket-Protocol") {
+                    // see: [MQTT-6.0.0-3]
+                    if protocol != "mqtt" {
+                        log::info!("invalid WebSocket subprotocol name: {:?}", protocol);
+                        return Err(http::Response::new(Some(
+                            "invalid WebSocket subprotocol name".to_string(),
+                        )));
+                    }
                     resp.headers_mut()
                         .insert("Sec-WebSocket-Protocol", protocol.clone());
                 }
