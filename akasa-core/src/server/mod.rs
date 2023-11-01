@@ -14,7 +14,10 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use async_tungstenite::{tungstenite::Message, WebSocketStream};
+use async_tungstenite::{
+    tungstenite::{http, Message},
+    WebSocketStream,
+};
 use flume::bounded;
 use futures_lite::{
     io::{AsyncRead, AsyncWrite},
@@ -127,7 +130,18 @@ pub async fn handle_accept<
 
     // Handle WebSocket
     let mut ws_wrapper = if conn_args.websocket {
-        let stream = match async_tungstenite::accept_async(tls_wrapper).await {
+        let stream = match async_tungstenite::accept_hdr_async(
+            tls_wrapper,
+            |req: &http::Request<_>, mut resp: http::Response<_>| {
+                if let Some(protocol) = req.headers().get("Sec-WebSocket-Protocol") {
+                    resp.headers_mut()
+                        .insert("Sec-WebSocket-Protocol", protocol.clone());
+                }
+                Ok(resp)
+            },
+        )
+        .await
+        {
             Ok(stream) => stream,
             Err(err) => {
                 log::warn!("Accept websocket connection error: {:?}", err);
@@ -344,7 +358,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WebSocketWrapper<S> {
             } => {
                 fn copy_data(buf: &mut [u8], data: &[u8], data_idx: &mut usize) -> usize {
                     let amt = cmp::min(data.len() - *data_idx, buf.len());
-                    buf.copy_from_slice(&data[*data_idx..*data_idx + amt]);
+                    buf[0..amt].copy_from_slice(&data[*data_idx..*data_idx + amt]);
                     *data_idx += amt;
                     amt
                 }
@@ -358,6 +372,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WebSocketWrapper<S> {
                     match Pin::new(&mut *stream).poll_next(cx) {
                         Poll::Ready(Some(Ok(msg))) => match msg {
                             Message::Binary(bin) => {
+                                if bin.is_empty() {
+                                    cx.waker().wake_by_ref();
+                                    return Poll::Pending;
+                                }
                                 *read_data = bin;
                                 *read_data_idx = 0;
                                 return Poll::Ready(Ok(copy_data(buf, read_data, read_data_idx)));
