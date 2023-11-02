@@ -380,8 +380,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WebSocketWrapper<S> {
                         Poll::Ready(Some(Ok(msg))) => match msg {
                             Message::Binary(bin) => {
                                 if bin.is_empty() {
-                                    cx.waker().wake_by_ref();
-                                    return Poll::Pending;
+                                    continue;
                                 }
                                 *read_data = bin;
                                 *read_data_idx = 0;
