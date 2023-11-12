@@ -2,11 +2,12 @@ use std::mem;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use dashmap::DashMap;
+use hashbrown::HashMap;
 use mqtt_proto::{
     v5::PublishProperties, QoS, TopicName, MATCH_ALL_CHAR, MATCH_ALL_STR, MATCH_ONE_CHAR,
     MATCH_ONE_STR,
 };
+use parking_lot::RwLock;
 
 use super::route::split_topic;
 
@@ -18,7 +19,7 @@ pub struct RetainTable {
 #[derive(Debug, Default)]
 struct RetainNode {
     content: Option<Arc<RetainContent>>,
-    nodes: Arc<DashMap<String, RetainNode>>,
+    nodes: Arc<RwLock<HashMap<String, RetainNode>>>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -59,7 +60,7 @@ impl RetainTable {
 
 impl RetainNode {
     fn is_empty(&self) -> bool {
-        self.content.is_none() && self.nodes.is_empty()
+        self.content.is_none() && self.nodes.read().is_empty()
     }
 
     fn get_matches(
@@ -72,9 +73,9 @@ impl RetainNode {
         match prev_item {
             MATCH_ALL_STR => {
                 assert!(filter_items.is_none(), "invalid topic filter");
-                for pair in self.nodes.iter() {
-                    pair.value()
-                        .get_matches(MATCH_ALL_STR, None, wildcard_first, retains);
+                let nodes = self.nodes.read();
+                for node in nodes.values() {
+                    node.get_matches(MATCH_ALL_STR, None, wildcard_first, retains);
                 }
                 // Topic name "abc" will match topic filter "abc/#", since "#" also represent parent level.
                 if let Some(content) = self.content.as_ref() {
@@ -84,14 +85,14 @@ impl RetainNode {
                 }
             }
             MATCH_ONE_STR => {
+                let nodes = self.nodes.read();
                 if let Some((filter_item, rest_items)) = filter_items.map(split_topic) {
-                    for pair in self.nodes.iter() {
-                        pair.value()
-                            .get_matches(filter_item, rest_items, wildcard_first, retains);
+                    for node in nodes.values() {
+                        node.get_matches(filter_item, rest_items, wildcard_first, retains);
                     }
                 } else {
-                    for pair in self.nodes.iter() {
-                        if let Some(content) = pair.value().content.as_ref() {
+                    for node in nodes.values() {
+                        if let Some(content) = node.content.as_ref() {
                             if !(content.topic_name.starts_with('$') && wildcard_first) {
                                 retains.push(Arc::clone(content));
                             }
@@ -100,11 +101,11 @@ impl RetainNode {
                 }
             }
             _ => {
-                if let Some(pair) = self.nodes.get(prev_item) {
+                let nodes = self.nodes.read();
+                if let Some(node) = nodes.get(prev_item) {
                     if let Some((filter_item, rest_items)) = filter_items.map(split_topic) {
-                        pair.value()
-                            .get_matches(filter_item, rest_items, wildcard_first, retains);
-                    } else if let Some(content) = pair.value().content.as_ref() {
+                        node.get_matches(filter_item, rest_items, wildcard_first, retains);
+                    } else if let Some(content) = node.content.as_ref() {
                         if !(content.topic_name.starts_with('$') && wildcard_first) {
                             retains.push(Arc::clone(content));
                         }
@@ -120,11 +121,12 @@ impl RetainNode {
         topic_items: Option<&str>,
         content: Arc<RetainContent>,
     ) -> Option<Arc<RetainContent>> {
-        if let Some(mut pair) = self.nodes.get_mut(prev_item) {
+        let mut nodes = self.nodes.write();
+        if let Some(node) = nodes.get_mut(prev_item) {
             if let Some((topic_item, rest_items)) = topic_items.map(split_topic) {
-                pair.value().insert(topic_item, rest_items, content)
+                node.insert(topic_item, rest_items, content)
             } else {
-                mem::replace(&mut pair.value_mut().content, Some(content))
+                mem::replace(&mut node.content, Some(content))
             }
         } else {
             let mut new_node = RetainNode::default();
@@ -133,7 +135,7 @@ impl RetainNode {
             } else {
                 new_node.content = Some(content);
             }
-            self.nodes.insert(prev_item.to_string(), new_node);
+            nodes.insert(prev_item.to_string(), new_node);
             None
         }
     }
@@ -141,16 +143,17 @@ impl RetainNode {
     fn remove(&self, prev_item: &str, topic_items: Option<&str>) -> Option<Arc<RetainContent>> {
         let mut old_content = None;
         let mut remove_node = false;
-        if let Some(mut pair) = self.nodes.get_mut(prev_item) {
+        let mut nodes = self.nodes.write();
+        if let Some(node) = nodes.get_mut(prev_item) {
             old_content = if let Some((topic_item, rest_items)) = topic_items.map(split_topic) {
-                pair.value().remove(topic_item, rest_items)
+                node.remove(topic_item, rest_items)
             } else {
-                pair.value_mut().content.take()
+                node.content.take()
             };
-            remove_node = pair.value().is_empty();
+            remove_node = node.is_empty();
         }
         if remove_node {
-            self.nodes.remove(prev_item);
+            nodes.remove(prev_item);
         }
         old_content
     }
