@@ -254,13 +254,26 @@ where
                         global,
                     ) {
                         Ok(Some(request)) => {
-                            *hook_fut = Some(Box::pin(handle_request(
-                                request,
-                                handler.clone(),
-                                global.clone(),
-                            )));
-                            cx.waker().wake_by_ref();
-                            return Poll::Pending;
+                            let mut fut =
+                                Box::pin(handle_request(request, handler.clone(), global.clone()));
+                            let actions = match fut.as_mut().poll(cx) {
+                                Poll::Ready(resp) => match resp {
+                                    HookResponse::Normal(Ok(actions)) => actions,
+                                    HookResponse::Normal(Err(err_opt)) => {
+                                        return Poll::Ready(err_opt)
+                                    }
+                                    _ => panic!("invalid hook response"),
+                                },
+                                Poll::Pending => {
+                                    *hook_fut = Some(fut);
+                                    return Poll::Pending;
+                                }
+                            };
+                            for action in actions {
+                                if let Err(err) = session.apply_action(action, global) {
+                                    return Poll::Ready(Some(err));
+                                }
+                            }
                         }
                         Ok(None) => {}
                         Err(err_opt) => return Poll::Ready(err_opt),
