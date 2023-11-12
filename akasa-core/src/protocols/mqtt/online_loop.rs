@@ -390,11 +390,11 @@ where
         {
             write_packets.shrink_to(*write_packets_max);
         }
-        if !pendings.write {
+        if have_write && !pendings.write {
             match Pin::new(&mut *conn).poll_flush(cx) {
                 Poll::Ready(Ok(())) => {}
                 Poll::Ready(Err(err)) => return Poll::Ready(Some(err)),
-                Poll::Pending => pendings.write = true,
+                Poll::Pending => {}
             }
         }
 
@@ -457,6 +457,7 @@ where
                         // channel is full
                         consume_cnt -= 1;
                         info.msgs.push_front(msg);
+                        pendings.broadcast = true;
                         log::trace!("target client channel is pending: [{}]", client_id);
                         return true;
                     }
@@ -524,30 +525,17 @@ where
             normal_stream_unfinish
         );
 
-        if pendings.read
-            && pendings.control_message
-            && pendings.normal_message
-            && (pendings.write || write_packets.is_empty())
-            && (pendings.broadcast || session.broadcast_packets_cnt() == 0)
-        {
-            log::debug!("[{}] return pending", current_client_id);
-            return Poll::Pending;
-        }
-
         if have_write && (*read_unfinish || *normal_stream_unfinish) {
             log::debug!(
                 "[{}] yield because write processed (producer unfinish)",
                 current_client_id
             );
-            *read_unfinish = false;
-            *normal_stream_unfinish = false;
             cx.waker().wake_by_ref();
-        } else if have_broadcast && *normal_stream_unfinish {
+        } else if have_broadcast && *read_unfinish {
             log::debug!(
                 "[{}] yield because broadcast processed (producer unfinish)",
                 current_client_id
             );
-            *normal_stream_unfinish = false;
             cx.waker().wake_by_ref();
         } else {
             log::debug!("[{}] NOT yield", current_client_id);
