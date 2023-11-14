@@ -79,8 +79,8 @@ where
             packet_state,
             read_unfinish: false,
             normal_stream_unfinish: false,
-            write_packets_max: 4,
-            write_packets: VecDeque::with_capacity(4),
+            write_packets_max: 16,
+            write_packets: VecDeque::with_capacity(16),
             session_state_sender: None,
             hook_fut: None,
         }
