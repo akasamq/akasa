@@ -56,8 +56,8 @@ FlashMQ : 250k connections, 0.9GB memory
 VerneMQ :  50k connections,  20GB memory
 
 # Message/s
-FlashMQ : 40k coonections, 600k message/s, 1.0GB memory, CPU  550%
-  Akasa : 35k connections, 500k message/s, 2.3GB memory, CPU  650%
+FlashMQ : 40k coonections, 600k message/s, 0.6GB memory, CPU  550%
+  Akasa : 40k connections, 600k message/s, 0.8GB memory, CPU  580%
    EMQX : 20k connections, 300k message/s, 3.2GB memory, CPU 3000%
 VerneMQ : 25k connections, 370k message/s, 6.0GB memory, CPU 2600%
 ```

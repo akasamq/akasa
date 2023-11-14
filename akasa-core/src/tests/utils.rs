@@ -45,6 +45,7 @@ impl GlobalState {
 pub struct MockConnControl {
     pub chan_in: Sender<Vec<u8>>,
     pub chan_out: Receiver<Vec<u8>>,
+    pub recv_data_buf: Vec<u8>,
     pub global: Arc<GlobalState>,
 }
 
@@ -70,6 +71,7 @@ impl MockConn {
         let control = MockConnControl {
             chan_in: in_tx,
             chan_out: out_rx,
+            recv_data_buf: Vec::new(),
             global,
         };
         (conn, control)
