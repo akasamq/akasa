@@ -379,7 +379,7 @@ where
                 },
                 WritePacket::Data((data, idx)) => (data, idx),
             };
-            match Pin::new(&mut *conn).poll_write(cx, data.as_ref()) {
+            match Pin::new(&mut *conn).poll_write(cx, &data.as_ref()[idx..]) {
                 Poll::Ready(Ok(size)) => {
                     have_write = true;
                     log::trace!("[{}] write {} bytes data", current_client_id, size);
