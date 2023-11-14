@@ -85,13 +85,21 @@ trait ClientV3 {
 #[async_trait]
 impl ClientV3 for MockConnControl {
     fn try_read_packet(&mut self) -> Result<Packet, TryRecvError> {
-        self.chan_out
-            .try_recv()
-            .map(|data| Packet::decode(&data).unwrap().unwrap())
+        self.chan_out.try_recv().map(|data| {
+            self.recv_data_buf.extend(data);
+            let packet = Packet::decode(&self.recv_data_buf).unwrap().unwrap();
+            self.recv_data_buf = self.recv_data_buf.split_off(packet.encode_len().unwrap());
+            packet
+        })
     }
     async fn read_packet(&mut self) -> Packet {
-        let data = self.chan_out.recv().await.unwrap();
-        Packet::decode(&data).unwrap().unwrap()
+        if self.recv_data_buf.is_empty() {
+            let data = self.chan_out.recv().await.unwrap();
+            self.recv_data_buf.extend(data);
+        }
+        let packet = Packet::decode(&self.recv_data_buf).unwrap().unwrap();
+        self.recv_data_buf = self.recv_data_buf.split_off(packet.encode_len().unwrap());
+        packet
     }
     async fn write_packet(&self, packet: Packet) {
         self.write_data(packet.encode().unwrap().as_ref().to_vec())

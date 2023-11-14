@@ -22,6 +22,8 @@ use mqtt_proto::{v3, v5, GenericPollPacket, GenericPollPacketState, PollHeader, 
 use crate::hook::{handle_request, Hook, HookAction, HookRequest, HookResponse};
 use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
+const WRITE_BATCH_SIZE: usize = 2048;
+
 pub struct OnlineLoop<'a, C, S, H, Hk>
 where
     S: OnlineSession,
@@ -215,7 +217,7 @@ where
         // Read data from client connection
         //   * Produce to: [write_packets, broadcast_packets, external_request]
         loop {
-            if write_packets.len() >= *write_packets_max
+            if too_much_write_data(write_packets, *write_packets_max)
                 || session.broadcast_packets_cnt() >= session.broadcast_packets_max()
             {
                 *read_unfinish = true;
@@ -325,7 +327,7 @@ where
         //   * Produce to: [write_packets]
         // FIXME: drop message when pending queue are full
         loop {
-            if write_packets.len() >= *write_packets_max {
+            if too_much_write_data(write_packets, *write_packets_max) {
                 *normal_stream_unfinish = true;
                 break;
             } else {
@@ -370,33 +372,52 @@ where
 
         // Write packets to client connection
         //   * Consume: [write_packets]
-        while let Some(write_packet) = write_packets.pop_front() {
-            log::trace!("[{}] encode packet: {:?}", current_client_id, write_packet);
-            let (data, mut idx) = match write_packet {
-                WritePacket::Packet(pkt) => match pkt.encode() {
-                    Ok(data) => (data, 0),
-                    Err(err) => return Poll::Ready(Some(err)),
-                },
-                WritePacket::Data((data, idx)) => (data, idx),
-            };
-            match Pin::new(&mut *conn).poll_write(cx, &data.as_ref()[idx..]) {
+        while !write_packets.is_empty() {
+            let (mut data_all, mut data_idx) = (Vec::new(), 0);
+            while let Some(write_packet) = write_packets.pop_front() {
+                log::trace!("[{}] encode packet: {:?}", current_client_id, write_packet);
+                match write_packet {
+                    // NOTE: this must be the first item
+                    WritePacket::Data((data, idx)) => {
+                        data_all = match data {
+                            VarBytes::Dynamic(d) => d,
+                            VarBytes::Fixed2(d) => d.to_vec(),
+                            VarBytes::Fixed4(d) => d.to_vec(),
+                        };
+                        data_idx = idx;
+                    }
+                    WritePacket::Packet(pkt) => match pkt.encode() {
+                        Ok(data) => data_all.extend(data.as_ref()),
+                        Err(err) => return Poll::Ready(Some(err)),
+                    },
+                }
+                // NOTE: For avoid potential memory leak
+                if data_all.len() >= WRITE_BATCH_SIZE {
+                    break;
+                }
+            }
+
+            match Pin::new(&mut *conn).poll_write(cx, &data_all[data_idx..]) {
                 Poll::Ready(Ok(size)) => {
-                    have_write = true;
                     log::trace!("[{}] write {} bytes data", current_client_id, size);
-                    idx += size;
-                    if idx < data.as_ref().len() {
-                        write_packets.push_front(WritePacket::Data((data, idx)));
+                    have_write = true;
+                    data_idx += size;
+                    if data_idx < data_all.len() {
+                        write_packets
+                            .push_front(WritePacket::Data((VarBytes::Dynamic(data_all), data_idx)));
                         break;
                     }
                 }
                 Poll::Ready(Err(err)) => return Poll::Ready(Some(err)),
                 Poll::Pending => {
-                    write_packets.push_front(WritePacket::Data((data, idx)));
+                    write_packets
+                        .push_front(WritePacket::Data((VarBytes::Dynamic(data_all), data_idx)));
                     pendings.write = true;
                     break;
                 }
             }
         }
+
         if have_write
             && write_packets.capacity() > (*write_packets_max) * 2
             && write_packets.len() <= *write_packets_max
@@ -554,6 +575,19 @@ where
             log::debug!("[{}] NOT yield", current_client_id);
         }
         Poll::Pending
+    }
+}
+
+fn too_much_write_data<P>(
+    write_packets: &VecDeque<WritePacket<P>>,
+    write_packets_max: usize,
+) -> bool {
+    if write_packets.len() >= write_packets_max {
+        true
+    } else if let Some(WritePacket::Data((VarBytes::Dynamic(data), _))) = write_packets.front() {
+        data.len() >= WRITE_BATCH_SIZE
+    } else {
+        false
     }
 }
 
