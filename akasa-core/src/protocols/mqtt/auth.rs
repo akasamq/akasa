@@ -2,7 +2,8 @@ use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::num::NonZeroU32;
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
-use dashmap::DashMap;
+use hashbrown::HashMap;
+use parking_lot::RwLock;
 use ring::{
     digest::{Context, SHA256, SHA256_OUTPUT_LEN, SHA512, SHA512_OUTPUT_LEN},
     pbkdf2::{self, PBKDF2_HMAC_SHA256, PBKDF2_HMAC_SHA512},
@@ -12,9 +13,9 @@ use crate::state::{AuthPassword, HashAlgorithm};
 
 pub const MIN_SALT_LEN: usize = 12;
 
-pub fn load_passwords<R: Read>(input: R) -> io::Result<DashMap<String, AuthPassword>> {
+pub fn load_passwords<R: Read>(input: R) -> io::Result<RwLock<HashMap<String, AuthPassword>>> {
     let reader = BufReader::with_capacity(2048, input);
-    let passwords = DashMap::new();
+    let passwords = RwLock::new(HashMap::new());
     for (line_num, line_result) in reader.lines().enumerate() {
         let line = line_result?;
         let text = line.trim();
@@ -121,7 +122,7 @@ pub fn load_passwords<R: Read>(input: R) -> io::Result<DashMap<String, AuthPassw
                 hashed_password,
                 salt,
             };
-            passwords.insert(username.to_owned(), item);
+            passwords.write().insert(username.to_owned(), item);
         } else {
             log::error!("invalid password line(#{}): {}", line_num, line);
             return Err(io::ErrorKind::InvalidData.into());
@@ -132,16 +133,16 @@ pub fn load_passwords<R: Read>(input: R) -> io::Result<DashMap<String, AuthPassw
 
 pub fn dump_passwords<W: Write>(
     output: W,
-    passwords: &DashMap<String, AuthPassword>,
+    passwords: &RwLock<HashMap<String, AuthPassword>>,
 ) -> io::Result<()> {
     let mut writer = BufWriter::new(output);
-    for item in passwords.iter() {
-        let username = item.key();
+    for item in passwords.read().iter() {
+        let username = item.0;
         let AuthPassword {
             hash_algorithm,
             hashed_password,
             salt,
-        } = item.value();
+        } = item.1;
         let base64_hashed_password = STANDARD_NO_PAD.encode(hashed_password);
         let base64_salt = STANDARD_NO_PAD.encode(salt);
         let line = match hash_algorithm {
@@ -164,11 +165,11 @@ pub fn dump_passwords<W: Write>(
 }
 
 pub fn check_password(
-    passwords: &DashMap<String, AuthPassword>,
+    passwords: &RwLock<HashMap<String, AuthPassword>>,
     username: &str,
     password: &[u8],
 ) -> bool {
-    if let Some(item) = passwords.get(username) {
+    if let Some(item) = passwords.read().get(username) {
         match item.hash_algorithm {
             HashAlgorithm::Sha256 => {
                 let mut ctx = Context::new(&SHA256);

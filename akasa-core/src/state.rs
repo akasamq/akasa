@@ -8,10 +8,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use dashmap::DashMap;
 use flume::{bounded, Receiver, Sender};
+use hashbrown::HashMap;
 use mqtt_proto::{v5::PublishProperties, Protocol, QoS, TopicFilter, TopicName};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 
 use crate::config::Config;
 use crate::protocols::mqtt::{self, RetainTable, RouteTable};
@@ -23,14 +23,14 @@ pub struct GlobalState {
     // online clients count
     online_clients: AtomicU64,
     // client internal id => (MQTT client identifier, online)
-    client_id_map: DashMap<ClientId, (String, bool)>,
+    client_id_map: RwLock<HashMap<ClientId, (String, bool)>>,
     // MQTT client identifier => client internal id
-    client_identifier_map: DashMap<String, ClientId>,
+    client_identifier_map: RwLock<HashMap<String, ClientId>>,
     // All clients (online/offline clients)
-    clients: DashMap<ClientId, ClientSender>,
+    clients: RwLock<HashMap<ClientId, ClientSender>>,
 
     pub config: Config,
-    pub auth_passwords: DashMap<String, AuthPassword>,
+    pub auth_passwords: RwLock<HashMap<String, AuthPassword>>,
 
     /// MQTT route table
     pub route_table: RouteTable,
@@ -72,12 +72,12 @@ impl GlobalState {
             // FIXME: load from db (rosksdb or sqlite3)
             next_client_id: Mutex::new(ClientId(0)),
             online_clients: AtomicU64::new(0),
-            client_id_map: DashMap::new(),
-            client_identifier_map: DashMap::new(),
-            clients: DashMap::new(),
+            client_id_map: RwLock::new(HashMap::new()),
+            client_identifier_map: RwLock::new(HashMap::new()),
+            clients: RwLock::new(HashMap::new()),
 
             config,
-            auth_passwords: DashMap::new(),
+            auth_passwords: RwLock::new(HashMap::new()),
             route_table: RouteTable::default(),
             retain_table: RetainTable::default(),
         }
@@ -90,7 +90,7 @@ impl GlobalState {
     //     self.clients.len() - *self.online_clients.lock()
     // }
     pub fn clients_count(&self) -> usize {
-        self.clients.len()
+        self.clients.read().len()
     }
 
     // When clean_session=1 and client disconnected
@@ -101,13 +101,15 @@ impl GlobalState {
     ) {
         // keep client operation atomic
         let _guard = self.next_client_id.lock();
-        if let Some((_, (client_identifier, online))) = self.client_id_map.remove(&client_id) {
-            self.client_identifier_map.remove(&client_identifier);
+        if let Some((client_identifier, online)) = self.client_id_map.write().remove(&client_id) {
+            self.client_identifier_map
+                .write()
+                .remove(&client_identifier);
             if online {
                 assert_ne!(self.online_clients.fetch_sub(1, Ordering::AcqRel), 0);
             }
         }
-        self.clients.remove(&client_id);
+        self.clients.write().remove(&client_id);
         for filter in subscribes {
             self.route_table.unsubscribe(filter, client_id);
         }
@@ -117,8 +119,8 @@ impl GlobalState {
     pub fn offline_client(&self, client_id: ClientId) {
         let _guard = self.next_client_id.lock();
         assert_ne!(self.online_clients.fetch_sub(1, Ordering::AcqRel), 0);
-        if let Some(mut pair) = self.client_id_map.get_mut(&client_id) {
-            pair.value_mut().1 = false;
+        if let Some(pair) = self.client_id_map.write().get_mut(&client_id) {
+            pair.1 = false;
         }
     }
 
@@ -127,16 +129,18 @@ impl GlobalState {
         client_id: &ClientId,
     ) -> Option<Sender<(ClientId, NormalMessage)>> {
         self.clients
+            .read()
             .get(client_id)
-            .map(|pair| pair.value().normal.clone())
+            .map(|pair| pair.normal.clone())
     }
     pub fn get_client_control_sender(
         &self,
         client_id: &ClientId,
     ) -> Option<Sender<ControlMessage>> {
         self.clients
+            .read()
             .get(client_id)
-            .map(|pair| pair.value().control.clone())
+            .map(|pair| pair.control.clone())
     }
 
     // Client connected
@@ -151,18 +155,21 @@ impl GlobalState {
             self.online_clients.fetch_add(1, Ordering::AcqRel);
             let client_id_opt: Option<ClientId> = self
                 .client_identifier_map
+                .read()
                 .get(client_identifier)
-                .map(|pair| *pair.value());
+                .copied();
             if let Some(old_id) = client_id_opt {
-                if let Some(mut pair) = self.client_id_map.get_mut(&old_id) {
-                    pair.value_mut().1 = true;
+                if let Some(pair) = self.client_id_map.write().get_mut(&old_id) {
+                    pair.1 = true;
                 }
                 self.get_client_control_sender(&old_id).unwrap()
             } else {
                 let client_id = *next_client_id;
                 self.client_id_map
+                    .write()
                     .insert(client_id, (client_identifier.to_string(), true));
                 self.client_identifier_map
+                    .write()
                     .insert(client_identifier.to_string(), client_id);
                 // FIXME: if some one subscribe topic "#" and never receive the message it will block all sender clients.
                 //   Suggestion: Add QoS0 message to pending queue
@@ -172,7 +179,7 @@ impl GlobalState {
                     normal: normal_sender,
                     control: control_sender,
                 };
-                self.clients.insert(client_id, sender);
+                self.clients.write().insert(client_id, sender);
                 next_client_id.0 += 1;
                 return Ok(AddClientReceipt::New {
                     client_id,

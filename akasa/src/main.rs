@@ -12,7 +12,8 @@ use akasa_core::{
 };
 use anyhow::{anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use dashmap::DashMap;
+use hashbrown::HashMap;
+use parking_lot::RwLock;
 use rand::{rngs::OsRng, RngCore};
 
 use default_hook::DefaultHook;
@@ -124,7 +125,7 @@ fn main() -> anyhow::Result<()> {
                     fs::File::open(path).map_err(|err| anyhow!("load passwords: {}", err))?;
                 load_passwords(file)?
             } else {
-                DashMap::new()
+                RwLock::new(HashMap::new())
             };
             let mut global_state = GlobalState::new(config);
             global_state.auth_passwords = auth_passwords;
@@ -174,12 +175,12 @@ fn main() -> anyhow::Result<()> {
             let hashed_password = hash_password(hash_algorithm, &salt, password.as_bytes());
 
             let auth_passwords = if create {
-                DashMap::new()
+                RwLock::new(HashMap::new())
             } else {
                 load_passwords(&fs::File::open(&path)?)?
             };
 
-            auth_passwords.insert(
+            auth_passwords.write().insert(
                 username.clone(),
                 AuthPassword {
                     hash_algorithm,
@@ -193,7 +194,7 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::RemovePassword { path, username } => {
             let auth_passwords = load_passwords(&fs::File::open(&path)?)?;
-            if auth_passwords.remove(&username).is_some() {
+            if auth_passwords.write().remove(&username).is_some() {
                 let file = fs::File::create(&path)?;
                 dump_passwords(&file, &auth_passwords)?;
                 println!("removed user={username} from {path:?}");

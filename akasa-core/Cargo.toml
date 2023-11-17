@@ -7,11 +7,10 @@ edition = "2021"
 
 [dependencies]
 bytes = "1.2.1"
-dashmap = "5.4.0"
-flume = { version = "0.10", features = ["async"] }
+flume = { version = "0.11", features = ["async"] }
 futures-io = "0.3.25"
-futures-lite = "1.12.0"
-hashbrown = "0.13.1"
+futures-lite = "2.0.1"
+hashbrown = "0.14.2"
 hex = { version = "0.4", features = ["serde"] }
 log = "0.4.17"
 mqtt-proto = { git = "https://github.com/akasamq/mqtt-proto.git", branch = "master" }
@@ -32,10 +31,10 @@ futures-sink = "0.3.26"
 futures-util = "0.3.26"
 async-trait = "0.1.64"
 base64 = "0.21.0"
-ring = "0.16"
+ring = "0.17"
 crc32c = "0.6.3"
 openssl = "0.10.51"
-async-tungstenite = "0.21.0"
+async-tungstenite = "0.23.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 glommio = { version = "0.8.0" }
@@ -43,4 +42,4 @@ glommio = { version = "0.8.0" }
 [dev-dependencies]
 futures-sink = "0.3.26"
 tokio-util = "0.7.7"
-env_logger = "0.9.3"
+env_logger = "0.10.1"
