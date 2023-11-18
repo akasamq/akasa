@@ -135,8 +135,8 @@ async fn handle_online<
 
     let packet = match Connect::decode_with_protocol(&mut conn, header, protocol)
         .or(async {
-            log::info!("connection timeout when decode connect packet: {}", peer);
             let _ = timeout_receiver.recv_async().await;
+            log::info!("timeout when decode connect packet: {}", peer);
             Err(Error::IoError(io::ErrorKind::TimedOut, String::new()).into())
         })
         .await
@@ -212,8 +212,8 @@ async fn handle_online<
             }
         }
         .or(async {
-            log::info!("connection timeout when decode auth packet: {}", peer);
             let _ = timeout_receiver.recv_async().await;
+            log::info!("timeout when decode auth packet: {}", peer);
             Err(io::Error::from(io::ErrorKind::TimedOut))
         })
         .await?;

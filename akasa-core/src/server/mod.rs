@@ -57,6 +57,7 @@ pub async fn handle_accept<
         if let Some(header) = parse_header(&mut conn, conn_args.proxy_tls_termination)
             .or(async {
                 let _ = timeout_receiver.recv_async().await;
+                log::info!("timeout when parse proxy header: {}", peer);
                 Err(io::ErrorKind::TimedOut.into())
             })
             .await?
@@ -106,6 +107,7 @@ pub async fn handle_accept<
             })
             .or(async {
                 let _ = timeout_receiver.recv_async().await;
+                log::info!("timeout when tls accept: {}", peer);
                 Err(io::ErrorKind::TimedOut.into())
             })
             .await?;
@@ -161,6 +163,7 @@ pub async fn handle_accept<
     let (packet_type, remaining_len) = decode_raw_header(&mut ws_wrapper)
         .or(async {
             let _ = timeout_receiver.recv_async().await;
+            log::info!("timeout when decode raw mqtt header: {}", peer);
             Err(Error::IoError(io::ErrorKind::TimedOut, String::new()))
         })
         .await?;
@@ -171,6 +174,7 @@ pub async fn handle_accept<
     let protocol = Protocol::decode_async(&mut ws_wrapper)
         .or(async {
             let _ = timeout_receiver.recv_async().await;
+            log::info!("timeout when decode mqtt protocol: {}", peer);
             Err(Error::IoError(io::ErrorKind::TimedOut, String::new()))
         })
         .await?;
