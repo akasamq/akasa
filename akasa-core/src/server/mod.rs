@@ -439,6 +439,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for WebSocketWrapper<S> {
                     log::debug!("WebSocket write error: {:?}", err);
                     return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
                 }
+                let _ignore = Pin::new(&mut *stream)
+                    .as_mut()
+                    .poll_flush(cx)
+                    .map_err::<io::Error, _>(|_| Into::into(io::ErrorKind::BrokenPipe))?;
                 Poll::Ready(Ok(buf.len()))
             }
         }
