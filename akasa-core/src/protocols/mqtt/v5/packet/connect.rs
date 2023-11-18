@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bytes::Bytes;
-use futures_lite::io::AsyncWrite;
 use mqtt_proto::{
     v5::{
         Auth, AuthProperties, AuthReasonCode, Connack, ConnackProperties, Connect,
@@ -12,6 +11,7 @@ use mqtt_proto::{
     QoS,
 };
 use scram::server::{AuthenticationStatus, ScramServer};
+use tokio::io::AsyncWrite;
 
 use crate::config::SaslMechanism;
 use crate::protocols::mqtt::{check_password, start_keep_alive_timer};

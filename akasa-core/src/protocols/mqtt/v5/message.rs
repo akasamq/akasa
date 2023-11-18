@@ -7,10 +7,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use flume::{Receiver, Sender};
-use futures_lite::{
-    io::{AsyncRead, AsyncWrite},
-    FutureExt,
-};
+use futures_lite::FutureExt;
 use hashbrown::HashMap;
 use mqtt_proto::{
     v5::{
@@ -20,6 +17,7 @@ use mqtt_proto::{
     },
     Error, Pid, Protocol, QoS, QosPid,
 };
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::hook::{
     handle_request, Hook, HookAction, HookRequest, HookResponse, LockedHookContext, PublishAction,

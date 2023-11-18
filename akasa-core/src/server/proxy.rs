@@ -11,7 +11,7 @@
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use futures_lite::io::{AsyncRead, AsyncReadExt};
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// The prefix of the PROXY protocol header.
 const PROTOCOL_PREFIX: &[u8] = b"\r\n\r\n\0\r\nQUIT\n";

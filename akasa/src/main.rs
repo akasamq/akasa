@@ -114,7 +114,7 @@ fn main() -> anyhow::Result<()> {
             let mut global_state = GlobalState::new(config);
             global_state.auth_passwords = auth_passwords;
             let global = Arc::new(global_state);
-            server::rt_tokio::start(hook_handler, global)?;
+            server::rt::start(hook_handler, global)?;
         }
         Commands::DefaultConfig { allow_anonymous } => {
             let config = if allow_anonymous {

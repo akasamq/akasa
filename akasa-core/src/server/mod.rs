@@ -1,8 +1,5 @@
-mod io_compat;
 mod proxy;
-pub mod rt_tokio;
-#[allow(dead_code)]
-mod tls;
+pub mod rt;
 
 use std::cmp;
 use std::io;
@@ -12,28 +9,26 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use async_tungstenite::{
-    tungstenite::{http, Message},
-    WebSocketStream,
-};
 use flume::bounded;
-use futures_lite::{
-    io::{AsyncRead, AsyncWrite},
-    FutureExt, Stream,
-};
+use futures_lite::{FutureExt, Stream};
 use futures_sink::Sink;
 use futures_util::TryFutureExt;
 use mqtt_proto::{decode_raw_header, v3, v5, Error, Protocol};
 use openssl::ssl::{NameType, Ssl, SslAcceptor, SslFiletype, SslMethod, SslVerifyMode};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio_openssl::SslStream;
+use tokio_tungstenite::{
+    accept_hdr_async,
+    tungstenite::{http, Message},
+    WebSocketStream,
+};
 
 use crate::config::TlsListener;
 use crate::hook::Hook;
 use crate::protocols::mqtt;
 use crate::state::{Executor, GlobalState};
 
-use io_compat::IoWrapper;
 use proxy::{parse_header, Addresses};
-use tls::SslStream;
 
 const CONNECT_TIMEOUT_SECS: u64 = 5;
 
@@ -128,7 +123,7 @@ pub async fn handle_accept<
 
     // Handle WebSocket
     let mut ws_wrapper = if conn_args.websocket {
-        let stream = match async_tungstenite::accept_hdr_async(
+        let stream = match accept_hdr_async(
             tls_wrapper,
             |req: &http::Request<_>, mut resp: http::Response<_>| {
                 if let Some(protocol) = req.headers().get("Sec-WebSocket-Protocol") {
@@ -269,8 +264,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TlsWrapper<S> {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        buf: &mut ReadBuf,
+    ) -> Poll<io::Result<()>> {
         match self.get_mut() {
             TlsWrapper::Raw(conn) => Pin::new(conn).poll_read(cx, buf),
             TlsWrapper::Tls(tls_stream) => Pin::new(tls_stream).poll_read(cx, buf),
@@ -295,10 +290,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsWrapper<S> {
             TlsWrapper::Tls(tls_stream) => Pin::new(tls_stream).poll_flush(cx),
         }
     }
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
-            TlsWrapper::Raw(conn) => Pin::new(conn).poll_close(cx),
-            TlsWrapper::Tls(tls_stream) => Pin::new(tls_stream).poll_close(cx),
+            TlsWrapper::Raw(conn) => Pin::new(conn).poll_shutdown(cx),
+            TlsWrapper::Tls(tls_stream) => Pin::new(tls_stream).poll_shutdown(cx),
         }
     }
 }
@@ -350,8 +345,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WebSocketWrapper<S> {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        buf: &mut ReadBuf,
+    ) -> Poll<io::Result<()>> {
         match self.get_mut() {
             WebSocketWrapper::Raw(conn) => Pin::new(conn).poll_read(cx, buf),
             WebSocketWrapper::WebSocket {
@@ -361,9 +356,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WebSocketWrapper<S> {
                 pending_pong,
                 closed,
             } => {
-                fn copy_data(buf: &mut [u8], data: &[u8], data_idx: &mut usize) -> usize {
-                    let amt = cmp::min(data.len() - *data_idx, buf.len());
-                    buf[0..amt].copy_from_slice(&data[*data_idx..*data_idx + amt]);
+                fn copy_data(buf: &mut ReadBuf, data: &[u8], data_idx: &mut usize) -> usize {
+                    let amt = cmp::min(data.len() - *data_idx, buf.remaining());
+                    buf.put_slice(&data[*data_idx..*data_idx + amt]);
                     *data_idx += amt;
                     amt
                 }
@@ -371,7 +366,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WebSocketWrapper<S> {
                     ws_send_pong(stream, pending_pong, cx)?;
                 }
                 if *read_data_idx < read_data.len() {
-                    return Poll::Ready(Ok(copy_data(buf, read_data, read_data_idx)));
+                    copy_data(buf, read_data, read_data_idx);
+                    return Poll::Ready(Ok(()));
                 }
                 loop {
                     match Pin::new(&mut *stream).poll_next(cx) {
@@ -382,9 +378,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WebSocketWrapper<S> {
                                 }
                                 *read_data = bin;
                                 *read_data_idx = 0;
-                                return Poll::Ready(Ok(copy_data(buf, read_data, read_data_idx)));
+                                copy_data(buf, read_data, read_data_idx);
+                                return Poll::Ready(Ok(()));
                             }
-                            Message::Close(_) => return Poll::Ready(Ok(0)),
+                            Message::Close(_) => return Poll::Ready(Ok(())),
                             Message::Ping(data) => {
                                 *pending_pong = Some(data);
                                 ws_send_pong(stream, pending_pong, cx)?;
@@ -406,7 +403,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WebSocketWrapper<S> {
                             log::debug!("WebSocket read error: {:?}", err);
                             return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
                         }
-                        Poll::Ready(None) => return Poll::Ready(Ok(0)),
+                        Poll::Ready(None) => return Poll::Ready(Ok(())),
                         Poll::Pending => return Poll::Pending,
                     }
                 }
@@ -462,9 +459,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for WebSocketWrapper<S> {
         }
     }
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
-            WebSocketWrapper::Raw(conn) => Pin::new(conn).poll_close(cx),
+            WebSocketWrapper::Raw(conn) => Pin::new(conn).poll_shutdown(cx),
             WebSocketWrapper::WebSocket { stream, closed, .. } => {
                 if !*closed {
                     let mut sink = Pin::new(&mut *stream);

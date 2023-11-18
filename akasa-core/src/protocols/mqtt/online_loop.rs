@@ -11,13 +11,11 @@ use flume::{
     r#async::{RecvStream, SendSink},
     Sender,
 };
-use futures_lite::{
-    io::{AsyncRead, AsyncWrite},
-    Stream,
-};
+use futures_lite::Stream;
 use futures_sink::Sink;
 use hashbrown::HashMap;
 use mqtt_proto::{v3, v5, GenericPollPacket, GenericPollPacketState, PollHeader, QoS, VarBytes};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::hook::{handle_request, Hook, HookAction, HookRequest, HookResponse};
 use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};

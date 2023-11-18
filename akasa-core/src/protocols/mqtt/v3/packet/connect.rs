@@ -2,11 +2,11 @@ use std::io;
 use std::sync::Arc;
 use std::time::Instant;
 
-use futures_lite::io::AsyncWrite;
 use mqtt_proto::{
     v3::{Connack, Connect, ConnectReturnCode},
     Protocol,
 };
+use tokio::io::AsyncWrite;
 
 use crate::protocols::mqtt::{check_password, start_keep_alive_timer};
 use crate::state::{AddClientReceipt, ClientReceiver, Executor, GlobalState};

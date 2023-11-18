@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tokio::{net::TcpListener, runtime::Runtime};
 
-use super::{build_tls_context, handle_accept, ConnectionArgs, IoWrapper};
+use super::{build_tls_context, handle_accept, ConnectionArgs};
 use crate::config::{Listener, ProxyMode, TlsListener};
 use crate::hook::Hook;
 use crate::state::{Executor, GlobalState};
@@ -138,14 +138,13 @@ async fn listen<E: Executor + Send + Sync + 'static, H: Hook + Clone + Send + Sy
     loop {
         let (conn, peer) = listener.accept().await?;
         log::debug!("{} connected", peer,);
-        let conn_wrapper = IoWrapper::new(conn);
         let conn_args = conn_args.clone();
         let hook_handler = hook_handler.clone();
         let executor = Arc::clone(&executor);
         let global = Arc::clone(&global);
         tokio::spawn(async move {
             let _ = handle_accept(
-                conn_wrapper,
+                conn,
                 conn_args,
                 peer,
                 hook_handler,
