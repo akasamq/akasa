@@ -23,9 +23,7 @@ use crate::hook::{
 use crate::protocols::mqtt::{
     BroadcastPackets, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
 };
-use crate::state::{
-    ClientId, ClientReceiver, ControlMessage, Executor, GlobalState, NormalMessage,
-};
+use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
 use super::{
     packet::{
@@ -43,7 +41,6 @@ use super::{
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_connection<
     T: AsyncRead + AsyncWrite + Unpin,
-    E: Executor,
     H: Hook + Clone + Send + Sync + 'static,
 >(
     conn: T,
@@ -52,7 +49,6 @@ pub async fn handle_connection<
     protocol: Protocol,
     timeout_receiver: Receiver<()>,
     hook_handler: H,
-    executor: E,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
     match handle_online(
@@ -62,26 +58,23 @@ pub async fn handle_connection<
         protocol,
         timeout_receiver,
         &hook_handler,
-        &executor,
         &global,
     )
     .await
     {
         Ok(Some((session, receiver))) => {
             log::info!(
-                "executor {:03}, {}({}) go to offline, total {} clients ({} online)",
-                executor.id(),
+                "{}({}) go to offline, total {} clients ({} online)",
                 session.client_id,
                 peer,
                 global.clients_count(),
                 global.online_clients_count(),
             );
-            executor.spawn_local(handle_offline(session, receiver, global));
+            tokio::spawn(handle_offline(session, receiver, global));
         }
         Ok(None) => {
             log::info!(
-                "executor {:03}, {} finished, total {} clients ({} online)",
-                executor.id(),
+                "{} finished, total {} clients ({} online)",
                 peer,
                 global.clients_count(),
                 global.online_clients_count(),
@@ -89,8 +82,7 @@ pub async fn handle_connection<
         }
         Err(err) => {
             log::info!(
-                "executor {:03}, {} error: {}, total {} clients ({} online)",
-                executor.id(),
+                "{} error: {}, total {} clients ({} online)",
                 peer,
                 err,
                 global.clients_count(),
@@ -105,7 +97,6 @@ pub async fn handle_connection<
 #[allow(clippy::too_many_arguments)]
 async fn handle_online<
     T: AsyncRead + AsyncWrite + Unpin,
-    E: Executor,
     H: Hook + Clone + Send + Sync + 'static,
 >(
     mut conn: T,
@@ -114,7 +105,6 @@ async fn handle_online<
     protocol: Protocol,
     timeout_receiver: Receiver<()>,
     hook_handler: &H,
-    executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<Option<(Session, ClientReceiver)>> {
     let mut session = Session::new(&global.config, peer);
@@ -141,15 +131,8 @@ async fn handle_online<
         before_connect_hook(peer, &packet, hook_handler, global).await?;
     }
 
-    let session_present = handle_connect(
-        &mut session,
-        &mut receiver,
-        packet,
-        &mut conn,
-        executor,
-        global,
-    )
-    .await?;
+    let session_present =
+        handle_connect(&mut session, &mut receiver, packet, &mut conn, global).await?;
 
     if !session.connected {
         log::info!("{} not connected", session.peer);
@@ -167,8 +150,7 @@ async fn handle_online<
 
     let receiver = receiver.expect("receiver");
     log::info!(
-        "executor {:03}, {} connected, total {} clients ({} online) ",
-        executor.id(),
+        "{} connected, total {} clients ({} online) ",
         session.peer,
         global.clients_count(),
         global.online_clients_count(),

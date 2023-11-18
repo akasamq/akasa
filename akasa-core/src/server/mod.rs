@@ -26,7 +26,7 @@ use tokio_tungstenite::{
 use crate::config::TlsListener;
 use crate::hook::Hook;
 use crate::protocols::mqtt;
-use crate::state::{Executor, GlobalState};
+use crate::state::GlobalState;
 
 use proxy::{parse_header, Addresses};
 
@@ -34,19 +34,18 @@ const CONNECT_TIMEOUT_SECS: u64 = 5;
 
 pub async fn handle_accept<
     T: AsyncRead + AsyncWrite + Unpin,
-    E: Executor,
     H: Hook + Clone + Send + Sync + 'static,
 >(
     mut conn: T,
     conn_args: ConnectionArgs,
     mut peer: SocketAddr,
     hook_handler: H,
-    executor: E,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
     // If the client don't send enough data in 5 seconds, disconnect it.
     let (timeout_sender, timeout_receiver) = bounded(1);
-    executor.spawn_sleep(Duration::from_secs(CONNECT_TIMEOUT_SECS), async move {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(CONNECT_TIMEOUT_SECS)).await;
         if timeout_sender.send_async(()).await.is_ok() {
             log::info!("connection timeout: {}", peer);
         }
@@ -185,7 +184,6 @@ pub async fn handle_accept<
                 protocol,
                 timeout_receiver,
                 hook_handler,
-                executor,
                 global,
             )
             .await?;
@@ -199,7 +197,6 @@ pub async fn handle_accept<
                 protocol,
                 timeout_receiver,
                 hook_handler,
-                executor,
                 global,
             )
             .await?;

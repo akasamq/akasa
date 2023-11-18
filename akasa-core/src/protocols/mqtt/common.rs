@@ -4,13 +4,12 @@ use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
 
-use crate::state::{ClientId, ControlMessage, Executor, GlobalState};
+use crate::state::{ClientId, ControlMessage, GlobalState};
 
-pub(crate) fn start_keep_alive_timer<E: Executor>(
+pub(crate) fn start_keep_alive_timer(
     keep_alive: u16,
     client_id: ClientId,
     last_packet_time: &Arc<RwLock<Instant>>,
-    executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<()> {
     // FIXME: if kee_alive is zero, set a default keep_alive value from config
@@ -19,7 +18,7 @@ pub(crate) fn start_keep_alive_timer<E: Executor>(
         log::debug!("{} keep alive: {:?}", client_id, half_interval * 2);
         let last_packet_time = Arc::clone(last_packet_time);
         let global = Arc::clone(global);
-        if let Err(err) = executor.spawn_interval(move || {
+        let action_gen = move || {
             // Need clone twice: https://stackoverflow.com/a/68462908/1274372
             let last_packet_time = Arc::clone(&last_packet_time);
             let global = Arc::clone(&global);
@@ -45,10 +44,12 @@ pub(crate) fn start_keep_alive_timer<E: Executor>(
                 }
                 None
             }
-        }) {
-            log::error!("spawn executor keep alive timer failed: {:?}", err);
-            return Err(err);
-        }
+        };
+        tokio::spawn(async move {
+            while let Some(duration) = action_gen().await {
+                tokio::time::sleep(duration).await;
+            }
+        });
     }
     Ok(())
 }

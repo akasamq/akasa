@@ -22,7 +22,7 @@ use crate::hook::{
     Hook, HookAction, HookConnectCode, HookPublishCode, HookResult, HookSubscribeCode,
     HookUnsubscribeCode,
 };
-use crate::server::{handle_accept, rt::TokioExecutor, ConnectionArgs};
+use crate::server::{handle_accept, ConnectionArgs};
 use crate::state::{AuthPassword, GlobalState, HashAlgorithm};
 use crate::{hash_password, SessionV3, SessionV5, MIN_SALT_LEN};
 
@@ -101,7 +101,6 @@ impl MockConn {
 impl MockConnControl {
     pub fn start(&self, conn: MockConn) -> JoinHandle<io::Result<()>> {
         let peer = conn.peer;
-        let executor = Arc::new(TokioExecutor {});
         let global = Arc::clone(&self.global);
 
         let hook_handler = TestHook;
@@ -112,14 +111,7 @@ impl MockConnControl {
             websocket: false,
             tls_acceptor: None,
         };
-        tokio::spawn(handle_accept(
-            conn,
-            conn_args,
-            peer,
-            hook_handler,
-            executor,
-            global,
-        ))
+        tokio::spawn(handle_accept(conn, conn_args, peer, hook_handler, global))
     }
 
     pub fn try_read_packet_is_empty(&mut self) -> bool {
