@@ -7,10 +7,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use flume::{Receiver, Sender};
-use futures_lite::{
-    io::{AsyncRead, AsyncWrite},
-    FutureExt,
-};
+use futures_lite::FutureExt;
 use hashbrown::HashMap;
 use mqtt_proto::{
     v5::{
@@ -20,6 +17,7 @@ use mqtt_proto::{
     },
     Error, Pid, Protocol, QoS, QosPid,
 };
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::hook::{
     handle_request, Hook, HookAction, HookRequest, HookResponse, LockedHookContext, PublishAction,
@@ -28,9 +26,7 @@ use crate::hook::{
 use crate::protocols::mqtt::{
     BroadcastPackets, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
 };
-use crate::state::{
-    ClientId, ClientReceiver, ControlMessage, Executor, GlobalState, NormalMessage,
-};
+use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
 use super::{
     packet::{
@@ -51,7 +47,6 @@ use super::{
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_connection<
     T: AsyncRead + AsyncWrite + Unpin,
-    E: Executor,
     H: Hook + Clone + Send + Sync + 'static,
 >(
     conn: T,
@@ -60,7 +55,6 @@ pub async fn handle_connection<
     protocol: Protocol,
     timeout_receiver: Receiver<()>,
     hook_handler: H,
-    executor: E,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
     match handle_online(
@@ -70,44 +64,40 @@ pub async fn handle_connection<
         protocol,
         timeout_receiver,
         &hook_handler,
-        &executor,
         &global,
     )
     .await
     {
         Ok(Some((session, receiver))) => {
             log::info!(
-                "executor {:03}, {}({}) go to offline, total {} clients ({} online)",
-                executor.id(),
+                "{}({}) go to offline, total {} clients ({} online)",
                 session.client_id,
                 peer,
                 global.clients_count(),
                 global.online_clients_count(),
             );
             let session_expiry = Duration::from_secs(session.session_expiry_interval as u64);
-            executor.spawn_sleep(session_expiry, {
-                let client_id = session.client_id;
-                let connected_time = session.connected_time.expect("connected time");
-                let global = Arc::clone(&global);
-                async move {
-                    if let Some(sender) = global.get_client_control_sender(&client_id) {
-                        let msg = ControlMessage::SessionExpired { connected_time };
-                        if let Err(err) = sender.send_async(msg).await {
-                            log::warn!(
-                                "send session expired message to {} error: {:?}",
-                                client_id,
-                                err
-                            );
-                        }
+            let client_id = session.client_id;
+            let connected_time = session.connected_time.expect("connected time");
+            let global_clone = Arc::clone(&global);
+            tokio::spawn(async move {
+                tokio::time::sleep(session_expiry).await;
+                if let Some(sender) = global_clone.get_client_control_sender(&client_id) {
+                    let msg = ControlMessage::SessionExpired { connected_time };
+                    if let Err(err) = sender.send_async(msg).await {
+                        log::warn!(
+                            "send session expired message to {} error: {:?}",
+                            client_id,
+                            err
+                        );
                     }
                 }
             });
-            executor.spawn_local(handle_offline(session, receiver, global));
+            tokio::spawn(handle_offline(session, receiver, global));
         }
         Ok(None) => {
             log::info!(
-                "executor {:03}, {} finished, total {} clients ({} online)",
-                executor.id(),
+                "{} finished, total {} clients ({} online)",
                 peer,
                 global.clients_count(),
                 global.online_clients_count(),
@@ -115,8 +105,7 @@ pub async fn handle_connection<
         }
         Err(err) => {
             log::info!(
-                "executor {:03}, {} error: {}, total {} clients ({} online)",
-                executor.id(),
+                "{} error: {}, total {} clients ({} online)",
                 peer,
                 err,
                 global.clients_count(),
@@ -131,7 +120,6 @@ pub async fn handle_connection<
 #[allow(clippy::too_many_arguments)]
 async fn handle_online<
     T: AsyncRead + AsyncWrite + Unpin,
-    E: Executor,
     H: Hook + Clone + Send + Sync + 'static,
 >(
     mut conn: T,
@@ -140,7 +128,6 @@ async fn handle_online<
     protocol: Protocol,
     timeout_receiver: Receiver<()>,
     hook_handler: &H,
-    executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<Option<(Session, ClientReceiver)>> {
     let mut session = Session::new(&global.config, peer);
@@ -187,15 +174,8 @@ async fn handle_online<
         before_connect_hook(&mut session, &mut conn, peer, &packet, hook_handler, global).await?;
     }
 
-    let mut session_present = handle_connect(
-        &mut session,
-        &mut receiver,
-        packet,
-        &mut conn,
-        executor,
-        global,
-    )
-    .await?;
+    let mut session_present =
+        handle_connect(&mut session, &mut receiver, packet, &mut conn, global).await?;
 
     // * Scram challenge only need 1 round.
     // * Kerberos challenge need 2 rounds.
@@ -255,7 +235,6 @@ async fn handle_online<
                     &mut receiver,
                     Some(server_final),
                     &mut conn,
-                    executor,
                     global,
                 )
                 .await?;
@@ -298,8 +277,7 @@ async fn handle_online<
 
     let receiver = receiver.expect("receiver");
     log::info!(
-        "executor {:03}, {} connected, total {} clients ({} online) ",
-        executor.id(),
+        "{} connected, total {} clients ({} online) ",
         session.peer,
         global.clients_count(),
         global.online_clients_count(),
@@ -330,7 +308,7 @@ async fn handle_online<
     );
     // FIXME: check all place depend on session.disconnected
     if !session.client_disconnected {
-        handle_will(&mut session, executor, global).await?;
+        handle_will(&mut session, global).await?;
     }
     broadcast_packets(&mut session).await;
     if session.session_expiry_interval == 0 {
@@ -704,11 +682,7 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: 
 }
 
 #[inline]
-async fn handle_will<E: Executor>(
-    session: &mut Session,
-    executor: &E,
-    global: &Arc<GlobalState>,
-) -> io::Result<()> {
+async fn handle_will(session: &mut Session, global: &Arc<GlobalState>) -> io::Result<()> {
     if let Some(last_will) = session.last_will.as_ref() {
         let delay_interval = last_will.properties.delay_interval.unwrap_or(0);
         if delay_interval == 0 {
@@ -719,20 +693,19 @@ async fn handle_will<E: Executor>(
             );
             send_will(session, global)?;
         } else if delay_interval < session.session_expiry_interval {
-            executor.spawn_sleep(Duration::from_secs(delay_interval as u64), {
-                let client_id = session.client_id;
-                let connected_time = session.connected_time.expect("connected time (will)");
-                let global = Arc::clone(global);
-                async move {
-                    if let Some(sender) = global.get_client_control_sender(&client_id) {
-                        let msg = ControlMessage::WillDelayReached { connected_time };
-                        if let Err(err) = sender.send_async(msg).await {
-                            log::warn!(
-                                "send will delay reached message to {} error: {:?}",
-                                client_id,
-                                err
-                            );
-                        }
+            let client_id = session.client_id;
+            let connected_time = session.connected_time.expect("connected time (will)");
+            let global = Arc::clone(global);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(delay_interval as u64)).await;
+                if let Some(sender) = global.get_client_control_sender(&client_id) {
+                    let msg = ControlMessage::WillDelayReached { connected_time };
+                    if let Err(err) = sender.send_async(msg).await {
+                        log::warn!(
+                            "send will delay reached message to {} error: {:?}",
+                            client_id,
+                            err
+                        );
                     }
                 }
             });

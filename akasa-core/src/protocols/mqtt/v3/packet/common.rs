@@ -1,11 +1,11 @@
 use std::io;
 use std::time::Instant;
 
-use futures_lite::io::AsyncWrite;
 use mqtt_proto::{
     v3::{Packet, Publish},
     QoS, QosPid,
 };
+use tokio::io::AsyncWrite;
 
 use crate::protocols::mqtt::{get_unix_ts, PendingPacketStatus};
 use crate::state::ClientId;

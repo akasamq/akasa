@@ -1,11 +1,11 @@
 use std::fmt;
-use std::future::Future;
+
 use std::io;
 use std::num::NonZeroU32;
-use std::rc::Rc;
+
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+
+use std::time::Instant;
 
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -213,81 +213,6 @@ impl GlobalState {
             })?;
             Ok(AddClientReceipt::PresentV5(session_state))
         }
-    }
-}
-
-pub trait Executor {
-    fn id(&self) -> usize {
-        0
-    }
-    fn spawn_local<F>(&self, future: F)
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static;
-
-    fn spawn_sleep<F>(&self, duration: Duration, task: F)
-    where
-        F: Future<Output = ()> + Send + 'static;
-
-    fn spawn_interval<G, F>(&self, action_gen: G) -> io::Result<()>
-    where
-        G: (Fn() -> F) + Send + Sync + 'static,
-        F: Future<Output = Option<Duration>> + Send + 'static;
-}
-
-impl<T: Executor> Executor for Rc<T> {
-    fn id(&self) -> usize {
-        self.as_ref().id()
-    }
-    fn spawn_local<F>(&self, future: F)
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static,
-    {
-        self.as_ref().spawn_local(future);
-    }
-
-    fn spawn_sleep<F>(&self, duration: Duration, task: F)
-    where
-        F: Future<Output = ()> + Send + 'static,
-    {
-        self.as_ref().spawn_sleep(duration, task);
-    }
-
-    fn spawn_interval<G, F>(&self, action_gen: G) -> io::Result<()>
-    where
-        G: (Fn() -> F) + Send + Sync + 'static,
-        F: Future<Output = Option<Duration>> + Send + 'static,
-    {
-        self.as_ref().spawn_interval(action_gen)
-    }
-}
-impl<T: Executor> Executor for Arc<T> {
-    fn id(&self) -> usize {
-        self.as_ref().id()
-    }
-
-    fn spawn_local<F>(&self, future: F)
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static,
-    {
-        self.as_ref().spawn_local(future);
-    }
-
-    fn spawn_sleep<F>(&self, duration: Duration, task: F)
-    where
-        F: Future<Output = ()> + Send + 'static,
-    {
-        self.as_ref().spawn_sleep(duration, task);
-    }
-
-    fn spawn_interval<G, F>(&self, action_gen: G) -> io::Result<()>
-    where
-        G: (Fn() -> F) + Send + Sync + 'static,
-        F: Future<Output = Option<Duration>> + Send + 'static,
-    {
-        self.as_ref().spawn_interval(action_gen)
     }
 }
 

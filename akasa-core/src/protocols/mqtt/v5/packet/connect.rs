@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bytes::Bytes;
-use futures_lite::io::AsyncWrite;
 use mqtt_proto::{
     v5::{
         Auth, AuthProperties, AuthReasonCode, Connack, ConnackProperties, Connect,
@@ -12,20 +11,20 @@ use mqtt_proto::{
     QoS,
 };
 use scram::server::{AuthenticationStatus, ScramServer};
+use tokio::io::AsyncWrite;
 
 use crate::config::SaslMechanism;
 use crate::protocols::mqtt::{check_password, start_keep_alive_timer};
-use crate::state::{AddClientReceipt, ClientReceiver, Executor, GlobalState};
+use crate::state::{AddClientReceipt, ClientReceiver, GlobalState};
 
 use super::super::{ScramStage, Session, TracedRng};
 use super::common::{build_error_connack, build_error_disconnect, write_packet};
 
-pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
+pub(crate) async fn handle_connect<T: AsyncWrite + Unpin>(
     session: &mut Session,
     receiver: &mut Option<ClientReceiver>,
     packet: Connect,
     conn: &mut T,
-    executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<bool> {
     log::debug!(
@@ -209,16 +208,15 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
         write_packet(session.client_id, conn, &err_pkt).await?;
         Ok(false)
     } else {
-        session_connect(session, receiver, None, conn, executor, global).await
+        session_connect(session, receiver, None, conn, global).await
     }
 }
 
-pub(crate) async fn session_connect<T: AsyncWrite + Unpin, E: Executor>(
+pub(crate) async fn session_connect<T: AsyncWrite + Unpin>(
     session: &mut Session,
     receiver: &mut Option<ClientReceiver>,
     auth_data: Option<String>,
     conn: &mut T,
-    executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<bool> {
     let mut session_present = false;
@@ -267,7 +265,6 @@ pub(crate) async fn session_connect<T: AsyncWrite + Unpin, E: Executor>(
         session.keep_alive,
         session.client_id,
         &session.last_packet_time,
-        executor,
         global,
     )?;
 

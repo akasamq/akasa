@@ -7,10 +7,10 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use async_trait::async_trait;
-use futures_lite::io::{AsyncRead, AsyncWrite};
 use futures_sink::Sink;
 use mqtt_proto::{v3, v5};
 use rand::{rngs::OsRng, RngCore};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::{
     sync::mpsc::{channel, error::TryRecvError, Receiver, Sender},
     task::JoinHandle,
@@ -22,7 +22,7 @@ use crate::hook::{
     Hook, HookAction, HookConnectCode, HookPublishCode, HookResult, HookSubscribeCode,
     HookUnsubscribeCode,
 };
-use crate::server::{handle_accept, rt_tokio::TokioExecutor, ConnectionArgs};
+use crate::server::{handle_accept, ConnectionArgs};
 use crate::state::{AuthPassword, GlobalState, HashAlgorithm};
 use crate::{hash_password, SessionV3, SessionV5, MIN_SALT_LEN};
 
@@ -101,7 +101,6 @@ impl MockConn {
 impl MockConnControl {
     pub fn start(&self, conn: MockConn) -> JoinHandle<io::Result<()>> {
         let peer = conn.peer;
-        let executor = Arc::new(TokioExecutor {});
         let global = Arc::clone(&self.global);
 
         let hook_handler = TestHook;
@@ -112,14 +111,7 @@ impl MockConnControl {
             websocket: false,
             tls_acceptor: None,
         };
-        tokio::spawn(handle_accept(
-            conn,
-            conn_args,
-            peer,
-            hook_handler,
-            executor,
-            global,
-        ))
+        tokio::spawn(handle_accept(conn, conn_args, peer, hook_handler, global))
     }
 
     pub fn try_read_packet_is_empty(&mut self) -> bool {
@@ -135,8 +127,8 @@ impl AsyncRead for MockConn {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        buf: &mut ReadBuf,
+    ) -> Poll<io::Result<()>> {
         // let peer = self.peer.clone();
         if self.data_in.is_empty() {
             self.data_in = match self.chan_in.poll_recv(cx) {
@@ -148,13 +140,13 @@ impl AsyncRead for MockConn {
             };
         }
         if self.data_in.is_empty() {
-            return Poll::Ready(Ok(0));
+            return Poll::Ready(Ok(()));
         }
-        let amt = cmp::min(buf.len(), self.data_in.len());
+        let amt = cmp::min(buf.remaining(), self.data_in.len());
         let mut other = self.data_in.split_off(amt);
         mem::swap(&mut other, &mut self.data_in);
-        buf[..amt].copy_from_slice(&other);
-        Poll::Ready(Ok(amt))
+        buf.put_slice(&other);
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -218,7 +210,7 @@ impl AsyncWrite for MockConn {
             .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.chan_out)
             .as_mut()
             .poll_close(cx)

@@ -1,14 +1,13 @@
-use std::future::Future;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::{net::TcpListener, runtime::Runtime};
 
-use super::{build_tls_context, handle_accept, ConnectionArgs, IoWrapper};
+use super::{build_tls_context, handle_accept, ConnectionArgs};
 use crate::config::{Listener, ProxyMode, TlsListener};
 use crate::hook::Hook;
-use crate::state::{Executor, GlobalState};
+use crate::state::GlobalState;
 
 pub fn start<H>(hook_handler: H, global: Arc<GlobalState>) -> io::Result<()>
 where
@@ -38,8 +37,6 @@ where
         .transpose()?;
 
     rt.block_on(async move {
-        let executor = Arc::new(TokioExecutor {});
-
         let listeners = &global.config.listeners;
         let tasks: Vec<_> = [
             listeners
@@ -88,15 +85,11 @@ where
         .map(|conn_args| {
             let global = Arc::clone(&global);
             let hook_handler = hook_handler.clone();
-            let executor = Arc::clone(&executor);
             tokio::spawn(async move {
                 loop {
                     let global = Arc::clone(&global);
                     let hook_handler = hook_handler.clone();
-                    let executor = Arc::clone(&executor);
-                    if let Err(err) =
-                        listen(conn_args.clone(), hook_handler, executor, global).await
-                    {
+                    if let Err(err) = listen(conn_args.clone(), hook_handler, global).await {
                         log::error!("Listen error: {:?}", err);
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
@@ -115,10 +108,9 @@ where
     Ok(())
 }
 
-async fn listen<E: Executor + Send + Sync + 'static, H: Hook + Clone + Send + Sync + 'static>(
+async fn listen<H: Hook + Clone + Send + Sync + 'static>(
     conn_args: ConnectionArgs,
     hook_handler: H,
-    executor: Arc<E>,
     global: Arc<GlobalState>,
 ) -> io::Result<()> {
     let addr = conn_args.addr;
@@ -138,56 +130,11 @@ async fn listen<E: Executor + Send + Sync + 'static, H: Hook + Clone + Send + Sy
     loop {
         let (conn, peer) = listener.accept().await?;
         log::debug!("{} connected", peer,);
-        let conn_wrapper = IoWrapper::new(conn);
         let conn_args = conn_args.clone();
         let hook_handler = hook_handler.clone();
-        let executor = Arc::clone(&executor);
         let global = Arc::clone(&global);
         tokio::spawn(async move {
-            let _ = handle_accept(
-                conn_wrapper,
-                conn_args,
-                peer,
-                hook_handler,
-                executor,
-                Arc::clone(&global),
-            )
-            .await;
+            let _ = handle_accept(conn, conn_args, peer, hook_handler, Arc::clone(&global)).await;
         });
-    }
-}
-
-pub struct TokioExecutor {}
-
-impl Executor for TokioExecutor {
-    fn spawn_local<F>(&self, future: F)
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static,
-    {
-        tokio::spawn(future);
-    }
-
-    fn spawn_sleep<F>(&self, duration: Duration, task: F)
-    where
-        F: Future<Output = ()> + Send + 'static,
-    {
-        tokio::spawn(async move {
-            tokio::time::sleep(duration).await;
-            task.await;
-        });
-    }
-
-    fn spawn_interval<G, F>(&self, action_gen: G) -> io::Result<()>
-    where
-        G: (Fn() -> F) + Send + Sync + 'static,
-        F: Future<Output = Option<Duration>> + Send + 'static,
-    {
-        tokio::spawn(async move {
-            while let Some(duration) = action_gen().await {
-                tokio::time::sleep(duration).await;
-            }
-        });
-        Ok(())
     }
 }

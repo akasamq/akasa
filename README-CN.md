@@ -3,14 +3,13 @@
 
 Akasa 是一个 Rust 写的高性能，低延迟，高度可扩展的 MQTT 服务器。
 
-Akasa 用 [glommio][glommio] 来实现高性能低延迟的网络 IO. 它底层的 MQTT 协议消息编解码器 ([mqtt-proto][mqtt-proto]) 是为了高性能和 async 环境而精心设计实现的。
+它底层的 MQTT 协议消息编解码器 ([mqtt-proto][mqtt-proto]) 是为了高性能和 async 环境而精心设计实现的。
 
 ## 特性
 - [x] 完全支持 MQTT v3.1/v3.1.1/v5.0
 - [x] 支持 TLS (包括双向认证)
 - [x] 支持 WebSocket (包括 TLS 支持)
 - [x] 支持 [Proxy Protocol V2][proxy-protocol]
-- [x] 使用 `io_uring` ([glommio][glommio]) 来实现高性能低延迟 IO (非 Linux 环境可以用 tokio)
 - [x] 使用 [Hook trait][hook-trait] 来扩展服务器
 - [x] 用一个密码文件来支持简单的认证
 - [ ] 基于 Raft 的服务器集群 (*敬请期待*)
@@ -95,7 +94,6 @@ Akasa 会有一个企业版本，企业版中的额外功能包括:
 [mqtt-proto]: https://github.com/akasamq/mqtt-proto
 [mqtt-proto-fuzz]: https://github.com/akasamq/mqtt-proto/tree/master/fuzz
 [proxy-protocol]: https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt
-[glommio]: https://github.com/DataDog/glommio
 [bsl]: https://mariadb.com/bsl-faq-mariadb/
 [hook-trait]: https://github.com/akasamq/akasa/blob/5ade2d788d9a919671f81b01d720155caf8e4e2d/akasa-core/src/hook.rs#L43
 [tensorflow]: https://blog.tensorflow.org/2020/09/supercharging-tensorflowjs-webassembly.html

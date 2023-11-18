@@ -32,14 +32,6 @@ enum Commands {
         /// The config file path
         #[clap(long, value_name = "FILE")]
         config: PathBuf,
-
-        /// Async runtime
-        #[cfg(target_os = "linux")]
-        #[clap(long, default_value_t = Runtime::Glommio, value_enum)]
-        runtime: Runtime,
-        #[cfg(not(target_os = "linux"))]
-        #[clap(long, default_value_t = Runtime::Tokio, value_enum)]
-        runtime: Runtime,
     },
 
     /// Generate default config to stdout
@@ -85,13 +77,6 @@ enum Commands {
 }
 
 #[derive(ValueEnum, Clone, Debug)]
-enum Runtime {
-    #[cfg(target_os = "linux")]
-    Glommio,
-    Tokio,
-}
-
-#[derive(ValueEnum, Clone, Debug)]
 enum HashAlgorithm {
     Sha256,
     Sha512,
@@ -106,7 +91,7 @@ fn main() -> anyhow::Result<()> {
     log::debug!("{:#?}", cli);
 
     match cli.command {
-        Commands::Start { config, runtime } => {
+        Commands::Start { config } => {
             let config: Config = {
                 let content = fs::read_to_string(config)?;
                 serde_yaml::from_str(&content)
@@ -129,11 +114,7 @@ fn main() -> anyhow::Result<()> {
             let mut global_state = GlobalState::new(config);
             global_state.auth_passwords = auth_passwords;
             let global = Arc::new(global_state);
-            match runtime {
-                #[cfg(target_os = "linux")]
-                Runtime::Glommio => server::rt_glommio::start(hook_handler, global)?,
-                Runtime::Tokio => server::rt_tokio::start(hook_handler, global)?,
-            }
+            server::rt::start(hook_handler, global)?;
         }
         Commands::DefaultConfig { allow_anonymous } => {
             let config = if allow_anonymous {

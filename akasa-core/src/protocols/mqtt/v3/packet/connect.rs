@@ -2,24 +2,23 @@ use std::io;
 use std::sync::Arc;
 use std::time::Instant;
 
-use futures_lite::io::AsyncWrite;
 use mqtt_proto::{
     v3::{Connack, Connect, ConnectReturnCode},
     Protocol,
 };
+use tokio::io::AsyncWrite;
 
 use crate::protocols::mqtt::{check_password, start_keep_alive_timer};
-use crate::state::{AddClientReceipt, ClientReceiver, Executor, GlobalState};
+use crate::state::{AddClientReceipt, ClientReceiver, GlobalState};
 
 use super::super::Session;
 use super::common::write_packet;
 
-pub(crate) async fn handle_connect<T: AsyncWrite + Unpin, E: Executor>(
+pub(crate) async fn handle_connect<T: AsyncWrite + Unpin>(
     session: &mut Session,
     receiver: &mut Option<ClientReceiver>,
     packet: Connect,
     conn: &mut T,
-    executor: &E,
     global: &Arc<GlobalState>,
 ) -> io::Result<bool> {
     log::debug!(
@@ -152,7 +151,6 @@ clean session : {}
         session.keep_alive,
         session.client_id,
         &session.last_packet_time,
-        executor,
         global,
     )?;
 

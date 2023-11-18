@@ -69,5 +69,5 @@ auth:
 #        ws: None,
 #        wss: None,
 #    }
-#[2023-00-00T00:00:00Z INFO  akasa_core::server::rt_tokio] Listen mqtt@127.0.0.1:1883 success! (tokio)
+#[2023-00-00T00:00:00Z INFO  akasa_core::server::rt] Listen mqtt@127.0.0.1:1883 success! (tokio)
 ```

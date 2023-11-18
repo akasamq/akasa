@@ -3,7 +3,6 @@ use std::io;
 use std::sync::Arc;
 use std::time::Instant;
 
-use futures_lite::io::AsyncWrite;
 use mqtt_proto::{
     v5::{
         Connack, ConnackProperties, ConnectReasonCode, Disconnect, DisconnectProperties,
@@ -11,6 +10,7 @@ use mqtt_proto::{
     },
     QoS, QosPid,
 };
+use tokio::io::AsyncWrite;
 
 use crate::protocols::mqtt::{get_unix_ts, PendingPacketStatus};
 use crate::state::ClientId;
