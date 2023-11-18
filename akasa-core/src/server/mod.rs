@@ -1,7 +1,5 @@
 mod io_compat;
 mod proxy;
-#[cfg(target_os = "linux")]
-pub mod rt_glommio;
 pub mod rt_tokio;
 #[allow(dead_code)]
 mod tls;
