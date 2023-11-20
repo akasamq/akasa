@@ -126,7 +126,7 @@ async fn listen<H: Hook + Clone + Send + Sync + 'static>(
     } else {
         listen_type.to_owned()
     };
-    log::info!("Listen {listen_type}@{addr} success! (tokio)");
+    log::info!("Listen {listen_type}@{addr} success!");
     loop {
         let (conn, peer) = listener.accept().await?;
         log::debug!("{} connected", peer,);

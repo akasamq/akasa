@@ -147,6 +147,8 @@ clean session : {}
         }
     }
 
+    // FIXME: early return after add_client will cause memory leak
+
     start_keep_alive_timer(
         session.keep_alive,
         session.client_id,

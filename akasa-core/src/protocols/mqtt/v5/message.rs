@@ -81,6 +81,7 @@ pub async fn handle_connection<
             let connected_time = session.connected_time.expect("connected time");
             let global_clone = Arc::clone(&global);
             tokio::spawn(async move {
+                // FIXME: potencial memory leak
                 tokio::time::sleep(session_expiry).await;
                 if let Some(sender) = global_clone.get_client_control_sender(&client_id) {
                     let msg = ControlMessage::SessionExpired { connected_time };
