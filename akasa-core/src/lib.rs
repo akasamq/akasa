@@ -1,3 +1,4 @@
+mod cluster;
 mod config;
 mod hook;
 mod protocols;

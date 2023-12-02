@@ -1,0 +1,180 @@
+syntax = "proto3";
+
+package akasa;
+
+service Akasa {
+  // ==== Consensus RPC
+  // API
+  rpc RaftWrite(RaftWriteReqeust) returns (RaftWriteReply);
+  rpc RaftRead(RaftReadRequest) returns (RaftReadReply);
+  rpc RaftConsistentRead(RaftConsistentReadRequest) returns (RaftConsistentReadReply);
+  // Management
+  rpc RaftAddLearner(RaftAddLearnerRequest) returns (RaftWriteReply);
+  rpc RaftChangeMembership(RaftChangeMembershipRequest) returns (RaftWriteReply);
+  rpc RaftInit(RaftInitRequest) returns (RaftInitReply);
+  rpc RaftMetrics(RaftMetricsRequest) returns (RaftMetricsReply);
+  // Raft
+  rpc RaftVote(RaftVoteRequest) returns (RaftVoteReply);
+  rpc RaftAppend(RaftAppendRequest) returns (RaftAppendReply);
+  rpc RaftSnapshot(RaftSnapshotRequest) returns (RaftSnapshotReply);
+
+  // Raft management extension
+  rpc ExtRaftMeta(MetaRequest) returns (MetaReply);
+
+  // // ==== Normal RPC
+  // rpc MqttOnline(MqttOnlineRequest) returns (MqttOnlineReply);
+  // rpc MqttOffline(MqttOfflineRequest) returns (MqttOfflineReply);
+  // // publish
+  // rpc MqttPublishMessage(MqttMessageRequest) returns (MqttMessageReply);
+  // // subscribe/unsubscribe
+  // rpc MqttGetSubscribes(MqttGetSubscribesRequest) returns (MqttGetSubscribesReply);
+  // rpc MqttSubscribe(MqttSubscribeRequest) returns (MqttSubscribeReply);
+  // rpc MqttUnsubscribe(MqttUnsubscribeRequest) returns (MqttUnsubscribeReply);
+  // // retains
+  // rpc MqttGetRetains(MqttGetRetainsRequest) returns (MqttGetRetainsReply);
+  // rpc MqttInsertRetain(MqttInsertRetainRequest) returns (MqttInsertRetainReply);
+  // rpc MqttRemoveRetain(MqttRemoveRetainRequest) returns (MqttRemoveRetainReply);
+}
+
+// ==== Consensus RPC
+message RaftWriteReqeust {
+  bytes key = 1;
+  bytes value = 2;
+}
+message RaftWriteReply {
+  optional bytes value = 1;
+  // TODO: LogId log_id = 2;
+  optional bytes membership = 3;
+  sint32 code = 4;
+  string error = 5;
+}
+
+message RaftReadRequest {
+  bytes key = 1;
+}
+message RaftReadReply {
+  optional bytes value = 1;
+}
+
+message RaftConsistentReadRequest {
+  bytes key = 1;
+}
+message RaftConsistentReadReply {
+  optional bytes value = 1;
+  sint32 code = 2;
+  string error = 3;
+}
+
+message RaftAddLearnerRequest {
+  uint64 node_id = 1;
+  string address = 2;
+  bool update_addr = 3;
+}
+
+
+enum ChangeMembers {
+  ADD_VOTER_IDS = 0;
+  ADD_VOTERS = 1;
+  REMOVE_VOTERS = 2;
+  REPLACE_ALL_VOTERS = 3;
+  ADD_NODES = 4;
+  REMOVE_NODES = 5;
+  REPLACE_ALL_NODES = 6;
+}
+message RaftChangeMembershipRequest {
+  ChangeMembers ty = 1;
+  bytes data = 2;
+  bool retain = 3;
+}
+
+message RaftInitRequest {}
+message RaftInitReply {
+  sint32 code = 1;
+  string error = 2;
+}
+
+message RaftMetricsRequest {}
+message RaftMetricsReply {
+  string metrics = 1;
+}
+
+message LeaderId {
+  uint64 term = 1;
+  uint64 node_id = 2;
+}
+message Vote {
+  LeaderId leader_id = 1;
+  bool committed = 2;
+}
+message LogId {
+  LeaderId leader_id = 1;
+  uint64 index = 2;
+}
+message RaftVoteRequest {
+  Vote vote = 1;
+  LogId last_log_id = 2;
+}
+message VoteResponse {
+  Vote vote = 1;
+  bool vote_granted = 2;
+  LogId last_log_id = 3;
+}
+message RaftVoteReply {
+  VoteResponse resp = 1;
+  sint32 code = 2;
+  string error = 3;
+}
+
+message Entry {
+  LogId log_id = 1;
+  // NOTE: decode by application
+  bytes payload = 2;
+}
+enum AppendEntriesResponse {
+  SUCCESS = 0;
+  CONFLICT = 1;
+  HIGHER_VOTE = 2;
+}
+message RaftAppendRequest {
+  Vote vote = 1;
+  LogId prev_log_id = 2;
+  repeated Entry entries = 3;
+  LogId leader_commit = 4;
+}
+message RaftAppendReply {
+  optional AppendEntriesResponse resp = 1;
+  Vote vote = 2;
+  sint32 code = 3;
+  string error = 4;
+}
+
+message SnapshotMeta {
+  LogId last_log_id = 1;
+  // last_membership
+  LogId membership_log_id = 2;
+  bytes membership = 3;
+  string snapshot_id = 4;
+}
+message RaftSnapshotRequest {
+  Vote vote = 1;
+  SnapshotMeta meta = 2;
+  uint64 offset = 3;
+  bytes data = 4;
+  bool done = 5;
+}
+message RaftSnapshotReply {
+  Vote resp = 1;
+  sint32 code = 2;
+  string error = 3;
+}
+
+
+// ==== Raft management extension
+message MetaRequest {}
+message MetaReply {
+  LeaderId leader_id = 5;
+  bytes membership = 6;
+}
+
+// ==== Normal RPC
+

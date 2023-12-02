@@ -3,6 +3,8 @@ name = "akasa-core"
 version = "0.1.1"
 edition = "2021"
 
+include = ["src", "build.rs", "proto"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -38,6 +40,16 @@ base64 = "0.21.0"
 ring = "0.16"
 crc32c = "0.6.3"
 openssl = { version = "0.10.51", features = ["vendored"] }
+serde_json = "1.0"
+rmp-serde = "1.1.2"
+anyhow = "1.0"
+anyerror = "0.1.9"
+openraft = { version = "=0.8.3", features = ["serde"] }
+prost = "0.12.3"
+tonic = { version = "0.10.2", features = ["transport", "channel"]}
+
+[build-dependencies]
+tonic-build = "0.9"
 
 [dev-dependencies]
 futures-sink = "0.3.26"
