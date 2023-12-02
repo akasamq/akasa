@@ -67,6 +67,7 @@ pub struct Listeners {
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct Listener {
     pub addr: SocketAddr,
+    pub reuse_port: bool,
     /// The proxy protocol v2 mode
     pub proxy_mode: Option<ProxyMode>,
 }
@@ -74,6 +75,7 @@ pub struct Listener {
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct TlsListener {
     pub addr: SocketAddr,
+    pub reuse_port: bool,
     /// Enable proxy protocol v2 or not
     pub proxy: bool,
     /// This CA file is for verify client certificate, if `verify_peer` is true
@@ -99,6 +101,7 @@ impl Default for Listeners {
             mqtt: Some(Listener {
                 addr: (Ipv4Addr::LOCALHOST, 1883).into(),
                 proxy_mode: None,
+                reuse_port: true,
             }),
             mqtts: None,
             ws: None,

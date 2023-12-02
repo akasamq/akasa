@@ -8,6 +8,8 @@ listeners:
   mqtt:
     # 绑定的 Socket 地址
     addr: 127.0.0.1:1883
+    # 允许多个 listener 绑定在同一个端口上，可以增加建立链接的速度
+    reuse_port: false
     # (可选) proxy protocol 模式, 可能的选项:
     #    null           : 不启用 proxy protocol
     #    Normal         : 客户端非 TLS, 服务端非 TLS
@@ -17,6 +19,8 @@ listeners:
   mqtts:
     # 绑定的 Socket 地址
     addr: 127.0.0.1:8883
+    # 允许多个 listener 绑定在同一个端口上，可以增加建立链接的速度
+    reuse_port: false
     # 是否开启 proxy protocol v2
     proxy: false
     # 用来认证客户端的 CA 文件, 如果 `verify_peer` 是 true 这个字段必须填上

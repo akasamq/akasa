@@ -106,6 +106,7 @@ impl MockConnControl {
         let hook_handler = TestHook;
         let conn_args = ConnectionArgs {
             addr: conn.bind,
+            reuse_port: false,
             proxy: false,
             proxy_tls_termination: false,
             websocket: false,

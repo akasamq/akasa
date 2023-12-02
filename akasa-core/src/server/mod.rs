@@ -250,6 +250,7 @@ fn build_tls_context(listener: &TlsListener) -> io::Result<SslAcceptor> {
 #[derive(Clone)]
 pub struct ConnectionArgs {
     pub(crate) addr: SocketAddr,
+    pub(crate) reuse_port: bool,
     pub(crate) proxy: bool,
     pub(crate) proxy_tls_termination: bool,
     pub(crate) websocket: bool,

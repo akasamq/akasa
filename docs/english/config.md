@@ -8,6 +8,8 @@ listeners:
   mqtt:
     # The socket address to bind
     addr: 127.0.0.1:1883
+    # Allows the socket to bind to an in-use port to increase connection accept speed
+    reuse_port: false
     # (optional) proxy protocol mode, can be:
     #    null           : Disable proxy protocol
     #    Normal         : Client side non-TLS, server side non-TLS
@@ -17,6 +19,8 @@ listeners:
   mqtts:
     # The socket address to bind
     addr: 127.0.0.1:8883
+    # Allows the socket to bind to an in-use port to increase connection accept speed
+    reuse_port: false
     # Enable proxy protocol v2 or not
     proxy: false
     # This CA file is for verify client certificate, if `verify_peer` is true this field MUST be presented.
