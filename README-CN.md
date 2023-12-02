@@ -44,7 +44,7 @@ System : Arch Linux
 
 # 参与者
 FlashMQ : v1.6.9
-  Akasa : v0.1.0 (tokio runtime)
+  Akasa : v0.1.0
    EMQX : v5.2.1
 VerneMQ : v1.13.0
 
