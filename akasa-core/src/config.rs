@@ -11,6 +11,7 @@ pub const DEFAULT_MAX_PACKET_SIZE: u32 = 5 + 268_435_455;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
     pub listeners: Listeners,
+    pub cluster: Option<Cluster>,
     pub auth: AuthConfig,
     // FIXME: replace it with outter data: { username => PasswordInfo }
     pub scram_users: HashMap<String, ScramPasswordInfo>,
@@ -110,6 +111,12 @@ impl Default for Listeners {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct Cluster {
+    id: u64,
+    bind: SocketAddr,
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum SaslMechanism {
     #[serde(rename = "SCRAM-SHA-256")]
@@ -169,6 +176,7 @@ impl Default for Config {
     fn default() -> Config {
         let config = Config {
             listeners: Listeners::default(),
+            cluster: None,
             auth: AuthConfig {
                 enable: true,
                 password_file: Some(PathBuf::from("/path/to/passwords/file")),
