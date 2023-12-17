@@ -53,7 +53,7 @@ VerneMQ : v1.13.0
 
 # Connections (clean_session=false)
 FlashMQ : 250k connections, 0.9GB memory
-  Akasa : 250k connections,   5GB memory
+  Akasa : 250k connections, 2.8GB memory
    EMQX : 250k connections,   5GB memory
 VerneMQ :  50k connections,  20GB memory
 
