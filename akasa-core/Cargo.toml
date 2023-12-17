@@ -37,7 +37,7 @@ async-trait = "0.1.64"
 base64 = "0.21.0"
 ring = "0.16"
 crc32c = "0.6.3"
-openssl = "0.10.51"
+openssl = { version = "0.10.51", features = ["vendored"] }
 
 [dev-dependencies]
 futures-sink = "0.3.26"

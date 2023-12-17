@@ -18,4 +18,8 @@ rpassword = "7.2.0"
 rand = { version = "0.8.5", features = ["getrandom"] }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
-tikv-jemallocator = "0.5.4"
+tikv-jemallocator = { version = "0.5.4", optional = true }
+
+[features]
+default = ["jemalloc"]
+jemalloc = ["tikv-jemallocator"]

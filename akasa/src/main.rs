@@ -17,10 +17,11 @@ use rand::{rngs::OsRng, RngCore};
 
 use default_hook::DefaultHook;
 
+#[cfg(all(not(target_env = "msvc"), feature="jemalloc"))]
 #[cfg(not(target_env = "msvc"))]
 use tikv_jemallocator::Jemalloc;
 
-#[cfg(not(target_env = "msvc"))]
+#[cfg(all(not(target_env = "msvc"), feature="jemalloc"))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
