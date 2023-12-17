@@ -7,7 +7,7 @@ rust-musl-builder cargo build --release
 
 ### The way to run the container:
 ```shell
-docker run --init -it --rm -p 1883:1883 -p 8883:8883 -v "$HOME/local/etc":/opt akasa:0.1.1 akasa start --config /opt/akasa-config.yaml
+docker run --init -it --rm -p 1883:1883 -v "$HOME/local/etc":/opt akasa:0.1.1 akasa start --config /opt/akasa-config.yaml
 ```
 
 ### The way to build the image:

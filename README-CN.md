@@ -15,7 +15,11 @@ Akasa 是一个 Rust 写的高性能，低延迟，高度可扩展的 MQTT 服�
 - [ ] 基于 Raft 的服务器集群 (*敬请期待*)
 
 ## 如何使用
-
+最简单的方法是通过 docker 来使用:
+```shell
+docker run --init -it --rm -p 1883:1883 -v "$HOME/local/etc":/opt thewawar/akasa:0.1.1 akasa start --config /opt/akasa-config.yaml
+```
+或者你可以直接从源码编译:
 ```shell
 git clone https://github.com/akasamq/akasa.git && cd akasa
 # 可能你需要先安装 openssl: https://docs.rs/openssl/latest/openssl/#automatic
@@ -85,7 +89,7 @@ Akasa 会有一个企业版本，企业版中的额外功能包括:
   * 可以跑非常复杂的业务逻辑 (比如 [TensorFlow][tensorflow])
   * 相对于脚本语言来说有绝对的性能优势
   * 在线更新
-- [ ] 和 Akasa 交互的 HTTP API 
+- [ ] 和 Akasa 交互的 HTTP API
 - [ ] 统计指标
 - [ ] 流量控制
 - [ ] 数据集成 (路由数据到 MySQL/Kafka/InfluxDB...)

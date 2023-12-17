@@ -19,6 +19,12 @@ The underlying MQTT protocol message codec ([mqtt-proto][mqtt-proto]) is careful
 
 ## How to Use
 
+The easist way is use docker:
+```shell
+docker run --init -it --rm -p 1883:1883 -v "$HOME/local/etc":/opt thewawar/akasa:0.1.1 akasa start --config /opt/akasa-config.yaml
+```
+
+Or build from source:
 ```shell
 git clone https://github.com/akasamq/akasa.git && cd akasa
 # You may also need to install openssl: https://docs.rs/openssl/latest/openssl/#automatic
