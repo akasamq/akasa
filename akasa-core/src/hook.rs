@@ -41,137 +41,169 @@ use crate::state::GlobalState;
 pub trait Hook {
     async fn v5_before_connect(
         &self,
-        peer: SocketAddr,
-        connect: &v5::Connect,
-    ) -> HookResult<HookConnectCode>;
+        _peer: SocketAddr,
+        _connect: &v5::Connect,
+    ) -> HookResult<HookConnectCode> {
+        Ok(HookConnectCode::Success)
+    }
 
     async fn v5_after_connect(
         &self,
-        session: &SessionV5,
-        session_present: bool,
-    ) -> HookResult<Vec<HookAction>>;
+        _session: &SessionV5,
+        _session_present: bool,
+    ) -> HookResult<Vec<HookAction>> {
+        Ok(Vec::new())
+    }
 
     async fn v5_before_publish(
         &self,
-        session: &SessionV5,
-        encode_len: usize,
-        packet_body: &[u8],
-        publish: &mut v5::Publish,
-        changed: &mut bool,
-    ) -> HookResult<HookPublishCode>;
+        _session: &SessionV5,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _publish: &mut v5::Publish,
+        _changed: &mut bool,
+    ) -> HookResult<HookPublishCode> {
+        Ok(HookPublishCode::Success)
+    }
 
     async fn v5_after_publish(
         &self,
-        session: &SessionV5,
-        encode_len: usize,
-        packet_body: &[u8],
-        publish: &v5::Publish,
-        changed: bool,
-    ) -> HookResult<Vec<HookAction>>;
+        _session: &SessionV5,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _publish: &v5::Publish,
+        _changed: bool,
+    ) -> HookResult<Vec<HookAction>> {
+        Ok(Vec::new())
+    }
 
     async fn v5_before_subscribe(
         &self,
-        session: &SessionV5,
-        encode_len: usize,
-        packet_body: &[u8],
-        subscribe: &mut v5::Subscribe,
-        changed: &mut bool,
-    ) -> HookResult<HookSubscribeCode>;
+        _session: &SessionV5,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _subscribe: &mut v5::Subscribe,
+        _changed: &mut bool,
+    ) -> HookResult<HookSubscribeCode> {
+        Ok(HookSubscribeCode::Success)
+    }
 
     async fn v5_after_subscribe(
         &self,
-        session: &SessionV5,
-        encode_len: usize,
-        packet_body: &[u8],
-        subscribe: &v5::Subscribe,
-        changed: bool,
-        codes: Option<Vec<v5::SubscribeReasonCode>>,
-    ) -> HookResult<Vec<HookAction>>;
+        _session: &SessionV5,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _subscribe: &v5::Subscribe,
+        _changed: bool,
+        _codes: Option<Vec<v5::SubscribeReasonCode>>,
+    ) -> HookResult<Vec<HookAction>> {
+        Ok(Vec::new())
+    }
 
     async fn v5_before_unsubscribe(
         &self,
-        session: &SessionV5,
-        encode_len: usize,
-        packet_body: &[u8],
-        unsubscribe: &mut v5::Unsubscribe,
-        changed: &mut bool,
-    ) -> HookResult<HookUnsubscribeCode>;
+        _session: &SessionV5,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _unsubscribe: &mut v5::Unsubscribe,
+        _changed: &mut bool,
+    ) -> HookResult<HookUnsubscribeCode> {
+        Ok(HookUnsubscribeCode::Success)
+    }
 
     async fn v5_after_unsubscribe(
         &self,
-        session: &SessionV5,
-        encode_len: usize,
-        packet_body: &[u8],
-        unsubscribe: &v5::Unsubscribe,
-        changed: bool,
-    ) -> HookResult<Vec<HookAction>>;
+        _session: &SessionV5,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _unsubscribe: &v5::Unsubscribe,
+        _changed: bool,
+    ) -> HookResult<Vec<HookAction>> {
+        Ok(Vec::new())
+    }
 
     async fn v3_before_connect(
         &self,
-        peer: SocketAddr,
-        connect: &v3::Connect,
-    ) -> HookResult<HookConnectCode>;
+        _peer: SocketAddr,
+        _connect: &v3::Connect,
+    ) -> HookResult<HookConnectCode> {
+        Ok(HookConnectCode::Success)
+    }
 
     async fn v3_after_connect(
         &self,
-        session: &SessionV3,
-        session_present: bool,
-    ) -> HookResult<Vec<HookAction>>;
+        _session: &SessionV3,
+        _session_present: bool,
+    ) -> HookResult<Vec<HookAction>> {
+        Ok(Vec::new())
+    }
 
     async fn v3_before_publish(
         &self,
-        session: &SessionV3,
-        encode_len: usize,
-        packet_body: &[u8],
-        publish: &mut v3::Publish,
-        changed: &mut bool,
-    ) -> HookResult<HookPublishCode>;
+        _session: &SessionV3,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _publish: &mut v3::Publish,
+        _changed: &mut bool,
+    ) -> HookResult<HookPublishCode> {
+        Ok(HookPublishCode::Success)
+    }
 
     async fn v3_after_publish(
         &self,
-        session: &SessionV3,
-        encode_len: usize,
-        packet_body: &[u8],
-        publish: &v3::Publish,
-        changed: bool,
-    ) -> HookResult<Vec<HookAction>>;
+        _session: &SessionV3,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _publish: &v3::Publish,
+        _changed: bool,
+    ) -> HookResult<Vec<HookAction>> {
+        Ok(Vec::new())
+    }
 
     async fn v3_before_subscribe(
         &self,
-        session: &SessionV3,
-        encode_len: usize,
-        packet_body: &[u8],
-        subscribe: &mut v3::Subscribe,
-        changed: &mut bool,
-    ) -> HookResult<HookSubscribeCode>;
+        _session: &SessionV3,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _subscribe: &mut v3::Subscribe,
+        _changed: &mut bool,
+    ) -> HookResult<HookSubscribeCode> {
+        Ok(HookSubscribeCode::Success)
+    }
 
     async fn v3_after_subscribe(
         &self,
-        session: &SessionV3,
-        encode_len: usize,
-        packet_body: &[u8],
-        subscribe: &v3::Subscribe,
-        changed: bool,
-        codes: Option<Vec<v3::SubscribeReturnCode>>,
-    ) -> HookResult<Vec<HookAction>>;
+        _session: &SessionV3,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _subscribe: &v3::Subscribe,
+        _changed: bool,
+        _codes: Option<Vec<v3::SubscribeReturnCode>>,
+    ) -> HookResult<Vec<HookAction>> {
+        Ok(Vec::new())
+    }
 
     async fn v3_before_unsubscribe(
         &self,
-        session: &SessionV3,
-        encode_len: usize,
-        packet_body: &[u8],
-        unsubscribe: &mut v3::Unsubscribe,
-        changed: &mut bool,
-    ) -> HookResult<HookUnsubscribeCode>;
+        _session: &SessionV3,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _unsubscribe: &mut v3::Unsubscribe,
+        _changed: &mut bool,
+    ) -> HookResult<HookUnsubscribeCode> {
+        Ok(HookUnsubscribeCode::Success)
+    }
 
     async fn v3_after_unsubscribe(
         &self,
-        session: &SessionV3,
-        encode_len: usize,
-        packet_body: &[u8],
-        unsubscribe: &v3::Unsubscribe,
-        changed: bool,
-    ) -> HookResult<Vec<HookAction>>;
+        _session: &SessionV3,
+        _encode_len: usize,
+        _packet_body: &[u8],
+        _unsubscribe: &v3::Unsubscribe,
+        _changed: bool,
+    ) -> HookResult<Vec<HookAction>> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
