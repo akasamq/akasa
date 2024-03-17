@@ -5,12 +5,10 @@ use akasa_core::{
     Hook, HookAction, HookConnectCode, HookPublishCode, HookResult, HookSubscribeCode,
     HookUnsubscribeCode, SessionV3, SessionV5,
 };
-use async_trait::async_trait;
 
 #[derive(Clone)]
 pub struct DefaultHook;
 
-#[async_trait]
 impl Hook for DefaultHook {
     // =========================
     // ==== MQTT v5.x hooks ====

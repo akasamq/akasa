@@ -6,7 +6,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use async_trait::async_trait;
 use futures_sink::Sink;
 use mqtt_proto::{v3, v5};
 use rand::{rngs::OsRng, RngCore};
@@ -222,7 +221,6 @@ impl AsyncWrite for MockConn {
 #[derive(Clone)]
 pub struct TestHook;
 
-#[async_trait]
 impl Hook for TestHook {
     // =========================
     // ==== MQTT v5.x hooks ====

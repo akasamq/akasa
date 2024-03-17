@@ -110,12 +110,13 @@ async fn handle_online<
     let mut session = Session::new(&global.config, peer);
     let mut receiver = None;
 
+    let timeout = async {
+        log::info!("connection timeout: {}", peer);
+        let _ = timeout_receiver.recv_async().await;
+        Err(Error::IoError(io::ErrorKind::TimedOut, String::new()))
+    };
     let packet = match Connect::decode_with_protocol(&mut conn, protocol)
-        .or(async {
-            log::info!("connection timeout: {}", peer);
-            let _ = timeout_receiver.recv_async().await;
-            Err(Error::IoError(io::ErrorKind::TimedOut, String::new()))
-        })
+        .or(timeout)
         .await
     {
         Ok(packet) => packet,

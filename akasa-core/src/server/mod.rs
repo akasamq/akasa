@@ -124,25 +124,21 @@ pub async fn handle_accept<
 
     // Handle WebSocket
     let mut ws_wrapper = if conn_args.websocket {
-        let stream = match accept_hdr_async(
-            tls_wrapper,
-            |req: &http::Request<_>, mut resp: http::Response<_>| {
-                if let Some(protocol) = req.headers().get("Sec-WebSocket-Protocol") {
-                    // see: [MQTT-6.0.0-3]
-                    if protocol != "mqtt" {
-                        log::info!("invalid WebSocket subprotocol name: {:?}", protocol);
-                        return Err(http::Response::new(Some(
-                            "invalid WebSocket subprotocol name".to_string(),
-                        )));
-                    }
-                    resp.headers_mut()
-                        .insert("Sec-WebSocket-Protocol", protocol.clone());
+        let handler = |req: &http::Request<_>, mut resp: http::Response<_>| {
+            if let Some(protocol) = req.headers().get("Sec-WebSocket-Protocol") {
+                // see: [MQTT-6.0.0-3]
+                if protocol != "mqtt" {
+                    log::info!("invalid WebSocket subprotocol name: {:?}", protocol);
+                    return Err(http::Response::new(Some(
+                        "invalid WebSocket subprotocol name".to_string(),
+                    )));
                 }
-                Ok(resp)
-            },
-        )
-        .await
-        {
+                resp.headers_mut()
+                    .insert("Sec-WebSocket-Protocol", protocol.clone());
+            }
+            Ok(resp)
+        };
+        let stream = match accept_hdr_async(tls_wrapper, handler).await {
             Ok(stream) => stream,
             Err(err) => {
                 log::warn!("Accept websocket connection error: {:?}", err);

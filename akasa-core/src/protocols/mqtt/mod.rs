@@ -15,4 +15,4 @@ pub use auth::{check_password, dump_passwords, hash_password, load_passwords, MI
 pub use online_loop::{BroadcastPackets, OnlineLoop, OnlineSession, WritePacket};
 pub use pending::{PendingPacketStatus, PendingPackets};
 pub use retain::{RetainContent, RetainTable};
-pub use route::{RouteContent, RouteTable};
+pub use route::RouteTable;
