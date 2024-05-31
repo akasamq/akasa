@@ -211,6 +211,14 @@ pub trait Hook {
     ) -> impl Future<Output = HookResult<Vec<HookAction>>> + Send {
         future::ready(Ok(Vec::new()))
     }
+
+    fn v3_after_disconnect(
+        &self,
+        _session: &SessionV3,
+        _taken_over: bool,
+    ) -> impl Future<Output = HookResult<()>> + Send {
+        future::ready(Ok(()))
+    }
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -463,6 +471,10 @@ pub enum HookRequest {
         encode_len: usize,
         packet_body: Vec<MaybeUninit<u8>>,
         unsubscribe: v3::Unsubscribe,
+    },
+    V3AfterDisconnect {
+        context: LockedHookContext<SessionV3>,
+        taken_over: bool,
     },
 }
 
@@ -773,6 +785,15 @@ pub async fn handle_request<H: Hook + Send + Sync>(
                 Err(err) => Err(Some(err.into())),
             };
             HookResponse::Normal(receipt)
+        }
+        HookRequest::V3AfterDisconnect {
+            context,
+            taken_over,
+        } => {
+            let result = handler
+                .v3_after_disconnect(context.session_ref(), taken_over)
+                .await;
+            HookResponse::AfterDisconnect(result.map_err(Into::into))
         }
     }
 }

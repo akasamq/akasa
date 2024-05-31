@@ -246,4 +246,9 @@ impl Hook for DefaultHook {
         log::debug!("v3_after_unsubscribe(), [{}]", session.client_id());
         Ok(Vec::new())
     }
+
+    async fn v3_after_disconnect(&self, session: &SessionV3, _taken_over: bool) -> HookResult<()> {
+        log::debug!("v3_after_disconnect(), [{}]", session.client_id());
+        Ok(())
+    }
 }

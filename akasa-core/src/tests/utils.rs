@@ -338,6 +338,11 @@ impl Hook for TestHook {
         Ok(Vec::new())
     }
 
+    async fn v5_after_disconnect(&self, session: &SessionV5, _taken_over: bool) -> HookResult<()> {
+        log::debug!("v5_after_disconnect(), [{}]", session.client_id());
+        Ok(())
+    }
+
     // =========================
     // ==== MQTT v3.x hooks ====
     // =========================
@@ -452,5 +457,10 @@ impl Hook for TestHook {
     ) -> HookResult<Vec<HookAction>> {
         log::debug!("v3_after_unsubscribe(), [{}]", session.client_id());
         Ok(Vec::new())
+    }
+
+    async fn v3_after_disconnect(&self, session: &SessionV3, _taken_over: bool) -> HookResult<()> {
+        log::debug!("v3_after_disconnect(), [{}]", session.client_id());
+        Ok(())
     }
 }
