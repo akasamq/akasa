@@ -298,6 +298,9 @@ async fn handle_online<
         PollPacketState::default(),
     );
     let io_error = online_loop.await;
+    if global.config.hook.enable_after_disconnect {
+        after_disconnect_hook(&mut session, taken_over, hook_handler, global).await?;
+    }
     if taken_over {
         return Ok(None);
     }
@@ -979,5 +982,23 @@ async fn after_connect_hook<H: Hook + Clone + Send + Sync>(
     for action in actions {
         session.apply_action(action, global)?;
     }
+    Ok(())
+}
+
+async fn after_disconnect_hook<H: Hook + Clone + Send + Sync>(
+    session: &mut Session,
+    taken_over: bool,
+    hook_handler: &H,
+    global: &Arc<GlobalState>,
+) -> io::Result<()> {
+    let locked_hook_context = LockedHookContext::new(session, &mut Default::default());
+    let hook_request = HookRequest::V5AfterDisconnect {
+        context: locked_hook_context,
+        taken_over,
+    };
+    match handle_request(hook_request, hook_handler.clone(), global.clone()).await {
+        HookResponse::AfterDisconnect(result) => result?,
+        _ => panic!("invalid response"),
+    };
     Ok(())
 }

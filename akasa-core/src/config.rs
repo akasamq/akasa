@@ -148,6 +148,7 @@ pub enum SharedSubscriptionMode {
 pub struct HookConfig {
     pub enable_before_connect: bool,
     pub enable_after_connect: bool,
+    pub enable_after_disconnect: bool,
     pub enable_publish: bool,
     pub enable_subscribe: bool,
     pub enable_unsubscribe: bool,
@@ -158,6 +159,7 @@ impl Default for HookConfig {
         HookConfig {
             enable_before_connect: true,
             enable_after_connect: true,
+            enable_after_disconnect: true,
             enable_publish: true,
             enable_subscribe: true,
             enable_unsubscribe: true,

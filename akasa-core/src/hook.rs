@@ -121,6 +121,14 @@ pub trait Hook {
         future::ready(Ok(Vec::new()))
     }
 
+    fn v5_after_disconnect(
+        &self,
+        _session: &SessionV5,
+        _taken_over: bool,
+    ) -> impl Future<Output = HookResult<()>> + Send {
+        future::ready(Ok(()))
+    }
+
     fn v3_before_connect(
         &self,
         _peer: SocketAddr,
@@ -394,6 +402,7 @@ pub enum HookResponse {
     Normal(Result<Vec<HookAction>, Option<io::Error>>),
     BeforeConnect(io::Result<HookConnectCode>),
     AfterConnect(io::Result<Vec<HookAction>>),
+    AfterDisconnect(io::Result<()>),
 }
 
 pub enum HookRequest {
@@ -423,6 +432,10 @@ pub enum HookRequest {
         encode_len: usize,
         packet_body: Vec<MaybeUninit<u8>>,
         unsubscribe: v5::Unsubscribe,
+    },
+    V5AfterDisconnect {
+        context: LockedHookContext<SessionV5>,
+        taken_over: bool,
     },
 
     V3BeforeConnect {
@@ -617,6 +630,15 @@ pub async fn handle_request<H: Hook + Send + Sync>(
                 Err(err) => Err(Some(err.into())),
             };
             HookResponse::Normal(receipt)
+        }
+        HookRequest::V5AfterDisconnect {
+            context,
+            taken_over,
+        } => {
+            let result = handler
+                .v5_after_disconnect(context.session_ref(), taken_over)
+                .await;
+            HookResponse::AfterDisconnect(result.map_err(Into::into))
         }
 
         HookRequest::V3BeforeConnect { peer, connect } => {

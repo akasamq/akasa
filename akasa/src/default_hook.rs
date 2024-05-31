@@ -126,6 +126,11 @@ impl Hook for DefaultHook {
         Ok(Vec::new())
     }
 
+    async fn v5_after_disconnect(&self, session: &SessionV5, _taken_over: bool) -> HookResult<()> {
+        log::debug!("v5_after_disconnect(), [{}]", session.client_id());
+        Ok(())
+    }
+
     // =========================
     // ==== MQTT v3.x hooks ====
     // =========================
