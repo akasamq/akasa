@@ -15,7 +15,7 @@ The underlying MQTT protocol message codec ([mqtt-proto][mqtt-proto]) is careful
 - [x] Support [Proxy Protocol V2][proxy-protocol]
 - [x] Use a [Hook trait][hook-trait] to extend the server
 - [x] Simple password file based authentication
-- [ ] Raft based cluster (*coming soon*)
+- [ ] Cluster mode (*coming soon*)
 
 ## How to Use
 

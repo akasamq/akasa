@@ -12,7 +12,7 @@ Akasa 是一个 Rust 写的高性能，低延迟，高度可扩展的 MQTT 服�
 - [x] 支持 [Proxy Protocol V2][proxy-protocol]
 - [x] 使用 [Hook trait][hook-trait] 来扩展服务器
 - [x] 用一个密码文件来支持简单的认证
-- [ ] 基于 Raft 的服务器集群 (*敬请期待*)
+- [ ] 集群模式 (*敬请期待*)
 
 ## 如何使用
 最简单的方法是通过 docker 来使用:
