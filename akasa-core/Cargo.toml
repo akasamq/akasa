@@ -37,9 +37,23 @@ base64 = "0.21.0"
 ring = "0.16"
 crc32c = "0.6.3"
 openssl = { version = "0.10.51", features = ["vendored"] }
+axum = "0.8.1"
+lazy_static = "1.5.0"
+prometheus = { version = "0.13.4", features = ["process"] }
+utoipa = { version = "5.3.1" }
+utoipa-axum = "0.2.0"
+utoipa-swagger-ui = { version = "9.0.0", features = ["axum"], optional = true }
+serde_json = "1.0.140"
 
 [dev-dependencies]
 futures-sink = "0.3.26"
 tokio-util = "0.7.7"
 env_logger = "0.9.3"
 async-trait = "0.1.64"
+axum-test = "17.2.0"
+
+[features]
+default = [
+    "swagger-ui",
+]
+swagger-ui = ["utoipa-swagger-ui/vendored"]
