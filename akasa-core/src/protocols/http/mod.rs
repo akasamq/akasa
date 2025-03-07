@@ -3,11 +3,12 @@ mod prometheus;
 
 use std::sync::Arc;
 
-use crate::GlobalState;
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
+
+use crate::GlobalState;
 
 #[derive(OpenApi)]
 #[openapi(info(title = "Akasa"))]
@@ -16,10 +17,10 @@ struct ApiDoc;
 pub fn get_router(cfg: &crate::config::Http, global: Arc<GlobalState>) -> axum::Router {
     let mut router = OpenApiRouter::with_openapi(ApiDoc::openapi());
 
-    router = router.routes(routes!(super::http::health::health,));
+    router = router.routes(routes!(health::health,));
 
     if cfg.prometheus {
-        router = router.routes(routes!(super::http::prometheus::prometheus_metrics));
+        router = router.routes(routes!(prometheus::prometheus_metrics));
     }
 
     let (router, _openapi) = router.split_for_parts();
