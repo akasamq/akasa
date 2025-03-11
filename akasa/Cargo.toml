@@ -20,5 +20,9 @@ rand = { version = "0.8.5", features = ["getrandom"] }
 tikv-jemallocator = { version = "0.5.4", optional = true }
 
 [features]
-default = ["jemalloc"]
+default = [
+    "jemalloc",
+    "swagger-ui",
+]
 jemalloc = ["tikv-jemallocator"]
+swagger-ui = ["akasa-core/swagger-ui"]
