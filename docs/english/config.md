@@ -42,6 +42,17 @@ auth:
   enable: true
   # The password file, please use insert-password/remove-password subcommand to manage the passwords
   password_file: /path/to/passwords/file
+  # (optional) Use JWT for authorization instead of password
+  jwt:
+    # The file with secrets
+    secrets_file: /path/to/jwt.yaml
+    # File contains secrets map
+    # default:  # name of secret
+    #   alg: HS512
+    #   secret: *****
+    # my_old_deprecated_secret:  # drop after 2035-03-12
+    #   alg: HS256
+    #   secret: *****
 
 # (v5.0 only) Scram users used in MQTT v5.0 enhanced authentication.
 #   To generate the hashed password: https://github.com/akasamq/akasa/blob/8503adb566c46074d57bfea8dbe39a6fd3403e28/akasa-core/src/tests/protocols/mqtt/v5/v500/auth.rs#L21-L24

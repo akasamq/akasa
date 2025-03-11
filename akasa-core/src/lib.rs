@@ -1,3 +1,4 @@
+pub mod auth;
 mod config;
 mod hook;
 mod protocols;

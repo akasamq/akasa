@@ -1,4 +1,4 @@
-mod auth;
+pub mod auth;
 mod common;
 mod online_loop;
 mod pending;

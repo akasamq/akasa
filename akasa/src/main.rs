@@ -7,13 +7,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use akasa_core::{
+    auth::{Auth, Claims},
     dump_passwords, hash_password, load_passwords, server, AuthPassword, Config, GlobalState,
     HashAlgorithm as CoreHashAlgorithm, MIN_SALT_LEN,
 };
-use anyhow::{anyhow, bail};
-use clap::{Parser, Subcommand, ValueEnum};
+use anyhow::{anyhow, bail, Context};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use dashmap::DashMap;
 use rand::{rngs::OsRng, RngCore};
+use serde::de::DeserializeOwned;
 
 use default_hook::DefaultHook;
 
@@ -82,6 +84,21 @@ enum Commands {
         #[clap(long, value_name = "STRING")]
         username: String,
     },
+
+    /// Generate jwt token
+    JwtGen {
+        /// The secrets file path
+        #[clap(long, value_name = "FILE")]
+        path: PathBuf,
+
+        /// The username
+        #[clap(long, visible_alias = "sub", value_name = "STRING")]
+        username: Option<String>,
+
+        /// The superuser
+        #[clap(long, action = ArgAction::SetTrue)]
+        superuser: bool,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -90,6 +107,12 @@ enum HashAlgorithm {
     Sha512,
     Sha256Pkbdf2,
     Sha512Pkbdf2,
+}
+
+fn load<T: DeserializeOwned>(f: &PathBuf) -> anyhow::Result<T> {
+    let s = fs::read_to_string(f).context(format!("read {f:?}"))?;
+    let r = serde_yaml::from_str(&s).context(format!("parse {f:?}"))?;
+    Ok(r)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -111,16 +134,19 @@ fn main() -> anyhow::Result<()> {
             }
             log::info!("Listen on {:#?}", config.listeners);
             let hook_handler = DefaultHook;
-            let auth_passwords = if config.auth.enable {
+            let mut auth = Auth::default();
+            if config.auth.enable {
                 let path = config.auth.password_file.as_ref().expect("pass file");
                 let file =
                     fs::File::open(path).map_err(|err| anyhow!("load passwords: {}", err))?;
-                load_passwords(file)?
-            } else {
-                DashMap::new()
-            };
+                auth.update_passwords(load_passwords(file)?);
+            }
+            if let Some(ref f) = config.auth.jwt.secrets_file {
+                let secrets = load(f).context(format!("Jwt secrets load error {f:?}"))?;
+                auth.update_jwt(&secrets);
+            }
             let mut global_state = GlobalState::new(config);
-            global_state.auth_passwords = auth_passwords;
+            global_state.auth = auth;
             let global = Arc::new(global_state);
             server::rt::start(hook_handler, global)?;
         }
@@ -189,6 +215,20 @@ fn main() -> anyhow::Result<()> {
             } else {
                 println!("user={username} not found");
             }
+        }
+        Commands::JwtGen {
+            path: ref f,
+            username,
+            superuser,
+        } => {
+            let mut auth = Auth::default();
+            let secrets = load(f).context(format!("Jwt secrets load error {f:?}"))?;
+            auth.update_jwt(&secrets);
+            let mut claims = Claims::default();
+            claims.sub = username.unwrap_or_default();
+            claims.superuser = superuser;
+            let token = auth.jwt.encode(claims)?;
+            println!("JWT: {token}");
         }
     }
     Ok(())
