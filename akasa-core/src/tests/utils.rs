@@ -31,7 +31,7 @@ impl GlobalState {
         let mut salt = vec![0u8; MIN_SALT_LEN];
         SysRng.try_fill_bytes(&mut salt).unwrap();
         let hashed_password = hash_password(algo, &salt, password.as_bytes());
-        self.auth_passwords.insert(
+        self.auth.update_password(
             username.to_owned(),
             AuthPassword {
                 hash_algorithm: algo,

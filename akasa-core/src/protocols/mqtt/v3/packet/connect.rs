@@ -8,7 +8,7 @@ use mqtt_proto::{
 };
 use tokio::io::AsyncWrite;
 
-use crate::protocols::mqtt::{check_password, start_keep_alive_timer};
+use crate::protocols::mqtt::start_keep_alive_timer;
 use crate::state::{AddClientReceipt, ClientReceiver, GlobalState};
 
 use super::common::write_packet;
@@ -71,7 +71,9 @@ clean session : {}
         } else {
             let username = packet.username.as_ref().unwrap();
             let password = packet.password.as_ref().unwrap();
-            if !check_password(&global.auth_passwords, username, password) {
+            if let Ok(user) = global.auth.authorize(username, password) {
+                session.user = Some(Arc::new(user));
+            } else {
                 log::debug!("incorrect password for user: {}", username);
                 return_code = ConnectReturnCode::BadUserNameOrPassword;
             }

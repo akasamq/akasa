@@ -13,6 +13,7 @@ use flume::{bounded, Receiver, Sender};
 use mqtt_proto::{v5::PublishProperties, Protocol, QoS, TopicFilter, TopicName};
 use parking_lot::Mutex;
 
+use crate::auth::Auth;
 use crate::config::Config;
 use crate::protocols::mqtt::{self, RetainTable, RouteTable};
 
@@ -30,7 +31,7 @@ pub struct GlobalState {
     clients: DashMap<ClientId, ClientSender>,
 
     pub config: Config,
-    pub auth_passwords: DashMap<String, AuthPassword>,
+    pub auth: Auth,
 
     /// MQTT route table
     pub route_table: RouteTable,
@@ -77,7 +78,7 @@ impl GlobalState {
             clients: DashMap::new(),
 
             config,
-            auth_passwords: DashMap::new(),
+            auth: Auth::default(),
             route_table: RouteTable::default(),
             retain_table: RetainTable::default(),
         }

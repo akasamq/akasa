@@ -10,6 +10,7 @@ use mqtt_proto::{
 };
 use parking_lot::RwLock;
 
+use crate::auth::user::User;
 use crate::config::Config;
 use crate::protocols::scram::server::ScramServer;
 use crate::state::{ClientId, ClientReceiver};
@@ -45,7 +46,7 @@ pub struct Session {
     pub(super) server_keep_alive: bool,
     // (username, Option<role>)
     pub scram_auth_result: Option<(String, Option<String>)>,
-    pub username: Option<Arc<str>>,
+    pub user: Option<Arc<User>>,
     pub keep_alive: u16,
     pub clean_start: bool,
     pub last_will: Option<LastWill>,
@@ -111,7 +112,7 @@ impl Session {
             assigned_client_id: false,
             server_keep_alive: false,
             scram_auth_result: None,
-            username: None,
+            user: None,
             keep_alive: 0,
             clean_start: true,
             last_will: None,
