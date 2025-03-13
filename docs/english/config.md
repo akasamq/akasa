@@ -37,6 +37,16 @@ listeners:
   ws: null
   # (same with `listeners.mqtts`) WebSocket with TLS listener
   wss: null
+  # (optional) API entry point
+  http:
+    # The socket address to bind
+    addr: 127.0.0.1:8881
+    # Allows the socket to bind to an in-use port to increase connection accept speed
+    reuse_port: false
+    # Enable prometheus on location /metrics
+    prometheus: true
+    # Enable Swagger-UI for api documentation on location /swagger-ui/
+    swagger_ui: true
 # Password file based authentication, the config used to check username/password fields in connect packet.
 auth:
   enable: true
