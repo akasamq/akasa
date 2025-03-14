@@ -26,9 +26,10 @@ fn skip_false(b: &bool) -> bool {
 
 impl From<Claims> for User {
     fn from(value: Claims) -> Self {
-        Self {
-            username: value.sub,
-            superuser: value.superuser,
+        if value.superuser {
+            Self::new_superuser(value.sub)
+        } else {
+            Self::new(value.sub)
         }
     }
 }
@@ -49,14 +50,14 @@ pub enum AuthError {
 impl Auth {
     pub fn authorize(&self, username: &str, password: &[u8]) -> Result<User, AuthError> {
         if check_password(&self.passwords, username, password) {
-            Ok(User::new(username))
+            Ok(User::new(username.to_string()))
         } else if let Ok(mut claims) = self.jwt.decode::<Claims>(password) {
             if claims.sub.is_empty() {
                 claims.sub = username.to_string();
             }
             Ok(claims.into())
         } else if self.allow_anonymous {
-            Ok(User::super_user(username))
+            Ok(User::new_superuser(username.to_string()))
         } else {
             Err(AuthError::NotAuthorized)
         }
