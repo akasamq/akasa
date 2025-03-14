@@ -156,9 +156,25 @@ pub struct ScramPasswordInfo {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[serde(tag = "alg")]
+pub enum JwtSecret {
+    HS256 { secret: String },
+    HS384 { secret: String },
+    HS512 { secret: String },
+}
+
+#[derive(Default, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct JwtConfig {
+    #[serde(default)]
+    pub secrets_file: Option<PathBuf>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct AuthConfig {
     pub enable: bool,
     pub password_file: Option<PathBuf>,
+    #[serde(default)]
+    pub jwt: JwtConfig,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
@@ -198,6 +214,9 @@ impl Default for Config {
             auth: AuthConfig {
                 enable: true,
                 password_file: Some(PathBuf::from("/path/to/passwords/file")),
+                jwt: JwtConfig {
+                    secrets_file: Some(PathBuf::from("/path/to/secrets/jwt.yaml")),
+                },
             },
             scram_users: vec![("user", (b"***", 4096, b"salt"))]
                 .into_iter()
@@ -246,6 +265,7 @@ impl Config {
             auth: AuthConfig {
                 enable: false,
                 password_file: None,
+                jwt: JwtConfig::default(),
             },
             ..Default::default()
         }

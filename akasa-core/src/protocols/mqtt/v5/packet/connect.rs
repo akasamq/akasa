@@ -14,7 +14,7 @@ use scram::server::{AuthenticationStatus, ScramServer};
 use tokio::io::AsyncWrite;
 
 use crate::config::SaslMechanism;
-use crate::protocols::mqtt::{check_password, start_keep_alive_timer};
+use crate::protocols::mqtt::start_keep_alive_timer;
 use crate::state::{AddClientReceipt, ClientReceiver, GlobalState};
 
 use super::super::{ScramStage, Session, TracedRng};
@@ -57,7 +57,9 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin>(
         } else {
             let username = packet.username.as_ref().unwrap();
             let password = packet.password.as_ref().unwrap();
-            if !check_password(&global.auth_passwords, username, password) {
+            if let Ok(user) = global.auth.authorize(username, password) {
+                session.user = Some(Arc::new(user));
+            } else {
                 log::debug!("incorrect password for user: {}", username);
                 reason_code = ConnectReasonCode::BadUserNameOrPassword;
             }
@@ -80,7 +82,6 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin>(
     } else {
         Arc::clone(&packet.client_id)
     };
-    session.username = packet.username;
     session.keep_alive = if packet.keep_alive > global.config.max_keep_alive {
         global.config.max_keep_alive
     } else if packet.keep_alive < global.config.min_keep_alive {

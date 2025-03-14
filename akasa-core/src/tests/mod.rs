@@ -2,4 +2,5 @@
 
 mod utils;
 
+mod auth;
 mod protocols;

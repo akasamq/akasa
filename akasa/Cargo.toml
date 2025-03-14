@@ -15,6 +15,7 @@ log = "0.4.17"
 dashmap = "5.4.0"
 rpassword = "7.2.0"
 rand = { version = "0.8.5", features = ["getrandom"] }
+serde = "1.0.218"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = { version = "0.5.4", optional = true }

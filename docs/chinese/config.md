@@ -52,6 +52,17 @@ auth:
   enable: true
   # 密码文件, 请使用 insert-password/remove-password 子命令来管理密码
   password_file: /path/to/passwords/file
+  # (可选) 使用 JWT 进行授权，而不是密码
+  jwt:
+    # 包含秘密的文件
+    secrets_file: /path/to/jwt.yaml
+    # 包含秘密映射的文件
+    # default:   # 秘密名称
+    #   alg: HS512
+    #   secret: ******
+    # my_old_deprecated_secret:   # 2035-03-12 后删除
+    #   alg: HS256
+    #   secret: ******
 
 # (v5.0 专有) 用于 MQTT v5.0 增强认证的 Scram 用户列表
 #   生成 hashed password 的方法: https://github.com/akasamq/akasa/blob/8503adb566c46074d57bfea8dbe39a6fd3403e28/akasa-core/src/tests/protocols/mqtt/v5/v500/auth.rs#L21-L24
