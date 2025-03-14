@@ -1,10 +1,16 @@
 use std::collections::HashMap;
 
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use prometheus::{register_counter_vec, CounterVec};
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
 use crate::config::JwtSecret;
+
+lazy_static::lazy_static! {
+    pub static ref JWT_COUNTER: CounterVec =
+        register_counter_vec!("akasa_jwt_valid", "JWT auth", &["name"]).unwrap();
+}
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum JwtDecodeError {
@@ -56,22 +62,22 @@ impl JWT {
                 JwtSecret::HS256 { secret } => {
                     let b = secret.as_bytes();
                     self.header.alg = Algorithm::HS256;
-                    let encoder = EncodingKey::from_secret(b);
-                    self.encoding_key = Some(encoder);
+                    let encoding_key = EncodingKey::from_secret(b);
+                    self.encoding_key = Some(encoding_key);
                     DecodingKey::from_secret(b)
                 }
                 JwtSecret::HS384 { secret } => {
                     let b = secret.as_bytes();
                     self.header.alg = Algorithm::HS384;
-                    let encoder = EncodingKey::from_secret(b);
-                    self.encoding_key = Some(encoder);
+                    let encoding_key = EncodingKey::from_secret(b);
+                    self.encoding_key = Some(encoding_key);
                     DecodingKey::from_secret(b)
                 }
                 JwtSecret::HS512 { secret } => {
                     let b = secret.as_bytes();
                     self.header.alg = Algorithm::HS512;
-                    let encoder = EncodingKey::from_secret(b);
-                    self.encoding_key = Some(encoder);
+                    let encoding_key = EncodingKey::from_secret(b);
+                    self.encoding_key = Some(encoding_key);
                     DecodingKey::from_secret(b)
                 }
             };
@@ -100,9 +106,10 @@ impl JWT {
     {
         let token = String::from_utf8_lossy(token);
         let mut e = JwtDecodeError::InitError;
-        for (_name, secret) in self.secrets.iter() {
+        for (name, secret) in self.secrets.iter() {
             match decode(&token, &secret.decoding_key, &self.validation) {
                 Ok(token) => {
+                    JWT_COUNTER.with_label_values(&[name]).inc();
                     return Ok(token.claims);
                 }
                 Err(err) => e = JwtDecodeError::ValidationError(err),
