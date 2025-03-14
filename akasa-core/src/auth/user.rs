@@ -3,29 +3,32 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Default, Serialize, Deserialize, Debug)]
 pub struct User {
-    pub username: String,
+    pub name: String,
     pub superuser: bool,
 }
 
 impl User {
-    pub fn new(username: &str) -> Self {
+    pub fn new(name: String) -> Self {
         Self {
-            username: username.to_string(),
+            name,
             ..Default::default()
         }
     }
-    pub fn super_user(username: &str) -> Self {
+
+    pub fn new_superuser(name: String) -> Self {
         Self {
-            username: username.to_string(),
+            name,
             superuser: true,
+            ..Default::default()
         }
     }
 
-    pub fn allow_read(&self, _tf: TopicFilter) -> bool {
+    pub fn allow_subscribe(&self, _tf: &TopicFilter) -> bool {
         // TODO
         true
     }
-    pub fn allow_write(&self, _topic: TopicName) -> bool {
+
+    pub fn allow_publish(&self, _topic: &TopicName) -> bool {
         // TODO
         true
     }
