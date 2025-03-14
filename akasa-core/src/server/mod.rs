@@ -1,3 +1,4 @@
+mod http_api;
 mod proxy;
 pub mod rt;
 

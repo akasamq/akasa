@@ -46,7 +46,7 @@ where
 
     rt.block_on(async move {
         let listeners = &global.config.listeners;
-        let tasks: Vec<_> = [
+        let mut tasks: Vec<_> = [
             listeners.mqtt.as_ref().map(
                 |Listener {
                      addr,
@@ -137,6 +137,17 @@ where
         if tasks.is_empty() {
             log::error!("No binding address in config");
         }
+
+        if let Some(ref api) = global.config.listeners.http {
+            let api = api.clone();
+            let reuse_port = api.reuse_port;
+            tasks.push(tokio::spawn(async move {
+                if let Err(err) = super::http_api::serve(api, reuse_port, global.clone()).await {
+                    log::error!("Listen api error: {:?}", err);
+                }
+            }));
+        }
+
         for task in tasks {
             let _ = task.await;
         }

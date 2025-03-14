@@ -37,6 +37,16 @@ listeners:
   ws: null
   # (同 `listeners.mqtts`) WebSocket+TLS 监听器
   wss: null
+  # (可选) API入口点
+  http:
+    # 绑定的 Socket 地址
+    addr: 127.0.0.1:8881
+    # 允许多个 listener 绑定在同一个端口上，可以增加建立链接的速度
+    reuse_port: false
+    # 启用 Prometheus 监控，在 /metrics 路径下
+    prometheus: true
+    # 启用 Swagger-UI 用于 API 文档，在 /swagger-ui/ 路径下
+    swagger_ui: true
 # 基于密码文件的认证，密码用来校验 connect 数据包中的 username/password 字段
 auth:
   enable: true

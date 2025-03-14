@@ -62,6 +62,8 @@ pub struct Listeners {
     pub ws: Option<Listener>,
     /// default port: 8443
     pub wss: Option<TlsListener>,
+    /// default port: 8081
+    pub http: Option<Http>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
@@ -95,6 +97,27 @@ pub enum ProxyMode {
     TlsTermination,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct Http {
+    pub addr: SocketAddr,
+    pub reuse_port: bool,
+    pub prometheus: bool,
+    #[cfg(feature = "swagger-ui")]
+    pub swagger_ui: bool,
+}
+
+impl Default for Http {
+    fn default() -> Self {
+        Self {
+            addr: "0.0.0.0:8081".parse().unwrap(),
+            reuse_port: true,
+            prometheus: true,
+            #[cfg(feature = "swagger-ui")]
+            swagger_ui: false,
+        }
+    }
+}
+
 impl Default for Listeners {
     fn default() -> Listeners {
         Listeners {
@@ -106,6 +129,7 @@ impl Default for Listeners {
             mqtts: None,
             ws: None,
             wss: None,
+            http: None,
         }
     }
 }
@@ -288,6 +312,7 @@ impl Config {
             mqtts: None,
             ws: None,
             wss: None,
+            http: None,
         } = self.listeners
         {
             log::error!("No listen address found");
