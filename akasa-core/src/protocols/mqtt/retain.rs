@@ -1,4 +1,3 @@
-use std::mem;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -37,8 +36,7 @@ impl RetainTable {
     pub fn get_matches(&self, topic_filter: &str) -> Vec<Arc<RetainContent>> {
         // [MQTT-4.7.2-1] The Server MUST NOT match Topic Filters starting with a
         // wildcard character (# or +) with Topic Names beginning with a $ character
-        let wildcard_first =
-            topic_filter.starts_with(|c| c == MATCH_ONE_CHAR || c == MATCH_ALL_CHAR);
+        let wildcard_first = topic_filter.starts_with([MATCH_ONE_CHAR, MATCH_ALL_CHAR]);
         let (filter_item, rest_items) = split_topic(topic_filter);
         let mut retains = Vec::new();
         self.inner
@@ -126,7 +124,7 @@ impl RetainNode {
             if let Some((topic_item, rest_items)) = topic_items.map(split_topic) {
                 node.insert(topic_item, rest_items, content)
             } else {
-                mem::replace(&mut node.content, Some(content))
+                node.content.replace(content)
             }
         } else {
             let mut new_node = RetainNode::default();

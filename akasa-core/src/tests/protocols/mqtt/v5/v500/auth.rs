@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use mqtt_proto::v5::*;
-use scram::{hash_password, ScramClient};
 use tokio::time::sleep;
 
 use crate::config::{Config, SaslMechanism, ScramPasswordInfo};
+use crate::protocols::scram::{client::ScramClient, hash_password};
 use crate::state::GlobalState;
 use crate::tests::utils::MockConn;
 
@@ -37,8 +37,8 @@ async fn test_auth_simple_success() {
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     let auth_method = "SCRAM-SHA-256".into();
-    let scram_client = ScramClient::new(user, pass, None);
-    let (scram_client, client_first) = scram_client.client_first();
+    let mut scram_client = ScramClient::new(user, pass, None);
+    let client_first = scram_client.encode_client_first().unwrap();
     println!("client_first: {client_first}");
 
     let mut connect = Connect::new("client".into(), 32);
@@ -56,8 +56,7 @@ async fn test_auth_simple_success() {
     };
     println!("server_first: {server_first}");
 
-    let scram_client = scram_client.handle_server_first(&server_first).unwrap();
-    let (scram_client, client_final) = scram_client.client_final();
+    let client_final = scram_client.decode_server_first(&server_first).unwrap();
     println!("client_final: {client_final}");
     let final_pkt = Auth {
         reason_code: AuthReasonCode::ContinueAuthentication,
@@ -78,7 +77,7 @@ async fn test_auth_simple_success() {
     } else {
         panic!("received packet: {received_pkt:?}");
     };
-    scram_client.handle_server_final(&server_final).unwrap();
+    scram_client.decode_server_final(&server_final).unwrap();
 
     sleep(Duration::from_millis(20)).await;
     client.write_packet(Packet::Pingreq).await;
@@ -208,8 +207,8 @@ async fn test_auth_invalid_password() {
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     let auth_method = "SCRAM-SHA-256".into();
-    let scram_client = ScramClient::new(user, "invalid pass xxx", None);
-    let (scram_client, client_first) = scram_client.client_first();
+    let mut scram_client = ScramClient::new(user, "invalid pass xxx", None);
+    let client_first = scram_client.encode_client_first().unwrap();
     println!("client_first: {client_first}");
 
     let mut connect = Connect::new("client".into(), 32);
@@ -227,8 +226,7 @@ async fn test_auth_invalid_password() {
     };
     println!("server_first: {server_first}");
 
-    let scram_client = scram_client.handle_server_first(&server_first).unwrap();
-    let (_, client_final) = scram_client.client_final();
+    let client_final = scram_client.decode_server_first(&server_first).unwrap();
     println!("client_final: {client_final}");
     let final_pkt = Auth {
         reason_code: AuthReasonCode::ContinueAuthentication,
@@ -278,8 +276,9 @@ async fn test_auth_invalid_client_final() {
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     let auth_method = "SCRAM-SHA-256".into();
-    let scram_client = ScramClient::new(user, "invalid pass xxx", None);
-    let (_, client_first) = scram_client.client_first();
+    let client_first = ScramClient::new(user, "invalid pass xxx", None)
+        .encode_client_first()
+        .unwrap();
     println!("client_first: {client_first}");
 
     let mut connect = Connect::new("client".into(), 32);

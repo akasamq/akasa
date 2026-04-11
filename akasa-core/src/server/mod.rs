@@ -1,3 +1,4 @@
+#[cfg(feature = "http")]
 mod http_api;
 mod proxy;
 pub mod rt;
@@ -10,6 +11,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use bytes::Bytes;
 use flume::bounded;
 use futures_lite::{FutureExt, Stream};
 use futures_sink::Sink;
@@ -148,7 +150,7 @@ pub async fn handle_accept<
         };
         WebSocketWrapper::WebSocket {
             stream,
-            read_data: Vec::new(),
+            read_data: Bytes::new(),
             read_data_idx: 0,
             pending_pong: None,
             closed: false,
@@ -303,16 +305,16 @@ enum WebSocketWrapper<S> {
     Raw(TlsWrapper<S>),
     WebSocket {
         stream: WebSocketStream<TlsWrapper<S>>,
-        read_data: Vec<u8>,
+        read_data: Bytes,
         read_data_idx: usize,
-        pending_pong: Option<Vec<u8>>,
+        pending_pong: Option<Bytes>,
         closed: bool,
     },
 }
 
 fn ws_send_pong<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut WebSocketStream<TlsWrapper<S>>,
-    pong: &mut Option<Vec<u8>>,
+    pong: &mut Option<Bytes>,
     cx: &mut Context<'_>,
 ) -> io::Result<()> {
     if let Some(data) = pong.take() {
@@ -438,7 +440,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for WebSocketWrapper<S> {
                     }
                     Poll::Pending => return Poll::Pending,
                 }
-                let message = Message::Binary(buf.to_vec());
+                let message = Message::Binary(buf.to_vec().into());
                 if let Err(err) = Pin::new(&mut *stream).start_send(message) {
                     log::debug!("WebSocket write error: {:?}", err);
                     return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));

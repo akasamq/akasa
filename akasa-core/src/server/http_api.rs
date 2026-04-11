@@ -34,11 +34,6 @@ pub async fn serve(
         labels.push("prometheus");
     }
 
-    #[cfg(feature = "swagger-ui")]
-    if cfg.swagger_ui {
-        labels.push("swagger-ui");
-    }
-
     socket.bind(addr)?;
     let listener = socket.listen(128)?;
 

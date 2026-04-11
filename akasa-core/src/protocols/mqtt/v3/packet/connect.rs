@@ -11,8 +11,8 @@ use tokio::io::AsyncWrite;
 use crate::protocols::mqtt::{check_password, start_keep_alive_timer};
 use crate::state::{AddClientReceipt, ClientReceiver, GlobalState};
 
-use super::super::Session;
 use super::common::write_packet;
+use super::Session;
 
 pub(crate) async fn handle_connect<T: AsyncWrite + Unpin>(
     session: &mut Session,
@@ -95,7 +95,7 @@ clean session : {}
     } else {
         packet.client_id.clone()
     };
-    session.username = packet.username.map(|name| name.clone());
+    session.username = packet.username;
     session.keep_alive = packet.keep_alive;
 
     if let Some(last_will) = packet.last_will {

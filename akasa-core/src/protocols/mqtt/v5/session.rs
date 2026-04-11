@@ -8,14 +8,13 @@ use mqtt_proto::{
     v5::{LastWill, PublishProperties, SubscriptionOptions, UserProperty, VarByteInt},
     Pid, Protocol, QoS, TopicFilter, TopicName,
 };
-use rand::{rngs::OsRng, RngCore};
-
 use parking_lot::RwLock;
 
 use crate::config::Config;
+use crate::protocols::scram::server::ScramServer;
 use crate::state::{ClientId, ClientReceiver};
 
-use super::super::{BroadcastPackets, PendingPackets};
+use super::{BroadcastPackets, PendingPackets};
 
 // FIXME: move OnlineLoop local data to Session
 pub struct Session {
@@ -95,7 +94,7 @@ impl Session {
             client_disconnected: false,
             server_disconnected: false,
             protocol: Protocol::V500,
-            scram_stage: ScramStage::Init,
+            scram_stage: ScramStage::new(),
             connected_time: None,
             connection_closed_time: None,
             last_packet_time: Arc::new(RwLock::new(Instant::now())),
@@ -144,94 +143,22 @@ impl Session {
     }
 }
 
-/// For keep the nonce used in scram auth
-pub struct TracedRng {
-    rng: Option<OsRng>,
-    data_idx: usize,
-    data: Vec<u8>,
+/// SCRAM handshake stage stored in session state.
+///
+/// Wraps [`ScramServer`] so the state machine survives across request boundaries
+/// without re-parsing or re-deriving any material.
+pub struct ScramStage {
+    pub machine: ScramServer,
+    pub time: Option<Instant>,
 }
 
-impl TracedRng {
-    pub fn new_empty() -> TracedRng {
-        TracedRng {
-            rng: Some(OsRng),
-            data_idx: 0,
-            data: Vec::new(),
+impl ScramStage {
+    pub fn new() -> Self {
+        Self {
+            machine: ScramServer::new(),
+            time: None,
         }
     }
-    pub fn new_from(data: Vec<u8>) -> TracedRng {
-        TracedRng {
-            rng: None,
-            data_idx: 0,
-            data,
-        }
-    }
-    pub fn into_data(self) -> Vec<u8> {
-        self.data
-    }
-}
-
-impl RngCore for TracedRng {
-    fn next_u32(&mut self) -> u32 {
-        if let Some(rng) = self.rng.as_mut() {
-            let value = rng.next_u32();
-            self.data.extend(value.to_le_bytes());
-            value
-        } else {
-            let buf: [u8; 4] = self.data[self.data_idx..self.data_idx + 4]
-                .try_into()
-                .expect("data not enough");
-            let value = u32::from_le_bytes(buf);
-            self.data_idx += 4;
-            value
-        }
-    }
-    fn next_u64(&mut self) -> u64 {
-        if let Some(rng) = self.rng.as_mut() {
-            let value = rng.next_u64();
-            self.data.extend(value.to_le_bytes());
-            value
-        } else {
-            let buf: [u8; 8] = self.data[self.data_idx..self.data_idx + 8]
-                .try_into()
-                .expect("data not enough");
-            let value = u64::from_le_bytes(buf);
-            self.data_idx += 8;
-            value
-        }
-    }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        if let Some(rng) = self.rng.as_mut() {
-            rng.fill_bytes(dest);
-            self.data.extend(dest.iter());
-        } else {
-            dest.copy_from_slice(&self.data[self.data_idx..self.data_idx + dest.len()]);
-            self.data_idx += dest.len();
-        }
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
-        if let Some(rng) = self.rng.as_mut() {
-            rng.try_fill_bytes(dest)?;
-            self.data.extend(dest.iter());
-        } else {
-            dest.copy_from_slice(&self.data[self.data_idx..self.data_idx + dest.len()]);
-            self.data_idx += dest.len();
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScramStage {
-    Init,
-    // received client first and sent server first to client
-    ClientFirst {
-        message: String,
-        server_nonce: Vec<u8>,
-        time: Instant,
-    },
-    // received client final and sent server final to client
-    Final(Instant),
 }
 
 #[derive(Clone, Debug)]

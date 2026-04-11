@@ -46,7 +46,7 @@ where
 
     rt.block_on(async move {
         let listeners = &global.config.listeners;
-        let mut tasks: Vec<_> = [
+        let tasks: Vec<_> = [
             listeners.mqtt.as_ref().map(
                 |Listener {
                      addr,
@@ -73,7 +73,7 @@ where
                     proxy: *proxy,
                     proxy_tls_termination: false,
                     websocket: false,
-                    tls_acceptor: mqtts_tls_acceptor.map(Into::into),
+                    tls_acceptor: mqtts_tls_acceptor,
                 },
             ),
             listeners.ws.as_ref().map(
@@ -102,7 +102,7 @@ where
                     proxy: *proxy,
                     proxy_tls_termination: false,
                     websocket: true,
-                    tls_acceptor: wss_tls_acceptor.map(Into::into),
+                    tls_acceptor: wss_tls_acceptor,
                 },
             ),
         ]
@@ -141,6 +141,7 @@ where
         if let Some(ref api) = global.config.listeners.http {
             let api = api.clone();
             let reuse_port = api.reuse_port;
+            #[cfg(feature = "http")]
             tasks.push(tokio::spawn(async move {
                 if let Err(err) = super::http_api::serve(api, reuse_port, global.clone()).await {
                     log::error!("Listen api error: {:?}", err);

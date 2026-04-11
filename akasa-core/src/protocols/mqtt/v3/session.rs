@@ -10,7 +10,7 @@ use parking_lot::RwLock;
 use crate::config::Config;
 use crate::state::{ClientId, ClientReceiver};
 
-use super::super::{BroadcastPackets, PendingPackets};
+use super::{BroadcastPackets, PendingPackets};
 
 pub struct Session {
     pub peer: SocketAddr,

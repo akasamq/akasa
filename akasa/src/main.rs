@@ -13,9 +13,9 @@ use akasa_core::{
 use anyhow::{anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use dashmap::DashMap;
-use rand::{rngs::OsRng, RngCore};
-
 use default_hook::DefaultHook;
+use rand::rngs::SysRng;
+use rand::TryRng;
 
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 #[cfg(not(target_env = "msvc"))]
@@ -159,7 +159,7 @@ fn main() -> anyhow::Result<()> {
                 }
             };
             let mut salt = vec![0u8; MIN_SALT_LEN];
-            OsRng.fill_bytes(&mut salt);
+            SysRng.try_fill_bytes(&mut salt).unwrap();
             let hashed_password = hash_password(hash_algorithm, &salt, password.as_bytes());
 
             let auth_passwords = if create {

@@ -10,15 +10,16 @@ use mqtt_proto::{
     },
     QoS,
 };
-use scram::server::{AuthenticationStatus, ScramServer};
 use tokio::io::AsyncWrite;
 
 use crate::config::SaslMechanism;
 use crate::protocols::mqtt::{check_password, start_keep_alive_timer};
 use crate::state::{AddClientReceipt, ClientReceiver, GlobalState};
 
-use super::super::{ScramStage, Session, TracedRng};
 use super::common::{build_error_connack, build_error_disconnect, write_packet};
+use crate::protocols::scram::AuthenticationStatus;
+
+use super::{ScramStage, Session};
 
 pub(crate) async fn handle_connect<T: AsyncWrite + Unpin>(
     session: &mut Session,
@@ -276,7 +277,7 @@ pub(crate) async fn session_connect<T: AsyncWrite + Unpin>(
         session.session_expiry_interval = global.config.max_session_expiry_interval;
         connack_properties.session_expiry_interval = Some(session.session_expiry_interval);
     }
-    if global.config.max_inflight_server != u16::max_value() {
+    if global.config.max_inflight_server != u16::MAX {
         connack_properties.receive_max = Some(global.config.max_inflight_server);
     }
     if global.config.max_allowed_qos() < QoS::Level2 {
@@ -285,7 +286,7 @@ pub(crate) async fn session_connect<T: AsyncWrite + Unpin>(
     if !global.config.retain_available {
         connack_properties.retain_available = Some(false);
     }
-    if global.config.max_packet_size_server < u32::max_value() {
+    if global.config.max_packet_size_server < u32::MAX {
         connack_properties.max_packet_size = Some(global.config.max_packet_size_server);
     }
     if session.assigned_client_id {
@@ -449,42 +450,14 @@ pub(crate) fn handle_auth(
                 ));
             };
 
-            let (client_first, server_nonce) = match &session.scram_stage {
-                ScramStage::ClientFirst {
-                    ref message,
-                    server_nonce,
-                    ..
-                } => (message, server_nonce.clone()),
-                _ => unreachable!(),
-            };
-            let scram_server = ScramServer::new(&global.config);
-            let scram_server = match scram_server.handle_client_first(client_first) {
-                Ok(scram_server) => scram_server,
+            let (status, server_final) = match session
+                .scram_stage
+                .machine
+                .decode_client_final(&client_final)
+            {
+                Ok(result) => result,
                 Err(err) => {
-                    log::info!("scram re-handle client first error: {}, the user may removed from AuthenticationProvider", err);
-                    let err_pkt = if session.connected {
-                        build_error_disconnect(
-                            session,
-                            DisconnectReasonCode::NotAuthorized,
-                            "invalid client first data",
-                        )
-                    } else {
-                        build_error_connack(
-                            session,
-                            false,
-                            ConnectReasonCode::NotAuthorized,
-                            "invalid client first data",
-                        )
-                    };
-                    return Err(err_pkt);
-                }
-            };
-            let mut traced_rng = TracedRng::new_from(server_nonce);
-            let (scram_server, _) = scram_server.server_first_with_rng(&mut traced_rng);
-            let scram_server = match scram_server.handle_client_final(&client_final) {
-                Ok(server) => server,
-                Err(err) => {
-                    log::info!("scram handle client final error: {}", err);
+                    log::info!("scram decode client final error: {}", err);
                     let err_pkt = if session.connected {
                         build_error_disconnect(
                             session,
@@ -502,7 +475,6 @@ pub(crate) fn handle_auth(
                     return Err(err_pkt);
                 }
             };
-            let (status, server_final) = scram_server.server_final();
             if status != AuthenticationStatus::Authenticated {
                 log::info!("scram handle server final failed, status={:?}", status);
                 let err_pkt = if session.connected {
@@ -522,21 +494,20 @@ pub(crate) fn handle_auth(
                 return Err(err_pkt);
             }
 
-            // TODO: remove this later, when scram updated
-            let (authcid, authzid) = {
-                let mut parts = client_first.split(',');
-                let _n = parts.next();
-                let raw_authzid = parts.next().expect("authzid");
-                let authzid = if raw_authzid.is_empty() {
-                    None
-                } else {
-                    Some(raw_authzid[2..].to_owned())
-                };
-                let authcid = parts.next().expect("authcid")[2..].to_owned();
-                (authcid, authzid)
-            };
+            let authcid = session
+                .scram_stage
+                .machine
+                .authcid()
+                .unwrap_or("")
+                .to_owned();
+            let authzid = session
+                .scram_stage
+                .machine
+                .authzid()
+                .and_then(|az| az)
+                .map(str::to_owned);
             session.authorizing = false;
-            session.scram_stage = ScramStage::Final(Instant::now());
+            session.scram_stage.time = Some(Instant::now());
             session.scram_auth_result = Some((authcid, authzid));
             if !session.connected {
                 log::info!("client {} AUTH success", session.client_identifier);
@@ -597,34 +568,75 @@ fn scram_client_first(
             "client first data is missing",
         ));
     };
-    let scram_server = ScramServer::new(&global.config);
-    let scram_server = match scram_server.handle_client_first(&client_first) {
-        Ok(scram_server) => scram_server,
-        Err(err) => {
-            log::info!("scram handle client first error: {}", err);
-            if session.connected {
-                return Err(build_error_disconnect(
+    session.scram_stage = ScramStage::new();
+    if let Err(err) = session
+        .scram_stage
+        .machine
+        .decode_client_first(&client_first)
+    {
+        log::info!("scram decode client first error: {}", err);
+        return if session.connected {
+            Err(build_error_disconnect(
+                session,
+                DisconnectReasonCode::NotAuthorized,
+                "invalid client first data",
+            ))
+        } else {
+            Err(build_error_connack(
+                session,
+                false,
+                ConnectReasonCode::NotAuthorized,
+                "invalid client first data",
+            ))
+        };
+    }
+
+    let authcid = session
+        .scram_stage
+        .machine
+        .authcid()
+        .unwrap_or("")
+        .to_owned();
+    let password_info = match global.config.scram_users.get(&authcid) {
+        Some(info) => info,
+        None => {
+            log::info!("scram user not found: {}", authcid);
+            return if session.connected {
+                Err(build_error_disconnect(
                     session,
                     DisconnectReasonCode::NotAuthorized,
                     "invalid client first data",
-                ));
+                ))
             } else {
-                return Err(build_error_connack(
+                Err(build_error_connack(
                     session,
                     false,
                     ConnectReasonCode::NotAuthorized,
                     "invalid client first data",
-                ));
-            }
+                ))
+            };
         }
     };
-    let mut traced_rng = TracedRng::new_empty();
-    let (_, server_first) = scram_server.server_first_with_rng(&mut traced_rng);
-    session.authorizing = true;
-    session.scram_stage = ScramStage::ClientFirst {
-        message: client_first,
-        server_nonce: traced_rng.into_data(),
-        time: Instant::now(),
+
+    let server_first = match session.scram_stage.machine.encode_server_first(
+        password_info.hashed_password.clone(),
+        &password_info.salt,
+        password_info.iterations,
+        &mut rand::rng(),
+    ) {
+        Ok(msg) => msg,
+        Err(err) => {
+            log::info!("scram encode server first error: {}", err);
+            return Err(build_error_connack(
+                session,
+                false,
+                ConnectReasonCode::NotAuthorized,
+                "internal scram error",
+            ));
+        }
     };
+
+    session.authorizing = true;
+    session.scram_stage.time = Some(Instant::now());
     Ok(server_first)
 }

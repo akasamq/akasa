@@ -1,6 +1,6 @@
 mod config;
 mod hook;
-mod protocols;
+pub mod protocols;
 pub mod server;
 mod state;
 mod storage;

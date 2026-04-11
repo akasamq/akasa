@@ -1,17 +1,19 @@
-use std::sync::Arc;
+use axum::Json;
 
-use axum::{extract::State, response::IntoResponse, Json};
-use serde_json::json;
-
-use crate::GlobalState;
+#[derive(utoipa::ToSchema)]
+pub struct Health {
+    pub status: String,
+}
 
 #[utoipa::path(
-    path = "/health",
     get,
-    responses((status = OK)),
+    path = "/health",
+    responses(
+        (status = 200, description = "Server status", body = Health),
+    ),
 )]
-pub async fn health(State(_global): State<Arc<GlobalState>>) -> impl IntoResponse {
-    Json(json!({
-        "status": "ok",
-    }))
+pub async fn health() -> Json<Health> {
+    Json(Health {
+        status: "ok".into(),
+    })
 }

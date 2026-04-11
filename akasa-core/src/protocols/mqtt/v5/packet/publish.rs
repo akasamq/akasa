@@ -14,14 +14,14 @@ use mqtt_proto::{
     },
     Encodable, QoS, QosPid, TopicFilter, TopicName, SHARED_PREFIX,
 };
-use rand::{thread_rng, Rng};
+use rand::RngExt;
 
 use crate::config::SharedSubscriptionMode;
 use crate::protocols::mqtt::{BroadcastPackets, RetainContent};
 use crate::state::{GlobalState, NormalMessage};
 
-use super::super::{PubPacket, Session};
 use super::common::build_error_disconnect;
+use super::{PubPacket, Session};
 
 #[inline]
 pub(crate) fn handle_publish(
@@ -359,7 +359,9 @@ pub(crate) fn send_publish(
         }
         for (group_name, shared_clients) in &content.groups {
             let (client_id, subscribe_qos) = match global.config.shared_subscription_mode {
-                SharedSubscriptionMode::Random => shared_clients.get_by_number(thread_rng().gen()),
+                SharedSubscriptionMode::Random => {
+                    shared_clients.get_by_number(rand::rng().random())
+                }
                 SharedSubscriptionMode::HashClientId => {
                     shared_clients.get_by_hash(&session.client_identifier)
                 }

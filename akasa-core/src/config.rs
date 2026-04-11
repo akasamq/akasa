@@ -3,7 +3,6 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
 use mqtt_proto::QoS;
-use scram::server::{AuthenticationProvider, PasswordInfo};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_MAX_PACKET_SIZE: u32 = 5 + 268_435_455;
@@ -12,7 +11,6 @@ pub const DEFAULT_MAX_PACKET_SIZE: u32 = 5 + 268_435_455;
 pub struct Config {
     pub listeners: Listeners,
     pub auth: AuthConfig,
-    // FIXME: replace it with outter data: { username => PasswordInfo }
     pub scram_users: HashMap<String, ScramPasswordInfo>,
     pub sasl_mechanisms: HashSet<SaslMechanism>,
     /// It seems all populte MQTT server(broker) not check this.
@@ -102,8 +100,6 @@ pub struct Http {
     pub addr: SocketAddr,
     pub reuse_port: bool,
     pub prometheus: bool,
-    #[cfg(feature = "swagger-ui")]
-    pub swagger_ui: bool,
 }
 
 impl Default for Http {
@@ -112,8 +108,6 @@ impl Default for Http {
             addr: "0.0.0.0:8081".parse().unwrap(),
             reuse_port: true,
             prometheus: true,
-            #[cfg(feature = "swagger-ui")]
-            swagger_ui: false,
         }
     }
 }
@@ -222,12 +216,12 @@ impl Default for Config {
             max_in_mem_pending_messages: 256,
             max_in_db_pending_messages: 65536,
             min_keep_alive: 10,
-            max_keep_alive: u16::max_value(),
+            max_keep_alive: u16::MAX,
             multiple_subscription_id_in_publish: false,
-            max_session_expiry_interval: u32::max_value(),
+            max_session_expiry_interval: u32::MAX,
             max_packet_size_client: DEFAULT_MAX_PACKET_SIZE,
             max_packet_size_server: DEFAULT_MAX_PACKET_SIZE,
-            topic_alias_max: u16::max_value(),
+            topic_alias_max: u16::MAX,
             retain_available: true,
             shared_subscription_available: true,
             subscription_id_available: true,
@@ -308,23 +302,6 @@ impl Config {
             2 => QoS::Level2,
             value => panic!("invalid Config.max_allowed_qos: {value}"),
         }
-    }
-}
-
-impl AuthenticationProvider for &Config {
-    fn get_password_for(&self, username: &str) -> Option<PasswordInfo> {
-        self.scram_users.get(username).map(|info| {
-            PasswordInfo::new(
-                info.hashed_password.clone(),
-                info.iterations,
-                info.salt.clone(),
-            )
-        })
-    }
-
-    fn authorize(&self, authcid: &str, authzid: &str) -> bool {
-        // TODO: support role
-        authcid == authzid
     }
 }
 
