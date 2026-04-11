@@ -16,5 +16,3 @@ pub use online_loop::{BroadcastPackets, OnlineLoop, OnlineSession, WritePacket};
 pub use pending::{PendingPacketStatus, PendingPackets};
 pub use retain::{RetainContent, RetainTable};
 pub use route::RouteTable;
-
-use super::scram::AuthenticationStatus;

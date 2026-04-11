@@ -3,33 +3,59 @@ mod prometheus;
 
 use std::sync::Arc;
 
+use axum::{response::Html, routing::get, Json, Router};
 use utoipa::OpenApi;
-use utoipa_axum::{router::OpenApiRouter, routes};
-#[cfg(feature = "swagger-ui")]
-use utoipa_swagger_ui::SwaggerUi;
 
 use crate::GlobalState;
 
-#[derive(OpenApi)]
-#[openapi(info(title = "Akasa"))]
-struct ApiDoc;
+fn openapi() -> Router {
+    #[derive(OpenApi)]
+    #[openapi(info(title = "Akasa"))]
+    struct ApiDoc;
 
-pub fn get_router(cfg: &crate::config::Http, global: Arc<GlobalState>) -> axum::Router {
-    let mut router = OpenApiRouter::with_openapi(ApiDoc::openapi());
+    const OPENAPI_ENDPOINT: &str = "/openapi.json";
 
-    router = router.routes(routes!(health::health,));
+    Router::new()
+        .route(OPENAPI_ENDPOINT, get(||async { Json(ApiDoc::openapi()) }))
+        .route("/api", get(|| async {
+            Html(format!(
+                r#"
+                <!doctype html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <script type="module" src="https://unpkg.com/rapidoc/dist/rapidoc-min.js"></script>
+                </head>
+                <body>
+                    <rapi-doc
+                        spec-url="{}"
+                        theme="light"
+                        show-header="false"
+                    ></rapi-doc>
+                </body>
+                </html>
+                "#,
+                OPENAPI_ENDPOINT
+            ))
+        }))
+}
+
+pub fn get_router(cfg: &crate::config::Http, global: Arc<GlobalState>) -> Router {
+    let mut router: Router = Router::new();
+
+    router = router
+        .merge(openapi())
+        .route("/health", get(health::health));
 
     if cfg.prometheus {
-        router = router.routes(routes!(prometheus::prometheus_metrics));
+        router = router.nest(
+            "/metrics",
+            Router::new().route(
+                "/",
+                get(prometheus::prometheus_metrics).with_state(Arc::clone(&global)),
+            ),
+        );
     }
 
-    let (router, _openapi) = router.split_for_parts();
-
-    #[cfg(feature = "swagger-ui")]
-    let router = if cfg.swagger_ui {
-        router.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", _openapi))
-    } else {
-        router
-    };
-    router.with_state(Arc::clone(&global))
+    router
 }

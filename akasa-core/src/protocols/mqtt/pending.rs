@@ -139,6 +139,10 @@ impl<P: Debug> PendingPackets<P> {
         self.packets.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.packets.is_empty()
+    }
+
     pub fn set_max_inflight(&mut self, new_value: u16) {
         self.max_inflight = new_value;
     }

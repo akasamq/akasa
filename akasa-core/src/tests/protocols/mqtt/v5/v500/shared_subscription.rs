@@ -618,7 +618,7 @@ async fn test_shared_hash_client_id() {
 
     let mut receiver_idxs = HashSet::new();
     for client in &publishers {
-        let mut current_idx = usize::max_value();
+        let mut current_idx = usize::MAX;
         for last_byte in 0..8u8 {
             let data = vec![3, 5, 55, last_byte];
             // send

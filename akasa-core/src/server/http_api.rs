@@ -4,11 +4,7 @@ use tokio::net::TcpSocket;
 
 use crate::{protocols::http::get_router, GlobalState};
 
-pub async fn serve(
-    cfg: crate::config::Http,
-    reuse_port: bool,
-    global: Arc<GlobalState>,
-) -> std::io::Result<()> {
+pub async fn serve(cfg: crate::config::Http, global: Arc<GlobalState>) -> std::io::Result<()> {
     let addr = cfg.addr;
     let mut labels = Vec::new();
     let router = get_router(&cfg, global.clone());
@@ -25,7 +21,7 @@ pub async fn serve(
         not(target_os = "illumos"),
         not(target_os = "cygwin"),
     ))]
-    if reuse_port {
+    if cfg.reuse_port {
         labels.push("reuseport");
         socket.set_reuseport(true)?;
     }

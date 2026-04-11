@@ -344,6 +344,7 @@ pub(crate) async fn session_connect<T: AsyncWrite + Unpin>(
 }
 
 #[inline]
+#[allow(clippy::result_large_err)]
 pub(crate) fn handle_disconnect(session: &mut Session, packet: Disconnect) -> Result<(), Packet> {
     log::debug!("{} received a disconnect packet", session.client_id);
     if let Some(value) = packet.properties.session_expiry_interval {
@@ -370,6 +371,7 @@ pub(crate) fn handle_disconnect(session: &mut Session, packet: Disconnect) -> Re
 
 /// Handle Auth or Re-Auth
 #[inline]
+#[allow(clippy::result_large_err)]
 pub(crate) fn handle_auth(
     session: &mut Session,
     packet: Auth,
@@ -542,6 +544,7 @@ pub(crate) fn handle_auth(
 }
 
 #[inline]
+#[allow(clippy::result_large_err)]
 fn scram_client_first(
     session: &mut Session,
     auth_data: Option<Bytes>,
@@ -568,7 +571,7 @@ fn scram_client_first(
             "client first data is missing",
         ));
     };
-    session.scram_stage = ScramStage::new();
+    session.scram_stage = ScramStage::default();
     if let Err(err) = session
         .scram_stage
         .machine

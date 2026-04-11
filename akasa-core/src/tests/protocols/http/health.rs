@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
-use axum_test::TestServer;
-use serde_json::json;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use http_body_util::BodyExt;
+use serde_json::{json, Value};
+use tower::{Service, ServiceExt};
 
 use crate::{
     config::{Config, Http},
@@ -14,13 +17,24 @@ async fn test_health() {
     let config = Config::new_allow_anonymous();
     let global = Arc::new(GlobalState::new(config));
     let cfg = Http::default();
-    let app = get_router(&cfg, global);
+    let mut app = get_router(&cfg, global);
 
-    let server = TestServer::new(app).unwrap();
+    let request = Request::get("/health").body(Body::empty()).unwrap();
+    let response = ServiceExt::<Request<Body>>::ready(&mut app)
+        .await
+        .unwrap()
+        .call(request)
+        .await
+        .unwrap();
 
-    let response = server.get("/health").await;
-    response.assert_status_ok();
-    response.assert_json(&json!({
-        "status": "ok",
-    }));
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        body,
+        json!({
+            "status": "ok",
+        })
+    );
 }

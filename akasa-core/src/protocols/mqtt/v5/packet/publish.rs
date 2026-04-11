@@ -24,6 +24,7 @@ use super::common::build_error_disconnect;
 use super::{PubPacket, Session};
 
 #[inline]
+#[allow(clippy::result_large_err)]
 pub(crate) fn handle_publish(
     session: &mut Session,
     mut packet: Publish,

@@ -94,7 +94,7 @@ impl Session {
             client_disconnected: false,
             server_disconnected: false,
             protocol: Protocol::V500,
-            scram_stage: ScramStage::new(),
+            scram_stage: ScramStage::default(),
             connected_time: None,
             connection_closed_time: None,
             last_packet_time: Arc::new(RwLock::new(Instant::now())),
@@ -143,22 +143,10 @@ impl Session {
     }
 }
 
-/// SCRAM handshake stage stored in session state.
-///
-/// Wraps [`ScramServer`] so the state machine survives across request boundaries
-/// without re-parsing or re-deriving any material.
+#[derive(Default)]
 pub struct ScramStage {
     pub machine: ScramServer,
     pub time: Option<Instant>,
-}
-
-impl ScramStage {
-    pub fn new() -> Self {
-        Self {
-            machine: ScramServer::new(),
-            time: None,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]

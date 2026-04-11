@@ -39,10 +39,12 @@ axum = { version = "0.8", optional = true }
 utoipa = { version = "5", optional = true }
 
 [dev-dependencies]
-futures-sink = "0.3"
-tokio-util = "0.7"
-env_logger = "0.11"
 async-trait = "0.1"
+env_logger = "0.11"
+futures-sink = "0.3"
+http-body-util = "0.1"
+tokio-util = "0.7"
+tower = "0.5"
 
 [features]
 http = ["dep:axum", "dep:utoipa"]

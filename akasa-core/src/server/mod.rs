@@ -149,7 +149,7 @@ pub async fn handle_accept<
             }
         };
         WebSocketWrapper::WebSocket {
-            stream,
+            stream: Box::new(stream),
             read_data: Bytes::new(),
             read_data_idx: 0,
             pending_pong: None,
@@ -304,7 +304,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsWrapper<S> {
 enum WebSocketWrapper<S> {
     Raw(TlsWrapper<S>),
     WebSocket {
-        stream: WebSocketStream<TlsWrapper<S>>,
+        stream: Box<WebSocketStream<TlsWrapper<S>>>,
         read_data: Bytes,
         read_data_idx: usize,
         pending_pong: Option<Bytes>,
@@ -313,7 +313,7 @@ enum WebSocketWrapper<S> {
 }
 
 fn ws_send_pong<S: AsyncRead + AsyncWrite + Unpin>(
-    stream: &mut WebSocketStream<TlsWrapper<S>>,
+    stream: &mut Box<WebSocketStream<TlsWrapper<S>>>,
     pong: &mut Option<Bytes>,
     cx: &mut Context<'_>,
 ) -> io::Result<()> {

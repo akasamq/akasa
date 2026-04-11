@@ -16,6 +16,7 @@ use super::publish::{recv_publish, RecvPublish};
 use super::{Session, SubscriptionData};
 
 #[inline]
+#[allow(clippy::result_large_err)]
 pub(crate) fn handle_subscribe(
     session: &mut Session,
     packet: &Subscribe,

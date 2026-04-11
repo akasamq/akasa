@@ -1,6 +1,8 @@
 use axum::Json;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(utoipa::ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct Health {
     pub status: String,
 }
@@ -9,7 +11,7 @@ pub struct Health {
     get,
     path = "/health",
     responses(
-        (status = 200, description = "Server status", body = Health),
+        (status = OK, description = "Server status", body = Health),
     ),
 )]
 pub async fn health() -> Json<Health> {

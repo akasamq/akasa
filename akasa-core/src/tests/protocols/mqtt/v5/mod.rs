@@ -14,6 +14,7 @@ use tokio::{sync::mpsc::error::TryRecvError, time::sleep};
 
 use crate::tests::utils::MockConnControl;
 
+#[allow(dead_code)]
 #[async_trait]
 trait ClientV5 {
     fn try_read_packet(&mut self) -> Result<Packet, TryRecvError>;
