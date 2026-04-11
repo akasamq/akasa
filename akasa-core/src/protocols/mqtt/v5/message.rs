@@ -139,7 +139,7 @@ async fn handle_online<
         log::info!("timeout when decode connect packet: {}", peer);
         Err(Error::IoError(IoErrorKind::TimedOut).into())
     };
-    let packet = match Connect::decode_with_protocol(&mut conn, header, protocol)
+    let packet = match Connect::decode_stream_with_protocol(&mut conn, header, protocol)
         .or(timeout)
         .await
     {

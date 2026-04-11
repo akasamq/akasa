@@ -115,7 +115,7 @@ async fn handle_online<
         let _ = timeout_receiver.recv_async().await;
         Err(Error::IoError(IoErrorKind::TimedOut))
     };
-    let packet = match Connect::decode_with_protocol(&mut conn, protocol)
+    let packet = match Connect::decode_stream_with_protocol(&mut conn, protocol)
         .or(timeout)
         .await
     {

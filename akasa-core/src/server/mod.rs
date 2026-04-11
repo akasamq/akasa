@@ -14,7 +14,7 @@ use flume::bounded;
 use futures_lite::{FutureExt, Stream};
 use futures_sink::Sink;
 use futures_util::TryFutureExt;
-use mqtt_proto::{decode_raw_header, v3, v5, Error, IoErrorKind, Protocol};
+use mqtt_proto::{decode_raw_header_async, v3, v5, Error, IoErrorKind, Protocol};
 use openssl::ssl::{NameType, Ssl, SslAcceptor, SslFiletype, SslMethod, SslVerifyMode};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_openssl::SslStream;
@@ -157,7 +157,7 @@ pub async fn handle_accept<
         WebSocketWrapper::Raw(tls_wrapper)
     };
 
-    let (packet_type, remaining_len) = decode_raw_header(&mut ws_wrapper)
+    let (packet_type, remaining_len, total_len) = decode_raw_header_async(&mut ws_wrapper)
         .or(async {
             let _ = timeout_receiver.recv_async().await;
             log::info!("timeout when decode raw mqtt header: {}", peer);
@@ -177,7 +177,8 @@ pub async fn handle_accept<
         .await?;
     match protocol {
         Protocol::V310 | Protocol::V311 => {
-            let header = v3::Header::new_with(packet_type, remaining_len).expect("v3 header");
+            let header = v3::Header::new_with(packet_type, remaining_len, total_len as u32)
+                .expect("v3 header");
             mqtt::v3::handle_connection(
                 ws_wrapper,
                 peer,
@@ -190,7 +191,8 @@ pub async fn handle_accept<
             .await?;
         }
         Protocol::V500 => {
-            let header = v5::Header::new_with(packet_type, remaining_len).expect("v5 header");
+            let header = v5::Header::new_with(packet_type, remaining_len, total_len as u32)
+                .expect("v5 header");
             mqtt::v5::handle_connection(
                 ws_wrapper,
                 peer,
