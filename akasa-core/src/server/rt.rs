@@ -138,9 +138,9 @@ where
             log::error!("No binding address in config");
         }
 
+        #[cfg(feature = "http")]
         if let Some(ref api) = global.config.listeners.http {
             let api = api.clone();
-            #[cfg(feature = "http")]
             tasks.push(tokio::spawn(async move {
                 if let Err(err) = super::http_api::serve(api, global.clone()).await {
                     log::error!("Listen api error: {:?}", err);

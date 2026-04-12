@@ -4,7 +4,9 @@ mod proxy;
 pub mod rt;
 
 use std::cmp;
+use std::fs::File;
 use std::io;
+use std::io::BufReader;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -17,9 +19,13 @@ use futures_lite::{FutureExt, Stream};
 use futures_sink::Sink;
 use futures_util::TryFutureExt;
 use mqtt_proto::{decode_raw_header_async, v3, v5, Error, IoErrorKind, Protocol};
-use openssl::ssl::{NameType, Ssl, SslAcceptor, SslFiletype, SslMethod, SslVerifyMode};
+use rustls::pki_types::CertificateDer;
+use rustls::server::WebPkiClientVerifier;
+use rustls::{RootCertStore, ServerConfig};
+use rustls_pemfile::{certs, private_key};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio_openssl::SslStream;
+use tokio_rustls::server::TlsStream;
+use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::{
     accept_hdr_async,
     tungstenite::{http, Message},
@@ -94,16 +100,8 @@ pub async fn handle_accept<
 
     // Handle TLS
     let tls_wrapper = if let Some(acceptor) = conn_args.tls_acceptor {
-        let ssl = Ssl::new(acceptor.context()).map_err(|err| {
-            log::error!("Create TLS session failed: {:?}", err);
-            io::Error::from(io::ErrorKind::BrokenPipe)
-        })?;
-        let mut tls_stream = SslStream::new(ssl, conn).map_err(|err| {
-            log::error!("create TLS stream error: {:?}", err);
-            io::Error::from(io::ErrorKind::BrokenPipe)
-        })?;
-        Pin::new(&mut tls_stream)
-            .accept()
+        let tls_stream = acceptor
+            .accept(conn)
             .map_err(|err| {
                 log::debug!("accept tls connection error: {:?}", err);
                 io::Error::from(io::ErrorKind::InvalidData)
@@ -114,11 +112,8 @@ pub async fn handle_accept<
                 Err(io::ErrorKind::TimedOut.into())
             })
             .await?;
-        tls_sni = tls_stream
-            .ssl()
-            .servername(NameType::HOST_NAME)
-            .map(ToOwned::to_owned);
-        TlsWrapper::Tls(tls_stream)
+        tls_sni = tls_stream.get_ref().1.server_name().map(ToOwned::to_owned);
+        TlsWrapper::Tls(Box::new(tls_stream))
     } else {
         TlsWrapper::Raw(conn)
     };
@@ -156,7 +151,7 @@ pub async fn handle_accept<
             closed: false,
         }
     } else {
-        WebSocketWrapper::Raw(tls_wrapper)
+        WebSocketWrapper::Raw(Box::new(tls_wrapper))
     };
 
     let (packet_type, remaining_len, total_len) = decode_raw_header_async(&mut ws_wrapper)
@@ -210,42 +205,91 @@ pub async fn handle_accept<
     Ok(())
 }
 
-fn build_tls_context(listener: &TlsListener) -> io::Result<SslAcceptor> {
+fn build_tls_context(listener: &TlsListener) -> io::Result<TlsAcceptor> {
     if listener.verify_peer && listener.ca_file.is_none() {
         log::error!("When `verify_peer` is true `ca_file` must be presented!");
         return Err(io::Error::from(io::ErrorKind::InvalidInput));
     }
-    let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).map_err(|err| {
-        log::error!("Initialize SslAcceptor failed: {:?}", err);
+
+    // Load certificate chain
+    let cert_file = File::open(&listener.cert_file).map_err(|err| {
+        log::error!("Cannot open certfile: {}", err);
         io::Error::from(io::ErrorKind::InvalidInput)
     })?;
-    if let Some(ca_file) = listener.ca_file.as_ref() {
-        acceptor.set_ca_file(ca_file).map_err(|err| {
-            log::error!("Invalid CA-certfile: {}", err);
-            io::Error::from(io::ErrorKind::InvalidInput)
-        })?;
-    }
-    acceptor
-        .set_private_key_file(&listener.key_file, SslFiletype::PEM)
-        .map_err(|err| {
-            log::error!("Invalid keyfile: {}", err);
-            io::Error::from(io::ErrorKind::InvalidInput)
-        })?;
-    acceptor
-        .set_certificate_chain_file(&listener.cert_file)
+    let cert_chain: Vec<CertificateDer<'static>> = certs(&mut BufReader::new(cert_file))
+        .collect::<Result<_, _>>()
         .map_err(|err| {
             log::error!("Invalid certfile: {}", err);
             io::Error::from(io::ErrorKind::InvalidInput)
         })?;
-    let mut verify_mode = SslVerifyMode::NONE;
-    if listener.verify_peer {
-        verify_mode.insert(SslVerifyMode::PEER);
-    }
-    if listener.fail_if_no_peer_cert {
-        verify_mode.insert(SslVerifyMode::FAIL_IF_NO_PEER_CERT);
-    }
-    acceptor.set_verify(verify_mode);
-    Ok(acceptor.build())
+
+    // Load private key
+    let key_file = File::open(&listener.key_file).map_err(|err| {
+        log::error!("Cannot open keyfile: {}", err);
+        io::Error::from(io::ErrorKind::InvalidInput)
+    })?;
+    let key = private_key(&mut BufReader::new(key_file))
+        .map_err(|err| {
+            log::error!("Invalid keyfile: {}", err);
+            io::Error::from(io::ErrorKind::InvalidInput)
+        })?
+        .ok_or_else(|| {
+            log::error!("No private key found in keyfile");
+            io::Error::from(io::ErrorKind::InvalidInput)
+        })?;
+
+    let server_config = if listener.verify_peer {
+        // Load CA certs for client verification
+        let ca_file = listener.ca_file.as_ref().unwrap();
+        let ca_f = File::open(ca_file).map_err(|err| {
+            log::error!("Cannot open CA-certfile: {}", err);
+            io::Error::from(io::ErrorKind::InvalidInput)
+        })?;
+        let mut root_store = RootCertStore::empty();
+        for cert in certs(&mut BufReader::new(ca_f)) {
+            let cert = cert.map_err(|err| {
+                log::error!("Invalid CA-certfile: {}", err);
+                io::Error::from(io::ErrorKind::InvalidInput)
+            })?;
+            root_store.add(cert).map_err(|err| {
+                log::error!("Failed to add CA certificate: {}", err);
+                io::Error::from(io::ErrorKind::InvalidInput)
+            })?;
+        }
+        let client_verifier = if listener.fail_if_no_peer_cert {
+            WebPkiClientVerifier::builder(Arc::new(root_store))
+                .build()
+                .map_err(|err| {
+                    log::error!("Failed to build client verifier: {}", err);
+                    io::Error::from(io::ErrorKind::InvalidInput)
+                })?
+        } else {
+            WebPkiClientVerifier::builder(Arc::new(root_store))
+                .allow_unauthenticated()
+                .build()
+                .map_err(|err| {
+                    log::error!("Failed to build client verifier: {}", err);
+                    io::Error::from(io::ErrorKind::InvalidInput)
+                })?
+        };
+        ServerConfig::builder()
+            .with_client_cert_verifier(client_verifier)
+            .with_single_cert(cert_chain, key)
+            .map_err(|err| {
+                log::error!("Failed to build ServerConfig: {}", err);
+                io::Error::from(io::ErrorKind::InvalidInput)
+            })?
+    } else {
+        ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, key)
+            .map_err(|err| {
+                log::error!("Failed to build ServerConfig: {}", err);
+                io::Error::from(io::ErrorKind::InvalidInput)
+            })?
+    };
+
+    Ok(TlsAcceptor::from(Arc::new(server_config)))
 }
 
 #[derive(Clone)]
@@ -255,12 +299,12 @@ pub struct ConnectionArgs {
     pub(crate) proxy: bool,
     pub(crate) proxy_tls_termination: bool,
     pub(crate) websocket: bool,
-    pub(crate) tls_acceptor: Option<SslAcceptor>,
+    pub(crate) tls_acceptor: Option<TlsAcceptor>,
 }
 
 enum TlsWrapper<S> {
     Raw(S),
-    Tls(SslStream<S>),
+    Tls(Box<TlsStream<S>>),
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TlsWrapper<S> {
@@ -302,7 +346,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsWrapper<S> {
 }
 
 enum WebSocketWrapper<S> {
-    Raw(TlsWrapper<S>),
+    Raw(Box<TlsWrapper<S>>),
     WebSocket {
         stream: Box<WebSocketStream<TlsWrapper<S>>>,
         read_data: Bytes,
