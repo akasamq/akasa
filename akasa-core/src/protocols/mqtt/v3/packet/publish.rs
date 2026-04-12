@@ -15,7 +15,7 @@ use mqtt_proto::{
 use crate::protocols::mqtt::{BroadcastPackets, RetainContent};
 use crate::state::{GlobalState, NormalMessage};
 
-use super::super::{PubPacket, Session};
+use super::{PubPacket, Session};
 
 #[inline]
 pub(crate) fn handle_publish(

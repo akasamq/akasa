@@ -32,7 +32,7 @@ async fn test_subscribe_reject_empty_topics() {
     let task = client.start(conn);
 
     client.connect("client id", true, false).await;
-    client.send_subscribe::<String>(23, vec![]).await;
+    client.send_subscribe(23, vec![]).await;
 
     sleep(Duration::from_millis(10)).await;
     assert!(client.try_read_packet().is_err());

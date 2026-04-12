@@ -12,7 +12,7 @@ use mqtt_proto::{
         Connect, ConnectReturnCode, Header, Packet, PollPacketState, Publish, Subscribe,
         SubscribeReturnCode, Unsubscribe,
     },
-    Error, Pid, Protocol, QoS, QosPid,
+    Error, IoErrorKind, Pid, Protocol, QoS, QosPid,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -113,9 +113,9 @@ async fn handle_online<
     let timeout = async {
         log::info!("connection timeout: {}", peer);
         let _ = timeout_receiver.recv_async().await;
-        Err(Error::IoError(io::ErrorKind::TimedOut, String::new()))
+        Err(Error::IoError(IoErrorKind::TimedOut))
     };
-    let packet = match Connect::decode_with_protocol(&mut conn, protocol)
+    let packet = match Connect::decode_stream_with_protocol(&mut conn, protocol)
         .or(timeout)
         .await
     {

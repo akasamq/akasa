@@ -46,7 +46,7 @@ async fn test_connect_invalid_first_packet() {
 
         let mut publish = Publish::new(
             QosPid::Level0,
-            TopicName::try_from("xyz/1".to_owned()).unwrap(),
+            TopicName::try_from("xyz/1").unwrap(),
             Bytes::from(vec![3, 5, 55]),
         );
         publish.retain = true;
@@ -96,7 +96,7 @@ async fn test_connect_will() {
             c.last_will = Some(LastWill {
                 qos: QoS::Level1,
                 retain: false,
-                topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+                topic_name: TopicName::try_from("topic/1").unwrap(),
                 payload: Bytes::from(vec![1, 2, 3, 4]),
                 properties: Default::default(),
             });
@@ -112,7 +112,7 @@ async fn test_connect_will() {
                 c.last_will = Some(LastWill {
                     qos: QoS::Level1,
                     retain: false,
-                    topic_name: TopicName::try_from("$topic/1".to_owned()).unwrap(),
+                    topic_name: TopicName::try_from("$topic/1").unwrap(),
                     payload: Bytes::from(vec![1, 2, 3, 4]),
                     properties: Default::default(),
                 })
@@ -155,7 +155,7 @@ async fn test_connect_auth() {
             .connect_with(
                 "client id",
                 |c| {
-                    c.username = Some(Arc::new("xxx".to_owned()));
+                    c.username = Some("xxx".into());
                     c.password = Some(Bytes::from(b"yyy".to_vec()));
                 },
                 |a| a.reason_code = BadUserNameOrPassword,
@@ -171,7 +171,7 @@ async fn test_connect_auth() {
             .connect_with(
                 "client",
                 |c| {
-                    c.username = Some(Arc::new("user".to_owned()));
+                    c.username = Some("user".into());
                     c.password = Some(Bytes::from(b"yyy".to_vec()));
                 },
                 |a| a.reason_code = BadUserNameOrPassword,
@@ -187,7 +187,7 @@ async fn test_connect_auth() {
             .connect_with(
                 "client id",
                 |c| {
-                    c.username = Some(Arc::new("user".to_owned()));
+                    c.username = Some("user".into());
                     c.password = Some(Bytes::from(b"pass".to_vec()));
                 },
                 |_| (),
@@ -210,7 +210,7 @@ async fn test_connect_auth() {
             .connect_with(
                 "client id",
                 |c| {
-                    c.username = Some(Arc::new("user".to_owned()));
+                    c.username = Some("user".into());
                     c.password = Some(Bytes::from(b"pass".to_vec()));
                 },
                 |_| (),

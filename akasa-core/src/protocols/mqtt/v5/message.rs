@@ -15,7 +15,7 @@ use mqtt_proto::{
         ErrorV5, Header, Packet, PollPacketState, Publish, PublishProperties, RetainHandling,
         Subscribe, SubscribeReasonCode, SubscriptionOptions, Unsubscribe,
     },
-    Error, Pid, Protocol, QoS, QosPid,
+    Error, IoErrorKind, Pid, Protocol, QoS, QosPid,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -137,16 +137,16 @@ async fn handle_online<
     let timeout = async {
         let _ = timeout_receiver.recv_async().await;
         log::info!("timeout when decode connect packet: {}", peer);
-        Err(Error::IoError(io::ErrorKind::TimedOut, String::new()).into())
+        Err(Error::IoError(IoErrorKind::TimedOut).into())
     };
-    let packet = match Connect::decode_with_protocol(&mut conn, header, protocol)
+    let packet = match Connect::decode_stream_with_protocol(&mut conn, header, protocol)
         .or(timeout)
         .await
     {
         Ok(packet) => packet,
         Err(err) => {
             return match err {
-                ErrorV5::Common(Error::IoError(kind, _str)) => Err(kind.into()),
+                ErrorV5::Common(Error::IoError(kind)) => Err(Error::IoError(kind).into()),
                 ErrorV5::Common(err) => {
                     let err_pkt = build_error_connack(
                         &mut session,
@@ -189,7 +189,7 @@ async fn handle_online<
             match Packet::decode_async(&mut conn).await {
                 Ok(packet) => Ok(packet),
                 Err(err) => match err {
-                    ErrorV5::Common(Error::IoError(kind, _str)) => Err(kind.into()),
+                    ErrorV5::Common(Error::IoError(kind)) => Err(Error::IoError(kind).into()),
                     ErrorV5::Common(err) => {
                         let err_pkt = build_error_connack(
                             &mut session,
@@ -386,15 +386,15 @@ impl OnlineSession for Session {
     ) -> Result<(), Option<io::Error>> {
         log::debug!("[{}] mqtt v5.x codec error: {}", self.client_id, err);
         match err {
-            ErrorV5::Common(Error::IoError(kind, _str)) => {
-                if kind == io::ErrorKind::UnexpectedEof {
+            ErrorV5::Common(Error::IoError(kind)) => {
+                if kind == IoErrorKind::UnexpectedEof {
                     if !self.disconnected() {
                         Err(Some(io::ErrorKind::UnexpectedEof.into()))
                     } else {
                         Err(None)
                     }
                 } else {
-                    Err(Some(kind.into()))
+                    Err(Some(Error::IoError(kind).into()))
                 }
             }
             ErrorV5::Common(err) => {

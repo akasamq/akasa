@@ -14,16 +14,17 @@ use mqtt_proto::{
     },
     Encodable, QoS, QosPid, TopicFilter, TopicName, SHARED_PREFIX,
 };
-use rand::{thread_rng, Rng};
+use rand::RngExt;
 
 use crate::config::SharedSubscriptionMode;
 use crate::protocols::mqtt::{BroadcastPackets, RetainContent};
 use crate::state::{GlobalState, NormalMessage};
 
-use super::super::{PubPacket, Session};
 use super::common::build_error_disconnect;
+use super::{PubPacket, Session};
 
 #[inline]
+#[allow(clippy::result_large_err)]
 pub(crate) fn handle_publish(
     session: &mut Session,
     mut packet: Publish,
@@ -359,16 +360,19 @@ pub(crate) fn send_publish(
         }
         for (group_name, shared_clients) in &content.groups {
             let (client_id, subscribe_qos) = match global.config.shared_subscription_mode {
-                SharedSubscriptionMode::Random => shared_clients.get_by_number(thread_rng().gen()),
+                SharedSubscriptionMode::Random => {
+                    shared_clients.get_by_number(rand::rng().random())
+                }
                 SharedSubscriptionMode::HashClientId => {
                     shared_clients.get_by_hash(&session.client_identifier)
                 }
                 SharedSubscriptionMode::HashTopicName => shared_clients.get_by_hash(msg.topic_name),
             };
             // TODO: optimize this alloc later
-            let full_filter =
-                TopicFilter::try_from(format!("{SHARED_PREFIX}{group_name}/{subscribe_filter}"))
-                    .expect("full topic filter");
+            let full_filter = TopicFilter::try_from(
+                format!("{SHARED_PREFIX}{group_name}/{subscribe_filter}").as_str(),
+            )
+            .expect("full topic filter");
             senders.push((client_id, full_filter, subscribe_qos));
         }
     }

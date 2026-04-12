@@ -1,3 +1,4 @@
+#[cfg(feature = "http")]
 mod http_api;
 mod proxy;
 pub mod rt;
@@ -10,11 +11,12 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use bytes::Bytes;
 use flume::bounded;
 use futures_lite::{FutureExt, Stream};
 use futures_sink::Sink;
 use futures_util::TryFutureExt;
-use mqtt_proto::{decode_raw_header, v3, v5, Error, Protocol};
+use mqtt_proto::{decode_raw_header_async, v3, v5, Error, IoErrorKind, Protocol};
 use openssl::ssl::{NameType, Ssl, SslAcceptor, SslFiletype, SslMethod, SslVerifyMode};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_openssl::SslStream;
@@ -147,8 +149,8 @@ pub async fn handle_accept<
             }
         };
         WebSocketWrapper::WebSocket {
-            stream,
-            read_data: Vec::new(),
+            stream: Box::new(stream),
+            read_data: Bytes::new(),
             read_data_idx: 0,
             pending_pong: None,
             closed: false,
@@ -157,11 +159,11 @@ pub async fn handle_accept<
         WebSocketWrapper::Raw(tls_wrapper)
     };
 
-    let (packet_type, remaining_len) = decode_raw_header(&mut ws_wrapper)
+    let (packet_type, remaining_len, total_len) = decode_raw_header_async(&mut ws_wrapper)
         .or(async {
             let _ = timeout_receiver.recv_async().await;
             log::info!("timeout when decode raw mqtt header: {}", peer);
-            Err(Error::IoError(io::ErrorKind::TimedOut, String::new()))
+            Err(Error::IoError(IoErrorKind::TimedOut))
         })
         .await?;
     if packet_type != 0b00010000 {
@@ -172,12 +174,13 @@ pub async fn handle_accept<
         .or(async {
             let _ = timeout_receiver.recv_async().await;
             log::info!("timeout when decode mqtt protocol: {}", peer);
-            Err(Error::IoError(io::ErrorKind::TimedOut, String::new()))
+            Err(Error::IoError(IoErrorKind::TimedOut))
         })
         .await?;
     match protocol {
         Protocol::V310 | Protocol::V311 => {
-            let header = v3::Header::new_with(packet_type, remaining_len).expect("v3 header");
+            let header = v3::Header::new_with(packet_type, remaining_len, total_len as u32)
+                .expect("v3 header");
             mqtt::v3::handle_connection(
                 ws_wrapper,
                 peer,
@@ -190,7 +193,8 @@ pub async fn handle_accept<
             .await?;
         }
         Protocol::V500 => {
-            let header = v5::Header::new_with(packet_type, remaining_len).expect("v5 header");
+            let header = v5::Header::new_with(packet_type, remaining_len, total_len as u32)
+                .expect("v5 header");
             mqtt::v5::handle_connection(
                 ws_wrapper,
                 peer,
@@ -300,17 +304,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsWrapper<S> {
 enum WebSocketWrapper<S> {
     Raw(TlsWrapper<S>),
     WebSocket {
-        stream: WebSocketStream<TlsWrapper<S>>,
-        read_data: Vec<u8>,
+        stream: Box<WebSocketStream<TlsWrapper<S>>>,
+        read_data: Bytes,
         read_data_idx: usize,
-        pending_pong: Option<Vec<u8>>,
+        pending_pong: Option<Bytes>,
         closed: bool,
     },
 }
 
 fn ws_send_pong<S: AsyncRead + AsyncWrite + Unpin>(
-    stream: &mut WebSocketStream<TlsWrapper<S>>,
-    pong: &mut Option<Vec<u8>>,
+    stream: &mut Box<WebSocketStream<TlsWrapper<S>>>,
+    pong: &mut Option<Bytes>,
     cx: &mut Context<'_>,
 ) -> io::Result<()> {
     if let Some(data) = pong.take() {
@@ -436,7 +440,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for WebSocketWrapper<S> {
                     }
                     Poll::Pending => return Poll::Pending,
                 }
-                let message = Message::Binary(buf.to_vec());
+                let message = Message::Binary(buf.to_vec().into());
                 if let Err(err) = Pin::new(&mut *stream).start_send(message) {
                     log::debug!("WebSocket write error: {:?}", err);
                     return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));

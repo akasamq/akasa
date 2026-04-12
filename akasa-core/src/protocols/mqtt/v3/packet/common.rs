@@ -10,7 +10,7 @@ use tokio::io::AsyncWrite;
 use crate::protocols::mqtt::{get_unix_ts, PendingPacketStatus};
 use crate::state::ClientId;
 
-use super::super::Session;
+use super::Session;
 
 #[inline]
 pub(crate) fn after_handle_packet(session: &mut Session) -> Vec<Packet> {

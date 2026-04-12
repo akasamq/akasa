@@ -11,13 +11,12 @@ use mqtt_proto::{
 
 use crate::state::GlobalState;
 
-use super::super::{Session, SubscriptionData};
-use super::{
-    common::{build_error_disconnect, handle_pendings},
-    publish::{recv_publish, RecvPublish},
-};
+use super::common::{build_error_disconnect, handle_pendings};
+use super::publish::{recv_publish, RecvPublish};
+use super::{Session, SubscriptionData};
 
 #[inline]
+#[allow(clippy::result_large_err)]
 pub(crate) fn handle_subscribe(
     session: &mut Session,
     packet: &Subscribe,
@@ -56,7 +55,7 @@ packet id : {}
             {
                 SubscribeReasonCode::SharedSubscriptionNotSupported
             } else if !global.config.wildcard_subscription_available
-                && filter.contains(|c| c == MATCH_ONE_CHAR || c == MATCH_ALL_CHAR)
+                && filter.contains([MATCH_ONE_CHAR, MATCH_ALL_CHAR])
             {
                 SubscribeReasonCode::WildcardSubscriptionsNotSupported
             } else {

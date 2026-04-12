@@ -40,7 +40,7 @@ async fn test_publish_qos0() {
         let tx = tx.clone();
         let task = tokio::spawn(async move {
             client
-                .connect(format!("subscriber: {}", topic), true, false)
+                .connect(&format!("subscriber: {}", topic), true, false)
                 .await;
             client.subscribe(2, vec![(topic, QoS::Level0)]).await;
 
@@ -107,7 +107,7 @@ async fn test_publish_qos1() {
         let tx = tx.clone();
         let task = tokio::spawn(async move {
             client
-                .connect(format!("subscriber: {}", topic), true, false)
+                .connect(&format!("subscriber: {}", topic), true, false)
                 .await;
             client.subscribe(2, vec![(topic, QoS::Level1)]).await;
 
@@ -189,7 +189,7 @@ async fn test_publish_qos2() {
         let tx = tx.clone();
         let task = tokio::spawn(async move {
             client
-                .connect(format!("subscriber: {}", topic), true, false)
+                .connect(&format!("subscriber: {}", topic), true, false)
                 .await;
             client.subscribe(2, vec![(topic, QoS::Level2)]).await;
 

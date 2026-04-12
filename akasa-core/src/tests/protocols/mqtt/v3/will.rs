@@ -32,7 +32,7 @@ async fn test_will_publish() {
             c.last_will = Some(LastWill {
                 qos: QoS::Level1,
                 retain: false,
-                topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+                topic_name: TopicName::try_from("topic/1").unwrap(),
                 message: Bytes::from(vec![1, 2, 3, 4]),
             });
         };
@@ -73,7 +73,7 @@ async fn test_will_disconnect_not_publish() {
             c.last_will = Some(LastWill {
                 qos: QoS::Level1,
                 retain: false,
-                topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+                topic_name: TopicName::try_from("topic/1").unwrap(),
                 message: Bytes::from(vec![1, 2, 3, 4]),
             });
         };

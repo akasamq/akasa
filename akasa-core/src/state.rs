@@ -280,7 +280,7 @@ impl ClientId {
     }
 
     pub fn max_value() -> ClientId {
-        ClientId(u64::max_value())
+        ClientId(u64::MAX)
     }
 }
 

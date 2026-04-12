@@ -289,7 +289,7 @@ pub struct PublishAction {
     pub payload: Bytes,
     pub payload_is_utf8: Option<bool>,
     pub message_expiry_interval: Option<u32>,
-    pub content_type: Option<Arc<String>>,
+    pub content_type: Option<Arc<str>>,
 }
 
 /// Subscribe to some topic filters (retain message will not send)

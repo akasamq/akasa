@@ -4,11 +4,7 @@ use tokio::net::TcpSocket;
 
 use crate::{protocols::http::get_router, GlobalState};
 
-pub async fn serve(
-    cfg: crate::config::Http,
-    reuse_port: bool,
-    global: Arc<GlobalState>,
-) -> std::io::Result<()> {
+pub async fn serve(cfg: crate::config::Http, global: Arc<GlobalState>) -> std::io::Result<()> {
     let addr = cfg.addr;
     let mut labels = Vec::new();
     let router = get_router(&cfg, global.clone());
@@ -19,18 +15,19 @@ pub async fn serve(
         TcpSocket::new_v6()?
     };
     socket.set_reuseaddr(true)?;
-    if reuse_port {
+    #[cfg(all(
+        unix,
+        not(target_os = "solaris"),
+        not(target_os = "illumos"),
+        not(target_os = "cygwin"),
+    ))]
+    if cfg.reuse_port {
         labels.push("reuseport");
         socket.set_reuseport(true)?;
     }
 
     if cfg.prometheus {
         labels.push("prometheus");
-    }
-
-    #[cfg(feature = "swagger-ui")]
-    if cfg.swagger_ui {
-        labels.push("swagger-ui");
     }
 
     socket.bind(addr)?;

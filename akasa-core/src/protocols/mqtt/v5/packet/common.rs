@@ -15,7 +15,7 @@ use tokio::io::AsyncWrite;
 use crate::protocols::mqtt::{get_unix_ts, PendingPacketStatus};
 use crate::state::ClientId;
 
-use super::super::Session;
+use super::Session;
 
 #[inline]
 pub(crate) fn after_handle_packet(session: &mut Session) -> Vec<Packet> {
@@ -31,7 +31,7 @@ pub(crate) fn build_error_connack<'a, R: Into<Cow<'a, str>>>(
     reason_string: R,
 ) -> Packet {
     let reason_string = if session.request_problem_info {
-        Some(Arc::new(reason_string.into().into_owned()))
+        Some(Arc::from(reason_string.into()))
     } else {
         None
     };
@@ -70,7 +70,7 @@ pub(crate) fn build_error_disconnect<'a, R: Into<Cow<'a, str>>>(
     reason_string: R,
 ) -> Packet {
     let reason_string = if session.request_problem_info {
-        Some(Arc::new(reason_string.into().into_owned()))
+        Some(Arc::from(reason_string.into()))
     } else {
         None
     };

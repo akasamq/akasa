@@ -9,11 +9,9 @@ use mqtt_proto::{
 
 use crate::state::GlobalState;
 
-use super::super::Session;
-use super::{
-    common::handle_pendings,
-    publish::{recv_publish, RecvPublish},
-};
+use super::common::handle_pendings;
+use super::publish::{recv_publish, RecvPublish};
+use super::Session;
 
 #[inline]
 pub(crate) fn handle_subscribe(

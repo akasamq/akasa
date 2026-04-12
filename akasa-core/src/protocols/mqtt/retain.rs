@@ -1,4 +1,3 @@
-use std::mem;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -25,7 +24,7 @@ struct RetainNode {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RetainContent {
     // the publisher client id
-    pub client_identifier: Arc<String>,
+    pub client_identifier: Arc<str>,
     pub qos: QoS,
     pub topic_name: TopicName,
     pub payload: Bytes,
@@ -37,8 +36,7 @@ impl RetainTable {
     pub fn get_matches(&self, topic_filter: &str) -> Vec<Arc<RetainContent>> {
         // [MQTT-4.7.2-1] The Server MUST NOT match Topic Filters starting with a
         // wildcard character (# or +) with Topic Names beginning with a $ character
-        let wildcard_first =
-            topic_filter.starts_with(|c| c == MATCH_ONE_CHAR || c == MATCH_ALL_CHAR);
+        let wildcard_first = topic_filter.starts_with([MATCH_ONE_CHAR, MATCH_ALL_CHAR]);
         let (filter_item, rest_items) = split_topic(topic_filter);
         let mut retains = Vec::new();
         self.inner
@@ -126,7 +124,7 @@ impl RetainNode {
             if let Some((topic_item, rest_items)) = topic_items.map(split_topic) {
                 node.insert(topic_item, rest_items, content)
             } else {
-                mem::replace(&mut node.content, Some(content))
+                node.content.replace(content)
             }
         } else {
             let mut new_node = RetainNode::default();
@@ -161,7 +159,7 @@ impl RetainNode {
 
 impl RetainContent {
     pub fn new(
-        client_identifier: Arc<String>,
+        client_identifier: Arc<str>,
         qos: QoS,
         topic_name: TopicName,
         payload: Bytes,
@@ -189,10 +187,9 @@ mod tests {
         fn from(
             (topic_name, qos, payload, client_identifier): (&str, QoS, Vec<u8>, &str),
         ) -> RetainContent {
-            let client_identifier = Arc::new(client_identifier.to_owned());
-            let topic_name = TopicName::try_from(topic_name.to_owned()).unwrap();
+            let topic_name = TopicName::try_from(topic_name).unwrap();
             let payload = Bytes::from(payload);
-            Self::new(client_identifier, qos, topic_name, payload, None, 0)
+            Self::new(client_identifier.into(), qos, topic_name, payload, None, 0)
         }
     }
 

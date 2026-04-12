@@ -53,7 +53,7 @@ async fn test_shared_one_group() {
         let task = tokio::spawn(async move {
             let client_id = idx + 1;
             client
-                .connect(format!("sub @{}", client_id), true, false)
+                .connect(&format!("sub @{}", client_id), true, false)
                 .await;
             let sub_topics = vec![(topic, SubscriptionOptions::new(QoS::Level0))];
             client.subscribe(2, sub_topics).await;
@@ -156,7 +156,7 @@ async fn test_shared_two_group() {
         let task = tokio::spawn(async move {
             let client_id = idx + 1;
             client
-                .connect(format!("sub @{}", client_id), true, false)
+                .connect(&format!("sub @{}", client_id), true, false)
                 .await;
             let sub_topics = vec![(topic, SubscriptionOptions::new(QoS::Level0))];
             client.subscribe(2, sub_topics).await;
@@ -262,7 +262,7 @@ async fn test_shared_with_normal_filter() {
         let task = tokio::spawn(async move {
             let client_id = idx + 1;
             client
-                .connect(format!("sub @{}", client_id), true, false)
+                .connect(&format!("sub @{}", client_id), true, false)
                 .await;
             let sub_topics = vec![(topic, SubscriptionOptions::new(QoS::Level0))];
             client.subscribe(2, sub_topics).await;
@@ -367,7 +367,7 @@ async fn test_shared_wildcard_filter_one_group() {
         let task = tokio::spawn(async move {
             let client_id = idx + 1;
             client
-                .connect(format!("sub @{}", client_id), true, false)
+                .connect(&format!("sub @{}", client_id), true, false)
                 .await;
             let sub_topics = vec![(topic, SubscriptionOptions::new(QoS::Level0))];
             client.subscribe(2, sub_topics).await;
@@ -474,7 +474,7 @@ async fn test_shared_hash_topic() {
         let task = tokio::spawn(async move {
             let client_id = idx + 1;
             client
-                .connect(format!("sub @{}", client_id), true, false)
+                .connect(&format!("sub @{}", client_id), true, false)
                 .await;
             let sub_topics = vec![(topic, SubscriptionOptions::new(QoS::Level0))];
             client.subscribe(2, sub_topics).await;
@@ -551,7 +551,7 @@ async fn test_shared_hash_client_id() {
     let mut publishers = Vec::with_capacity(64);
     for i in 0..64 {
         let (_task, mut client) = MockConn::start_with_global(i, Arc::clone(&global));
-        client.connect(format!("pub-{}", i), true, false).await;
+        client.connect(&format!("pub-{}", i), true, false).await;
         publishers.push(client);
     }
 
@@ -582,7 +582,7 @@ async fn test_shared_hash_client_id() {
         let task = tokio::spawn(async move {
             let client_id = idx + 1;
             client
-                .connect(format!("sub @{}", client_id), true, false)
+                .connect(&format!("sub @{}", client_id), true, false)
                 .await;
             let sub_topics = vec![(topic, SubscriptionOptions::new(QoS::Level0))];
             client.subscribe(2, sub_topics).await;
@@ -618,7 +618,7 @@ async fn test_shared_hash_client_id() {
 
     let mut receiver_idxs = HashSet::new();
     for client in &publishers {
-        let mut current_idx = usize::max_value();
+        let mut current_idx = usize::MAX;
         for last_byte in 0..8u8 {
             let data = vec![3, 5, 55, last_byte];
             // send

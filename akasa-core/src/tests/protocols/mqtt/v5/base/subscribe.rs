@@ -36,12 +36,12 @@ async fn test_subscribe_reject_empty_topics() {
     let (task, mut client) = MockConn::start(3333, Config::new_allow_anonymous());
 
     client.connect("client id", true, false).await;
-    client.send_subscribe::<&str>(23, vec![]).await;
+    client.send_subscribe(23, vec![]).await;
     let received_pkt = client.read_packet().await;
     if let Packet::Disconnect(pkt) = received_pkt {
         assert_eq!(pkt.reason_code, DisconnectReasonCode::MalformedPacket);
         assert_eq!(
-            pkt.properties.reason_string.unwrap().as_str(),
+            pkt.properties.reason_string.unwrap().as_ref(),
             "empty subscription"
         );
     } else {

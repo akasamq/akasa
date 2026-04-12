@@ -246,13 +246,13 @@ async fn test_max_packet_size_client() {
         let payload_large = b"@SessionExpiryInterval is 0 in CONNECT";
         let sample_packet_ok = Packet::Publish(Publish::new(
             QosPid::Level0,
-            TopicName::try_from("abc/1".to_owned()).unwrap(),
+            TopicName::try_from("abc/1").unwrap(),
             // make sure disconnect.properties.reason_string.is_some()
             Bytes::from(payload_ok.to_vec()),
         ));
         let sample_packet_large = Packet::Publish(Publish::new(
             QosPid::Level0,
-            TopicName::try_from("abc/1".to_owned()).unwrap(),
+            TopicName::try_from("abc/1").unwrap(),
             Bytes::from(payload_large.to_vec()),
         ));
         let encode_len_ok = sample_packet_ok.encode_len().unwrap();
@@ -305,13 +305,13 @@ async fn test_max_packet_size_server() {
     let payload_large = b"@01234567890123456789";
     let sample_packet_ok = Packet::Publish(Publish::new(
         QosPid::Level0,
-        TopicName::try_from("abc/1".to_owned()).unwrap(),
+        TopicName::try_from("abc/1").unwrap(),
         // make sure disconnect.properties.reason_string.is_some()
         Bytes::from(payload_ok.to_vec()),
     ));
     let sample_packet_large = Packet::Publish(Publish::new(
         QosPid::Level0,
-        TopicName::try_from("abc/1".to_owned()).unwrap(),
+        TopicName::try_from("abc/1").unwrap(),
         Bytes::from(payload_large.to_vec()),
     ));
     let encode_len_ok = sample_packet_ok.encode_len().unwrap();
@@ -361,7 +361,7 @@ async fn test_connack_properties() {
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
     let connect = {
-        let mut c = Connect::new(Arc::new(String::new()), 32);
+        let mut c = Connect::new(Arc::from(String::new()), 32);
         c.clean_start = true;
         c.keep_alive = 32;
         let p = &mut c.properties;
@@ -404,12 +404,12 @@ async fn test_retain_not_supported() {
     let global = Arc::new(GlobalState::new(config));
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
-    let mut connect = Connect::new(Arc::new("client".to_owned()), 32);
+    let mut connect = Connect::new("client".into(), 32);
     connect.clean_start = true;
     connect.last_will = Some(LastWill {
         qos: QoS::Level1,
         retain: true,
-        topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+        topic_name: TopicName::try_from("topic/1").unwrap(),
         payload: Bytes::from(vec![1, 2, 3, 4]),
         properties: Default::default(),
     });
@@ -432,12 +432,12 @@ async fn test_will_qos_not_supported() {
     let global = Arc::new(GlobalState::new(config));
     let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
 
-    let mut connect = Connect::new(Arc::new("client".to_owned()), 32);
+    let mut connect = Connect::new("client".into(), 32);
     connect.clean_start = true;
     connect.last_will = Some(LastWill {
         qos: QoS::Level2,
         retain: true,
-        topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+        topic_name: TopicName::try_from("topic/1").unwrap(),
         payload: Bytes::from(vec![1, 2, 3, 4]),
         properties: Default::default(),
     });
@@ -464,13 +464,13 @@ async fn test_will_delay_interval_reached() {
         .subscribe(1, vec![("topic/1", SubscriptionOptions::new(QoS::Level2))])
         .await;
 
-    let mut connect = Connect::new(Arc::new("client1".to_owned()), 32);
+    let mut connect = Connect::new("client1".into(), 32);
     connect.clean_start = false;
     connect.properties.session_expiry_interval = Some(60);
     connect.last_will = Some(LastWill {
         qos: QoS::Level0,
         retain: false,
-        topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+        topic_name: TopicName::try_from("topic/1").unwrap(),
         payload: Bytes::from("will message"),
         properties: WillProperties {
             delay_interval: Some(2),
@@ -507,13 +507,13 @@ async fn test_will_delay_interval_not_reached() {
         .subscribe(1, vec![("topic/1", SubscriptionOptions::new(QoS::Level2))])
         .await;
 
-    let mut connect = Connect::new(Arc::new("client1".to_owned()), 32);
+    let mut connect = Connect::new("client1".into(), 32);
     connect.clean_start = false;
     connect.properties.session_expiry_interval = Some(60);
     connect.last_will = Some(LastWill {
         qos: QoS::Level0,
         retain: false,
-        topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+        topic_name: TopicName::try_from("topic/1").unwrap(),
         payload: Bytes::from("will message"),
         properties: WillProperties {
             delay_interval: Some(2),

@@ -6,23 +6,19 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-akasa-core = { version = "0.1.0", path = "../akasa-core" }
-anyhow = "1.0.66"
-clap = { version = "4.0.26", features = ["derive"] }
-serde_yaml = "0.9.14"
-env_logger = "0.9.3"
-log = "0.4.17"
-dashmap = "5.4.0"
-rpassword = "7.2.0"
-rand = { version = "0.8.5", features = ["getrandom"] }
+akasa-core = { path = "../akasa-core" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde_yaml = "0.9"
+env_logger = "0.11"
+log = { workspace = true }
+dashmap = { workspace = true }
+rpassword = "7"
+rand = { workspace = true, features = ["thread_rng"] }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
-tikv-jemallocator = { version = "0.5.4", optional = true }
+tikv-jemallocator = { version = "0.6", optional = true }
 
 [features]
-default = [
-    "jemalloc",
-    "swagger-ui",
-]
+default = ["jemalloc"]
 jemalloc = ["tikv-jemallocator"]
-swagger-ui = ["akasa-core/swagger-ui"]

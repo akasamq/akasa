@@ -19,7 +19,7 @@ async fn test_simple_subscription_id() {
 
     client.connect("client", true, false).await;
 
-    let topic_filter = TopicFilter::try_from("abc/0".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("abc/0").unwrap();
     let sub_pid = Pid::try_from(1).unwrap();
     let sub_opts = SubscriptionOptions::new(QoS::Level2);
     let mut pkt = Subscribe::new(sub_pid, vec![(topic_filter, sub_opts)]);
@@ -55,9 +55,9 @@ async fn test_subscription_id_with_multi_topics() {
     client.connect("client", true, false).await;
     client.subscribe(1, vec![("#", sub_opts)]).await;
 
-    let filter1 = TopicFilter::try_from("abc/0".to_owned()).unwrap();
-    let filter2 = TopicFilter::try_from("xyz/0".to_owned()).unwrap();
-    let filter3 = TopicFilter::try_from("ijk/0".to_owned()).unwrap();
+    let filter1 = TopicFilter::try_from("abc/0").unwrap();
+    let filter2 = TopicFilter::try_from("xyz/0").unwrap();
+    let filter3 = TopicFilter::try_from("ijk/0").unwrap();
     let sub_pid = Pid::try_from(2).unwrap();
     let mut pkt = Subscribe::new(
         sub_pid,
@@ -112,7 +112,7 @@ async fn test_subscription_id_disabled() {
 
     client.connect("client", true, false).await;
 
-    let topic_filter = TopicFilter::try_from("abc/0".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("abc/0").unwrap();
     let sub_pid = Pid::try_from(1).unwrap();
     let sub_opts = SubscriptionOptions::new(QoS::Level2);
     let mut pkt = Subscribe::new(sub_pid, vec![(topic_filter, sub_opts)]);
@@ -141,7 +141,7 @@ async fn test_shared_subscription_disabled() {
 
     client.connect("client", true, false).await;
 
-    let topic_filter = TopicFilter::try_from("$share/abc/0".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("$share/abc/0").unwrap();
     assert!(topic_filter.is_shared());
     let sub_pid = Pid::try_from(1).unwrap();
     let sub_opts = SubscriptionOptions::new(QoS::Level2);
@@ -170,7 +170,7 @@ async fn test_wildcard_subscription_disabled() {
 
     client.connect("client", true, false).await;
 
-    let topic_filter = TopicFilter::try_from("abc/+".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("abc/+").unwrap();
     let sub_pid = Pid::try_from(1).unwrap();
     let sub_opts = SubscriptionOptions::new(QoS::Level2);
     let pkt = Subscribe::new(sub_pid, vec![(topic_filter, sub_opts)]);
@@ -203,7 +203,7 @@ async fn test_retain_disabled() {
         })
         .await;
 
-    let topic_filter = TopicFilter::try_from("abc/0".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("abc/0").unwrap();
     let sub_pid = Pid::try_from(1).unwrap();
     let sub_opts = SubscriptionOptions::new(QoS::Level2);
     let pkt = Subscribe::new(sub_pid, vec![(topic_filter, sub_opts)]);
@@ -234,7 +234,7 @@ async fn test_shared_filter_have_no_retain() {
         })
         .await;
 
-    let topic_filter = TopicFilter::try_from("$share/group/abc/0".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("$share/group/abc/0").unwrap();
     let sub_pid = Pid::try_from(1).unwrap();
     let sub_opts = SubscriptionOptions::new(QoS::Level2);
     let pkt = Subscribe::new(sub_pid, vec![(topic_filter, sub_opts)]);
@@ -265,7 +265,7 @@ async fn test_subscription_options_no_local_retain() {
         })
         .await;
 
-    let topic_filter = TopicFilter::try_from("abc/0".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("abc/0").unwrap();
     let sub_pid = Pid::try_from(1).unwrap();
     let mut sub_opts = SubscriptionOptions::new(QoS::Level2);
     sub_opts.no_local = true;
@@ -292,7 +292,7 @@ async fn test_subscription_options_no_local_publish() {
 
     client.connect("client", true, false).await;
 
-    let topic_filter = TopicFilter::try_from("abc/0".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("abc/0").unwrap();
     let sub_pid = Pid::try_from(1).unwrap();
     let mut sub_opts = SubscriptionOptions::new(QoS::Level2);
     sub_opts.no_local = true;
@@ -328,7 +328,7 @@ async fn test_subscription_options_retain_as_published_when_subscribe() {
         })
         .await;
 
-    let topic_filter = TopicFilter::try_from("abc/0".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("abc/0").unwrap();
     let sub_pid = Pid::try_from(1).unwrap();
     let mut sub_opts = SubscriptionOptions::new(QoS::Level2);
     sub_opts.retain_as_published = false;
@@ -363,7 +363,7 @@ async fn test_subscription_options_retain_as_published_when_matched() {
     client1.connect("client1", true, false).await;
     client2.connect("client2", true, false).await;
 
-    let topic_filter = TopicFilter::try_from("abc/0".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("abc/0").unwrap();
     let sub_pid = Pid::try_from(1).unwrap();
     let mut sub_opts = SubscriptionOptions::new(QoS::Level2);
     sub_opts.retain_as_published = false;
@@ -406,7 +406,7 @@ async fn test_subscription_options_retain_send_at_subscribe() {
         })
         .await;
 
-    let topic_filter = TopicFilter::try_from("abc/0".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("abc/0").unwrap();
     let sub_pid = Pid::try_from(1).unwrap();
     let mut sub_opts = SubscriptionOptions::new(QoS::Level2);
     sub_opts.retain_handling = RetainHandling::SendAtSubscribe;
@@ -443,7 +443,7 @@ async fn test_subscription_options_retain_send_at_subscribe_if_not_exist() {
         })
         .await;
 
-    let topic_filter = TopicFilter::try_from("abc/0".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("abc/0").unwrap();
     let sub_pid = Pid::try_from(1).unwrap();
     let mut sub_opts = SubscriptionOptions::new(QoS::Level2);
     sub_opts.retain_handling = RetainHandling::SendAtSubscribeIfNotExist;
@@ -488,7 +488,7 @@ async fn test_subscription_options_retain_do_not_send() {
         })
         .await;
 
-    let topic_filter = TopicFilter::try_from("abc/0".to_owned()).unwrap();
+    let topic_filter = TopicFilter::try_from("abc/0").unwrap();
     let sub_pid = Pid::try_from(1).unwrap();
     let mut sub_opts = SubscriptionOptions::new(QoS::Level2);
     sub_opts.retain_handling = RetainHandling::DoNotSend;

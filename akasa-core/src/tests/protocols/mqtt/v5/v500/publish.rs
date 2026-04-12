@@ -27,7 +27,7 @@ async fn test_payload_is_not_utf8() {
     if let Packet::Disconnect(pkt) = received_pkt {
         assert_eq!(pkt.reason_code, DisconnectReasonCode::MalformedPacket);
         assert_eq!(
-            pkt.properties.reason_string.unwrap().as_str(),
+            pkt.properties.reason_string.unwrap().as_ref(),
             "invalid payload format, utf8 expected"
         );
     } else {
@@ -248,7 +248,7 @@ async fn test_topic_alias_zero_value() {
     if let Packet::Disconnect(pkt) = received_pkt {
         assert_eq!(pkt.reason_code, DisconnectReasonCode::TopicAliasInvalid);
         assert_eq!(
-            pkt.properties.reason_string.unwrap().as_str(),
+            pkt.properties.reason_string.unwrap().as_ref(),
             "topic alias is 0"
         );
     } else {
@@ -278,7 +278,7 @@ async fn test_topic_alias_too_large() {
     if let Packet::Disconnect(pkt) = received_pkt {
         assert_eq!(pkt.reason_code, DisconnectReasonCode::TopicAliasInvalid);
         assert_eq!(
-            pkt.properties.reason_string.unwrap().as_str(),
+            pkt.properties.reason_string.unwrap().as_ref(),
             "topic alias too large"
         );
     } else {
@@ -306,7 +306,7 @@ async fn test_topic_alias_not_found() {
     if let Packet::Disconnect(pkt) = received_pkt {
         assert_eq!(pkt.reason_code, DisconnectReasonCode::ProtocolError);
         assert_eq!(
-            pkt.properties.reason_string.unwrap().as_str(),
+            pkt.properties.reason_string.unwrap().as_ref(),
             "topic alias not found"
         );
     } else {
@@ -331,7 +331,7 @@ async fn test_forbid_publish_subscription_id() {
     if let Packet::Disconnect(pkt) = received_pkt {
         assert_eq!(pkt.reason_code, DisconnectReasonCode::ProtocolError);
         assert_eq!(
-            pkt.properties.reason_string.unwrap().as_str(),
+            pkt.properties.reason_string.unwrap().as_ref(),
             "subscription identifier can't in publish"
         );
     } else {
@@ -368,8 +368,7 @@ async fn test_request_response() {
         client2
             .recv_publish(QoS::Level0, 0, "/client2/request", "ping", |p| {
                 let pp = &mut p.properties;
-                pp.response_topic =
-                    Some(TopicName::try_from("/client1/response".to_owned()).unwrap());
+                pp.response_topic = Some(TopicName::try_from("/client1/response").unwrap());
                 pp.correlation_data = Some(Bytes::from("request-id-01"));
             })
             .await;
@@ -385,7 +384,7 @@ async fn test_request_response() {
     client1
         .send_publish(QoS::Level0, 0, "/client2/request", "ping", |p| {
             let pp = &mut p.properties;
-            pp.response_topic = Some(TopicName::try_from("/client1/response".to_owned()).unwrap());
+            pp.response_topic = Some(TopicName::try_from("/client1/response").unwrap());
             pp.correlation_data = Some(Bytes::from("request-id-01"));
         })
         .await;

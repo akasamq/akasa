@@ -58,7 +58,7 @@ impl RouteTable {
     pub fn subscribe(&self, topic_filter: &TopicFilter, id: ClientId, qos: QoS) {
         if let Some((shared_group_name, shared_filter)) = topic_filter.shared_info() {
             self.subscribe_shared(
-                &TopicFilter::try_from(shared_filter.to_owned()).expect("shared filter"),
+                &TopicFilter::try_from(shared_filter).expect("shared filter"),
                 id,
                 qos,
                 Some(shared_group_name.to_owned()),
@@ -86,7 +86,7 @@ impl RouteTable {
     pub fn unsubscribe(&self, topic_filter: &TopicFilter, id: ClientId) {
         if let Some((shared_group_name, shared_filter)) = topic_filter.shared_info() {
             self.unsubscribe_shared(
-                &TopicFilter::try_from(shared_filter.to_owned()).expect("shared filter"),
+                &TopicFilter::try_from(shared_filter).expect("shared filter"),
                 id,
                 Some(shared_group_name),
             );
@@ -321,16 +321,13 @@ mod tests {
             match action.clone() {
                 Sub(filter, id) => {
                     table.subscribe(
-                        &TopicFilter::try_from(filter.to_owned()).unwrap(),
+                        &TopicFilter::try_from(filter).unwrap(),
                         ClientId::new(id),
                         QoS::Level0,
                     );
                 }
                 UnSub(filter, id) => {
-                    table.unsubscribe(
-                        &TopicFilter::try_from(filter.to_owned()).unwrap(),
-                        ClientId::new(id),
-                    );
+                    table.unsubscribe(&TopicFilter::try_from(filter).unwrap(), ClientId::new(id));
                 }
                 Query(name, expected) => {
                     let mut expected_items: Vec<(String, HashMap<ClientId, QoS>)> = expected
@@ -345,7 +342,7 @@ mod tests {
                         })
                         .collect();
                     let mut items: Vec<(String, HashMap<ClientId, QoS>)> = table
-                        .get_matches(&TopicName::try_from(name.to_owned()).unwrap())
+                        .get_matches(&TopicName::try_from(name).unwrap())
                         .into_iter()
                         .map(|content| {
                             let (k, v) = content.read().to_simple();

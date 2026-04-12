@@ -39,7 +39,7 @@ async fn test_publish_qos0() {
     ] {
         let tx = tx.clone();
         let task = tokio::spawn(async move {
-            client.connect(format!("sub {}", topic), true, false).await;
+            client.connect(&format!("sub {}", topic), true, false).await;
             let sub_topics = vec![(topic, SubscriptionOptions::new(QoS::Level0))];
             client.subscribe(2, sub_topics).await;
 
@@ -106,7 +106,7 @@ async fn test_publish_qos1() {
     ] {
         let tx = tx.clone();
         let task = tokio::spawn(async move {
-            client.connect(format!("sub:{}", topic), true, false).await;
+            client.connect(&format!("sub:{}", topic), true, false).await;
             let sub_topics = vec![(topic, SubscriptionOptions::new(QoS::Level1))];
             client.subscribe(2, sub_topics).await;
 
@@ -180,7 +180,7 @@ async fn test_publish_qos2() {
     ] {
         let tx = tx.clone();
         let task = tokio::spawn(async move {
-            client.connect(format!("sub:{}", topic), true, false).await;
+            client.connect(&format!("sub:{}", topic), true, false).await;
             let sub_topics = vec![(topic, SubscriptionOptions::new(QoS::Level2))];
             client.subscribe(2, sub_topics).await;
 

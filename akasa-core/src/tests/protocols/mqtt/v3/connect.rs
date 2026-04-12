@@ -44,7 +44,7 @@ async fn test_connect_invalid_first_packet() {
 
         let mut publish = Publish::new(
             QosPid::Level0,
-            TopicName::try_from("xyz/1".to_owned()).unwrap(),
+            TopicName::try_from("xyz/1").unwrap(),
             Bytes::from(vec![3, 5, 55]),
         );
         publish.retain = true;
@@ -81,7 +81,7 @@ async fn test_connect_v310() {
     {
         let (_task, mut client) = MockConn::start(3333, Config::new_allow_anonymous());
         client
-            .connect_with("a".repeat(24), |c| c.protocol = Protocol::V310, |_| ())
+            .connect_with(&"a".repeat(24), |c| c.protocol = Protocol::V310, |_| ())
             .await;
     }
     // connect identifier rejected: identifier too large (check length)
@@ -91,7 +91,7 @@ async fn test_connect_v310() {
         let (_task, mut client) = MockConn::start(3333, config);
         client
             .connect_with(
-                "a".repeat(24),
+                &"a".repeat(24),
                 |c| c.protocol = Protocol::V310,
                 |a| a.code = IdentifierRejected,
             )
@@ -147,7 +147,7 @@ async fn test_connect_will() {
             c.last_will = Some(LastWill {
                 qos: QoS::Level1,
                 retain: false,
-                topic_name: TopicName::try_from("topic/1".to_owned()).unwrap(),
+                topic_name: TopicName::try_from("topic/1").unwrap(),
                 message: Bytes::from(vec![1, 2, 3, 4]),
             });
         };
@@ -162,7 +162,7 @@ async fn test_connect_will() {
                 c.last_will = Some(LastWill {
                     qos: QoS::Level1,
                     retain: false,
-                    topic_name: TopicName::try_from("$topic/1".to_owned()).unwrap(),
+                    topic_name: TopicName::try_from("$topic/1").unwrap(),
                     message: Bytes::from(vec![1, 2, 3, 4]),
                 })
             })
@@ -200,7 +200,7 @@ async fn test_connect_auth() {
             .connect_with(
                 "client id",
                 |c| {
-                    c.username = Some(Arc::new("xxx".to_owned()));
+                    c.username = Some("xxx".into());
                     c.password = Some(Bytes::from(b"yyy".to_vec()));
                 },
                 |a| a.code = BadUserNameOrPassword,
@@ -216,7 +216,7 @@ async fn test_connect_auth() {
             .connect_with(
                 "client",
                 |c| {
-                    c.username = Some(Arc::new("user".to_owned()));
+                    c.username = Some("user".into());
                     c.password = Some(Bytes::from(b"yyy".to_vec()));
                 },
                 |a| a.code = BadUserNameOrPassword,
@@ -232,7 +232,7 @@ async fn test_connect_auth() {
             .connect_with(
                 "client id",
                 |c| {
-                    c.username = Some(Arc::new("user".to_owned()));
+                    c.username = Some("user".into());
                     c.password = Some(Bytes::from(b"pass".to_vec()));
                 },
                 |_| (),
