@@ -6,17 +6,23 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[cfg(feature = "jwt")]
+use akasa_core::auth::jwt::Claims;
 use akasa_core::{
-    auth::{Auth, Claims},
-    dump_passwords, hash_password, load_passwords, server, AuthPassword, Config, GlobalState,
-    HashAlgorithm as CoreHashAlgorithm, MIN_SALT_LEN,
+    auth::Auth, dump_passwords, hash_password, load_passwords, server, AuthPassword, Config,
+    GlobalState, HashAlgorithm as CoreHashAlgorithm, MIN_SALT_LEN,
 };
+#[cfg_attr(not(feature = "jwt"), allow(unused_imports))]
 use anyhow::{anyhow, bail, Context};
-use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+#[cfg(feature = "jwt")]
+use clap::ArgAction;
+use clap::{Parser, Subcommand, ValueEnum};
 use dashmap::DashMap;
 use default_hook::DefaultHook;
 use rand::rngs::SysRng;
 use rand::TryRng;
+#[cfg(feature = "jwt")]
+use serde::de::DeserializeOwned;
 
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 #[cfg(not(target_env = "msvc"))]
@@ -85,6 +91,7 @@ enum Commands {
     },
 
     /// Generate jwt token
+    #[cfg(feature = "jwt")]
     JwtGen {
         /// The secrets file path
         #[clap(long, value_name = "FILE")]
@@ -108,6 +115,7 @@ enum HashAlgorithm {
     Sha512Pkbdf2,
 }
 
+#[cfg(feature = "jwt")]
 fn load<T: DeserializeOwned>(f: &PathBuf) -> anyhow::Result<T> {
     let s = fs::read_to_string(f).context(format!("read {f:?}"))?;
     let r = serde_yaml::from_str(&s).context(format!("parse {f:?}"))?;
@@ -133,6 +141,7 @@ fn main() -> anyhow::Result<()> {
             }
             log::info!("Listen on {:#?}", config.listeners);
             let hook_handler = DefaultHook;
+            #[cfg_attr(not(feature = "jwt"), allow(unused_mut))]
             let mut auth = Auth::default();
             if config.auth.enable {
                 let path = config.auth.password_file.as_ref().expect("pass file");
@@ -140,6 +149,7 @@ fn main() -> anyhow::Result<()> {
                     fs::File::open(path).map_err(|err| anyhow!("load passwords: {}", err))?;
                 auth.update_passwords(load_passwords(file)?);
             }
+            #[cfg(feature = "jwt")]
             if let Some(ref f) = config.auth.jwt.secrets_file {
                 let secrets = load(f).context(format!("Jwt secrets load error {f:?}"))?;
                 auth.update_jwt(&secrets);
@@ -215,6 +225,7 @@ fn main() -> anyhow::Result<()> {
                 println!("user={username} not found");
             }
         }
+        #[cfg(feature = "jwt")]
         Commands::JwtGen {
             path: ref f,
             username,

@@ -149,6 +149,7 @@ pub struct ScramPasswordInfo {
     pub salt: Vec<u8>,
 }
 
+#[cfg(feature = "jwt")]
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 #[serde(tag = "alg")]
 pub enum JwtSecret {

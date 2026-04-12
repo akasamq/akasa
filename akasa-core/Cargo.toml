@@ -49,3 +49,4 @@ tower = "0.5"
 
 [features]
 http = ["dep:axum", "dep:utoipa"]
+jwt = ["dep:jsonwebtoken"]

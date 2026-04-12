@@ -1,7 +1,4 @@
-use crate::{
-    auth::{jwt::JWT, Claims},
-    config::JwtSecret,
-};
+use crate::auth::jwt::{Claims, JwtSecretEntry, JWT};
 
 const SECRET: &str = "secret";
 
@@ -9,12 +6,12 @@ const SECRET: &str = "secret";
 fn jwt_decode_ok() {
     let claims = Claims::default();
     let mut jwt = JWT::default();
-    let mut secrets = std::collections::HashMap::new();
-    let secret = JwtSecret::HS256 {
-        secret: SECRET.to_string(),
-    };
-    secrets.insert("default".to_string(), secret);
-    jwt.update_from(&secrets);
+    jwt.update_from([(
+        "default",
+        JwtSecretEntry::Hs256 {
+            secret: SECRET.to_string(),
+        },
+    )]);
 
     let token = jwt.encode(claims).unwrap();
     let result = jwt.decode::<Claims>(token.as_bytes());
@@ -26,12 +23,12 @@ fn jwt_decode_expired() {
     let mut claims = Claims::default();
     claims.exp = Some(0);
     let mut jwt = JWT::default();
-    let mut secrets = std::collections::HashMap::new();
-    let secret = JwtSecret::HS384 {
-        secret: SECRET.to_string(),
-    };
-    secrets.insert("default".to_string(), secret);
-    jwt.update_from(&secrets);
+    jwt.update_from([(
+        "default",
+        JwtSecretEntry::Hs384 {
+            secret: SECRET.to_string(),
+        },
+    )]);
 
     let token = jwt.encode(claims).unwrap();
     let result = jwt.decode::<Claims>(token.as_bytes());

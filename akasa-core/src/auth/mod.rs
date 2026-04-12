@@ -1,43 +1,22 @@
+#[cfg(feature = "jwt")]
 pub mod jwt;
 pub mod user;
 
-use std::collections::HashMap;
-
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+#[cfg(feature = "jwt")]
+use crate::auth::jwt::{Claims, JwtSecretEntry};
 use crate::auth::user::User;
-use crate::{config::JwtSecret, protocols::mqtt::check_password, AuthPassword};
-
-#[derive(Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
-pub struct Claims {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub sub: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exp: Option<usize>,
-    #[serde(default, skip_serializing_if = "skip_false")]
-    pub superuser: bool,
-}
-
-fn skip_false(b: &bool) -> bool {
-    !b
-}
-
-impl From<Claims> for User {
-    fn from(value: Claims) -> Self {
-        if value.superuser {
-            Self::new_superuser(value.sub)
-        } else {
-            Self::new(value.sub)
-        }
-    }
-}
+#[cfg(feature = "jwt")]
+use crate::config::JwtSecret;
+use crate::{protocols::mqtt::check_password, AuthPassword};
 
 #[derive(Default)]
 pub struct Auth {
     pub allow_anonymous: bool,
     passwords: DashMap<String, AuthPassword>,
+    #[cfg(feature = "jwt")]
     pub jwt: jwt::JWT,
 }
 
@@ -50,13 +29,16 @@ pub enum AuthError {
 impl Auth {
     pub fn authorize(&self, username: &str, password: &[u8]) -> Result<User, AuthError> {
         if check_password(&self.passwords, username, password) {
-            Ok(User::new(username.to_string()))
-        } else if let Ok(mut claims) = self.jwt.decode::<Claims>(password) {
+            return Ok(User::new(username.to_string()));
+        }
+        #[cfg(feature = "jwt")]
+        if let Ok(mut claims) = self.jwt.decode::<Claims>(password) {
             if claims.sub.is_empty() {
                 claims.sub = username.to_string();
             }
-            Ok(claims.into())
-        } else if self.allow_anonymous {
+            return Ok(claims.into());
+        }
+        if self.allow_anonymous {
             Ok(User::new_superuser(username.to_string()))
         } else {
             Err(AuthError::NotAuthorized)
@@ -73,7 +55,32 @@ impl Auth {
         self.passwords.insert(username, pswd);
     }
 
-    pub fn update_jwt(&mut self, m: &HashMap<String, JwtSecret>) {
-        self.jwt.update_from(m);
+    #[cfg(feature = "jwt")]
+    pub fn update_jwt(&mut self, m: &std::collections::HashMap<String, JwtSecret>) {
+        self.jwt.update_from(m.iter().map(|(name, secret)| {
+            let entry = match secret {
+                JwtSecret::HS256 { secret } => JwtSecretEntry::Hs256 {
+                    secret: secret.clone(),
+                },
+                JwtSecret::HS384 { secret } => JwtSecretEntry::Hs384 {
+                    secret: secret.clone(),
+                },
+                JwtSecret::HS512 { secret } => JwtSecretEntry::Hs512 {
+                    secret: secret.clone(),
+                },
+            };
+            (name.as_str(), entry)
+        }));
+    }
+}
+
+#[cfg(feature = "jwt")]
+impl From<Claims> for User {
+    fn from(value: Claims) -> Self {
+        if value.superuser {
+            Self::new_superuser(value.sub)
+        } else {
+            Self::new(value.sub)
+        }
     }
 }

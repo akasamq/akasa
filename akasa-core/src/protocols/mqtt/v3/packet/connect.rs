@@ -97,7 +97,6 @@ clean session : {}
     } else {
         packet.client_id.clone()
     };
-    session.username = packet.username;
     session.keep_alive = packet.keep_alive;
 
     if let Some(last_will) = packet.last_will {

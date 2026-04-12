@@ -1,10 +1,9 @@
+#[cfg(feature = "jwt")]
 mod jwt;
 
-use crate::{
-    auth::{Auth, Claims},
-    config::JwtSecret,
-    hash_password, AuthPassword, HashAlgorithm,
-};
+#[cfg(feature = "jwt")]
+use crate::{auth::jwt::Claims, config::JwtSecret};
+use crate::{auth::Auth, hash_password, AuthPassword, HashAlgorithm};
 
 const USERNAME: &str = "username";
 const SECRET: &str = "password";
@@ -42,30 +41,35 @@ fn auth_passw() {
     assert!(result.is_ok());
 }
 
+#[cfg(feature = "jwt")]
 #[test]
 fn auth_jwt_ok() {
     let mut auth = Auth::default();
     let mut secrets = std::collections::HashMap::new();
-    let secret = JwtSecret::HS256 {
-        secret: SECRET.to_string(),
-    };
-    secrets.insert("default".to_string(), secret);
+    secrets.insert(
+        "default".to_string(),
+        JwtSecret::HS256 {
+            secret: SECRET.to_string(),
+        },
+    );
     auth.update_jwt(&secrets);
 
-    let claims = Claims::default();
-    let token = auth.jwt.encode(claims).unwrap();
+    let token = auth.jwt.encode(Claims::default()).unwrap();
     let result = auth.authorize(USERNAME, token.as_bytes());
     assert!(result.is_ok());
 }
 
+#[cfg(feature = "jwt")]
 #[test]
 fn auth_jwt_err() {
     let mut auth = Auth::default();
     let mut secrets = std::collections::HashMap::new();
-    let secret = JwtSecret::HS256 {
-        secret: SECRET.to_string(),
-    };
-    secrets.insert("default".to_string(), secret);
+    secrets.insert(
+        "default".to_string(),
+        JwtSecret::HS256 {
+            secret: SECRET.to_string(),
+        },
+    );
     auth.update_jwt(&secrets);
 
     let result = auth.authorize(USERNAME, SECRET.as_bytes());

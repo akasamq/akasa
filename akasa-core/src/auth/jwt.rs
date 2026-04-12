@@ -1,15 +1,21 @@
 use std::collections::HashMap;
 
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
-use prometheus::{register_counter_vec, CounterVec};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::config::JwtSecret;
+#[derive(Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct Claims {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sub: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exp: Option<usize>,
+    #[serde(default, skip_serializing_if = "skip_false")]
+    pub superuser: bool,
+}
 
-lazy_static::lazy_static! {
-    pub static ref JWT_COUNTER: CounterVec =
-        register_counter_vec!("akasa_jwt_valid", "JWT auth", &["name"]).unwrap();
+fn skip_false(b: &bool) -> bool {
+    !b
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -28,6 +34,13 @@ pub enum JwtEncodeError {
     EncodeError(#[from] jsonwebtoken::errors::Error),
 }
 
+/// A secret entry for JWT verification/signing.
+pub enum JwtSecretEntry {
+    Hs256 { secret: String },
+    Hs384 { secret: String },
+    Hs512 { secret: String },
+}
+
 #[derive(Clone)]
 struct Secret {
     decoding_key: DecodingKey,
@@ -39,6 +52,8 @@ pub struct JWT {
     secrets: HashMap<String, Secret>,
     header: Header,
     encoding_key: Option<EncodingKey>,
+    /// Optional hook called on successful decode with the secret name used.
+    on_decode: Option<fn(&str)>,
 }
 
 impl Default for JWT {
@@ -51,38 +66,45 @@ impl Default for JWT {
             secrets: Default::default(),
             header: Default::default(),
             encoding_key: None,
+            on_decode: None,
         }
     }
 }
 
 impl JWT {
-    pub fn update_from(&mut self, m: &HashMap<String, JwtSecret>) {
-        for (name, secret) in m.iter() {
-            let decoding_key = match secret {
-                JwtSecret::HS256 { secret } => {
+    /// Register a callback invoked on every successful decode.
+    /// The callback receives the name of the secret that matched.
+    pub fn set_on_decode(&mut self, f: fn(&str)) {
+        self.on_decode = Some(f);
+    }
+
+    pub fn update_from<'a>(
+        &mut self,
+        entries: impl IntoIterator<Item = (&'a str, JwtSecretEntry)>,
+    ) {
+        for (name, entry) in entries {
+            let decoding_key = match entry {
+                JwtSecretEntry::Hs256 { secret } => {
                     let b = secret.as_bytes();
                     self.header.alg = Algorithm::HS256;
-                    let encoding_key = EncodingKey::from_secret(b);
-                    self.encoding_key = Some(encoding_key);
+                    self.encoding_key = Some(EncodingKey::from_secret(b));
                     DecodingKey::from_secret(b)
                 }
-                JwtSecret::HS384 { secret } => {
+                JwtSecretEntry::Hs384 { secret } => {
                     let b = secret.as_bytes();
                     self.header.alg = Algorithm::HS384;
-                    let encoding_key = EncodingKey::from_secret(b);
-                    self.encoding_key = Some(encoding_key);
+                    self.encoding_key = Some(EncodingKey::from_secret(b));
                     DecodingKey::from_secret(b)
                 }
-                JwtSecret::HS512 { secret } => {
+                JwtSecretEntry::Hs512 { secret } => {
                     let b = secret.as_bytes();
                     self.header.alg = Algorithm::HS512;
-                    let encoding_key = EncodingKey::from_secret(b);
-                    self.encoding_key = Some(encoding_key);
+                    self.encoding_key = Some(EncodingKey::from_secret(b));
                     DecodingKey::from_secret(b)
                 }
             };
             let s = Secret { decoding_key };
-            if let Some(_secret) = self.secrets.insert(name.to_string(), s) {
+            if self.secrets.insert(name.to_string(), s).is_some() {
                 log::warn!("JWT secret replaced by name {name}");
             }
         }
@@ -107,10 +129,12 @@ impl JWT {
         let token = String::from_utf8_lossy(token);
         let mut e = JwtDecodeError::InitError;
         for (name, secret) in self.secrets.iter() {
-            match decode(&token, &secret.decoding_key, &self.validation) {
-                Ok(token) => {
-                    JWT_COUNTER.with_label_values(&[name]).inc();
-                    return Ok(token.claims);
+            match decode(&*token, &secret.decoding_key, &self.validation) {
+                Ok(data) => {
+                    if let Some(f) = self.on_decode {
+                        f(name);
+                    }
+                    return Ok(data.claims);
                 }
                 Err(err) => e = JwtDecodeError::ValidationError(err),
             }
