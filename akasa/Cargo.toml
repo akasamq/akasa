@@ -9,6 +9,7 @@ edition = "2021"
 akasa-core = { path = "../akasa-core" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+serde = { workspace = true }
 serde_yaml = "0.9"
 env_logger = "0.11"
 log = { workspace = true }
@@ -22,3 +23,4 @@ tikv-jemallocator = { version = "0.6", optional = true }
 [features]
 default = ["jemalloc"]
 jemalloc = ["tikv-jemallocator"]
+jwt = ["akasa-core/jwt"]

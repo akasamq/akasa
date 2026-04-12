@@ -15,6 +15,7 @@ The underlying MQTT protocol message codec ([mqtt-proto][mqtt-proto]) is careful
 - [x] Support [Proxy Protocol V2][proxy-protocol]
 - [x] Use a [Hook trait][hook-trait] to extend the server
 - [x] Simple password file based authentication
+- [x] JWT authentication with secrets file
 - [ ] Cluster mode (*coming soon*)
 
 ## How to Use
@@ -36,6 +37,7 @@ cargo build --release
 #  default-config   Generate default config to stdout
 #  insert-password  Insert a password to the password file
 #  remove-password  Remove a password from the password file
+#  jwt-gen          Generate jwt token
 #  help             Print this message or the help of the given subcommand(s)
 ```
 
