@@ -121,6 +121,7 @@ clean session : {}
             if !session.clean_session && session.protocol == old_state.protocol {
                 session.server_packet_id = old_state.server_packet_id;
                 session.pending_packets = old_state.pending_packets;
+                session.pending_packets.reset_last_sent();
                 session.qos2_pids = old_state.qos2_pids;
                 session.subscribes = old_state.subscribes;
                 session_present = true;

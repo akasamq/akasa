@@ -146,6 +146,16 @@ impl<P: Debug> PendingPackets<P> {
     pub fn set_max_inflight(&mut self, new_value: u16) {
         self.max_inflight = new_value;
     }
+
+    pub fn reset_last_sent(&mut self) {
+        for status in &mut self.packets {
+            match status {
+                PendingPacketStatus::New { last_sent, .. } => *last_sent = 0,
+                PendingPacketStatus::Pubrec { last_sent, .. } => *last_sent = 0,
+                PendingPacketStatus::Complete => {}
+            }
+        }
+    }
 }
 
 pub enum PendingPacketStatus<P> {

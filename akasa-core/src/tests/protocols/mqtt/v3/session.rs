@@ -38,6 +38,15 @@ async fn test_clean_session(clean_session: bool, reconnect_clean_session: bool) 
         client.subscribe(11, vec![("abc/1", QoS::Level1)]).await;
     }
 
+    if session_present {
+        client
+            .recv_publish(QoS::Level1, 1, "abc/1", vec![3, 5, 55], |p| {
+                p.dup = true;
+            })
+            .await;
+        client.send_puback(1).await;
+    }
+
     let received_pid = if session_present { 2 } else { 1 };
     client
         .send_publish(QoS::Level1, 12, "abc/1", vec![3, 5, 55], |_| ())
