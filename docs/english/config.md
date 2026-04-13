@@ -45,8 +45,6 @@ listeners:
     reuse_port: false
     # Enable prometheus on location /metrics
     prometheus: true
-    # Enable Swagger-UI for api documentation on location /swagger-ui/
-    swagger_ui: true
 # Password file based authentication, the config used to check username/password fields in connect packet.
 auth:
   enable: true

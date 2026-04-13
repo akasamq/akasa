@@ -22,7 +22,6 @@ docker run --init -it --rm -p 1883:1883 -v "$HOME/local/etc":/opt thewawar/akasa
 或者你可以直接从源码编译:
 ```shell
 git clone https://github.com/akasamq/akasa.git && cd akasa
-# 可能你需要先安装 openssl: https://docs.rs/openssl/latest/openssl/#automatic
 cargo build --release
 
 ./target/release/akasa --help

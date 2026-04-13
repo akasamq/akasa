@@ -45,8 +45,6 @@ listeners:
     reuse_port: false
     # 启用 Prometheus 监控，在 /metrics 路径下
     prometheus: true
-    # 启用 Swagger-UI 用于 API 文档，在 /swagger-ui/ 路径下
-    swagger_ui: true
 # 基于密码文件的认证，密码用来校验 connect 数据包中的 username/password 字段
 auth:
   enable: true

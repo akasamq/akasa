@@ -27,7 +27,6 @@ docker run --init -it --rm -p 1883:1883 -v "$HOME/local/etc":/opt thewawar/akasa
 Or build from source:
 ```shell
 git clone https://github.com/akasamq/akasa.git && cd akasa
-# You may also need to install openssl: https://docs.rs/openssl/latest/openssl/#automatic
 cargo build --release
 
 ./target/release/akasa --help
