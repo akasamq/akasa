@@ -20,7 +20,7 @@ use crate::config::SharedSubscriptionMode;
 use crate::protocols::mqtt::{BroadcastPackets, RetainContent};
 use crate::state::{GlobalState, NormalMessage};
 
-use super::common::build_error_disconnect;
+use super::common::{build_error_disconnect, empty_topic_name, get_or_assign_server_topic_alias};
 use super::{PubPacket, Session};
 
 #[inline]
@@ -457,11 +457,27 @@ pub(crate) fn recv_publish(
         if encode_len > session.max_packet_size as usize {
             return None;
         }
+        let mut topic_name = msg.topic_name.clone();
+        if session.topic_alias_max > 0 {
+            let (alias, is_new_mapping) = get_or_assign_server_topic_alias(
+                session.topic_alias_max,
+                &mut session.server_topic_aliases_by_topic,
+                &mut session.server_topic_aliases_by_alias,
+                &mut session.server_alias_tick,
+                &topic_name,
+            );
+            if alias > 0 {
+                properties.topic_alias = Some(alias);
+                if !is_new_mapping {
+                    topic_name = empty_topic_name().clone();
+                }
+            }
+        }
         let rv_packet = Publish {
             dup: false,
             qos_pid: QosPid::Level0,
             retain: msg.retain,
-            topic_name: msg.topic_name.clone(),
+            topic_name,
             payload: msg.payload.clone(),
             properties,
         };
