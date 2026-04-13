@@ -113,7 +113,7 @@ pub async fn handle_accept<
             })
             .await?;
         tls_sni = tls_stream.get_ref().1.server_name().map(ToOwned::to_owned);
-        TlsWrapper::Tls(Box::new(tls_stream))
+        TlsWrapper::Tls(tls_stream)
     } else {
         TlsWrapper::Raw(conn)
     };
@@ -144,14 +144,14 @@ pub async fn handle_accept<
             }
         };
         WebSocketWrapper::WebSocket {
-            stream: Box::new(stream),
+            stream,
             read_data: Bytes::new(),
             read_data_idx: 0,
             pending_pong: None,
             closed: false,
         }
     } else {
-        WebSocketWrapper::Raw(Box::new(tls_wrapper))
+        WebSocketWrapper::Raw(tls_wrapper)
     };
 
     let (packet_type, remaining_len, total_len) = decode_raw_header_async(&mut ws_wrapper)
@@ -298,9 +298,10 @@ pub struct ConnectionArgs {
     pub(crate) tls_acceptor: Option<TlsAcceptor>,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum TlsWrapper<S> {
     Raw(S),
-    Tls(Box<TlsStream<S>>),
+    Tls(TlsStream<S>),
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TlsWrapper<S> {
@@ -341,10 +342,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsWrapper<S> {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum WebSocketWrapper<S> {
-    Raw(Box<TlsWrapper<S>>),
+    Raw(TlsWrapper<S>),
     WebSocket {
-        stream: Box<WebSocketStream<TlsWrapper<S>>>,
+        stream: WebSocketStream<TlsWrapper<S>>,
         read_data: Bytes,
         read_data_idx: usize,
         pending_pong: Option<Bytes>,
@@ -353,7 +355,7 @@ enum WebSocketWrapper<S> {
 }
 
 fn ws_send_pong<S: AsyncRead + AsyncWrite + Unpin>(
-    stream: &mut Box<WebSocketStream<TlsWrapper<S>>>,
+    stream: &mut WebSocketStream<TlsWrapper<S>>,
     pong: &mut Option<Bytes>,
     cx: &mut Context<'_>,
 ) -> io::Result<()> {
