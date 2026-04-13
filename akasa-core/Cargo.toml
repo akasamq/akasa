@@ -27,7 +27,6 @@ pin-project-lite = "0.2"
 rand = { workspace = true, features = ["thread_rng"] }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-rustls-pemfile = "2"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

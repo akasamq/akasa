@@ -19,10 +19,10 @@ use futures_lite::{FutureExt, Stream};
 use futures_sink::Sink;
 use futures_util::TryFutureExt;
 use mqtt_proto::{decode_raw_header_async, v3, v5, Error, IoErrorKind, Protocol};
-use rustls::pki_types::CertificateDer;
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::WebPkiClientVerifier;
 use rustls::{RootCertStore, ServerConfig};
-use rustls_pemfile::{certs, private_key};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_rustls::server::TlsStream;
 use tokio_rustls::TlsAcceptor;
@@ -212,41 +212,37 @@ fn build_tls_context(listener: &TlsListener) -> io::Result<TlsAcceptor> {
     }
 
     // Load certificate chain
-    let cert_file = File::open(&listener.cert_file).map_err(|err| {
+    let cert_reader = File::open(&listener.cert_file).map_err(|err| {
         log::error!("Cannot open certfile: {}", err);
         io::Error::from(io::ErrorKind::InvalidInput)
     })?;
-    let cert_chain: Vec<CertificateDer<'static>> = certs(&mut BufReader::new(cert_file))
-        .collect::<Result<_, _>>()
-        .map_err(|err| {
-            log::error!("Invalid certfile: {}", err);
-            io::Error::from(io::ErrorKind::InvalidInput)
-        })?;
+    let cert_chain: Vec<CertificateDer<'static>> =
+        CertificateDer::pem_reader_iter(&mut BufReader::new(cert_reader))
+            .collect::<Result<_, _>>()
+            .map_err(|err| {
+                log::error!("Invalid certfile: {}", err);
+                io::Error::from(io::ErrorKind::InvalidInput)
+            })?;
 
     // Load private key
-    let key_file = File::open(&listener.key_file).map_err(|err| {
+    let key_reader = File::open(&listener.key_file).map_err(|err| {
         log::error!("Cannot open keyfile: {}", err);
         io::Error::from(io::ErrorKind::InvalidInput)
     })?;
-    let key = private_key(&mut BufReader::new(key_file))
-        .map_err(|err| {
-            log::error!("Invalid keyfile: {}", err);
-            io::Error::from(io::ErrorKind::InvalidInput)
-        })?
-        .ok_or_else(|| {
-            log::error!("No private key found in keyfile");
-            io::Error::from(io::ErrorKind::InvalidInput)
-        })?;
+    let key = PrivateKeyDer::from_pem_reader(&mut BufReader::new(key_reader)).map_err(|err| {
+        log::error!("Invalid keyfile: {}", err);
+        io::Error::from(io::ErrorKind::InvalidInput)
+    })?;
 
     let server_config = if listener.verify_peer {
         // Load CA certs for client verification
         let ca_file = listener.ca_file.as_ref().unwrap();
-        let ca_f = File::open(ca_file).map_err(|err| {
+        let ca_reader = File::open(ca_file).map_err(|err| {
             log::error!("Cannot open CA-certfile: {}", err);
             io::Error::from(io::ErrorKind::InvalidInput)
         })?;
         let mut root_store = RootCertStore::empty();
-        for cert in certs(&mut BufReader::new(ca_f)) {
+        for cert in CertificateDer::pem_reader_iter(&mut BufReader::new(ca_reader)) {
             let cert = cert.map_err(|err| {
                 log::error!("Invalid CA-certfile: {}", err);
                 io::Error::from(io::ErrorKind::InvalidInput)
