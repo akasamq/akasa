@@ -463,6 +463,9 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: 
                 Ok(msg) => {
                     let (stop, sender_opt) = handle_control(&mut session, msg, true);
                     if let Some(sender) = sender_opt {
+                        while let Ok((sender_id, normal_msg)) = receiver.normal.try_recv() {
+                            let _ = handle_normal(&mut session, sender_id, normal_msg);
+                        }
                         let old_state = session.build_state(receiver);
                         if let Err(err) = sender.send_async(old_state).await {
                             log::warn!("offline send session state failed: {err:?}");

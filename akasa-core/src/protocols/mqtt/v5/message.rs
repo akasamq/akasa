@@ -690,7 +690,7 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: 
 async fn handle_will(session: &mut Session, global: &Arc<GlobalState>) -> io::Result<()> {
     if let Some(last_will) = session.last_will.as_ref() {
         let delay_interval = last_will.properties.delay_interval.unwrap_or(0);
-        if delay_interval == 0 {
+        if delay_interval == 0 || session.session_expiry_interval == 0 {
             log::debug!(
                 "[{}] broadcast_packets.len(): {}",
                 session.client_id,
