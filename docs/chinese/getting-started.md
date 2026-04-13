@@ -1,10 +1,6 @@
 
 # 入门指南
 
-## 安装依赖
-
-如果你的系统里还没安装 openssl, 请先根据[这个指南](https://docs.rs/openssl/latest/openssl/#automatic)安装 openssl.
-
 ## 构建项目
 
 ```shell

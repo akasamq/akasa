@@ -1,10 +1,6 @@
 
 # Getting Started Guide
 
-## Install dependency
-
-If openssl not install on your system, please follow [the guide](https://docs.rs/openssl/latest/openssl/#automatic) to install it first.
-
 ## Build the project
 
 ```shell
