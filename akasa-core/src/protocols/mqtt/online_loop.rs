@@ -15,12 +15,18 @@ use futures_lite::Stream;
 use futures_sink::Sink;
 use hashbrown::HashMap;
 use mqtt_proto::{v3, v5, GenericPollPacket, GenericPollPacketState, PollHeader, QoS, VarBytes};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::hook::{handle_request, Hook, HookAction, HookRequest, HookResponse};
 use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
 const WRITE_BATCH_SIZE: usize = 2048;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Disconnected {
+    ByClient,
+    ByServer,
+}
 
 pub struct OnlineLoop<'a, C, S, H, Hk>
 where
@@ -45,6 +51,8 @@ where
     session_state_sender: Option<(SendSink<'static, S::SessionState>, bool)>,
     write_packets_max: usize,
     write_packets: VecDeque<WritePacket<S::Packet>>,
+    draining: Option<Disconnected>,
+    drain_sleep: Option<Pin<Box<tokio::time::Sleep>>>,
 }
 
 impl<'a, C, S, H, Hk> OnlineLoop<'a, C, S, H, Hk>
@@ -81,6 +89,8 @@ where
             write_packets: VecDeque::with_capacity(16),
             session_state_sender: None,
             hook_fut: None,
+            draining: None,
+            drain_sleep: None,
         }
     }
 }
@@ -128,6 +138,8 @@ where
             write_packets_max,
             write_packets,
             taken_over,
+            draining,
+            drain_sleep,
         } = self.get_mut();
 
         let current_client_id = session.client_id();
@@ -215,6 +227,9 @@ where
         // Read data from client connection
         //   * Produce to: [write_packets, broadcast_packets, external_request]
         loop {
+            if session.disconnected().is_some() {
+                break;
+            }
             if too_much_write_data(write_packets, *write_packets_max)
                 || session.broadcast_packets_cnt() >= session.broadcast_packets_max()
             {
@@ -325,6 +340,9 @@ where
         //   * Produce to: [write_packets]
         // FIXME: drop message when pending queue are full
         loop {
+            if session.disconnected().is_some() {
+                break;
+            }
             if too_much_write_data(write_packets, *write_packets_max) {
                 *normal_stream_unfinish = true;
                 break;
@@ -538,8 +556,87 @@ where
 
         // FIXME: handle extension request here
 
-        if session.disconnected() {
-            return Poll::Ready(None);
+        if draining.is_none() {
+            *draining = session.disconnected();
+        }
+
+        if draining.is_some() {
+            while !write_packets.is_empty() {
+                let (mut data_all, mut data_idx) = (Vec::new(), 0);
+                while let Some(write_packet) = write_packets.pop_front() {
+                    match write_packet {
+                        // NOTE: this must be the first item (partially-written residual)
+                        WritePacket::Data((data, idx)) => {
+                            data_all = match data {
+                                VarBytes::Dynamic(d) => d,
+                                VarBytes::Fixed2(d) => d.to_vec(),
+                                VarBytes::Fixed4(d) => d.to_vec(),
+                            };
+                            data_idx = idx;
+                        }
+                        WritePacket::Packet(pkt) => match pkt.encode() {
+                            Ok(data) => data_all.extend(data.as_ref()),
+                            Err(err) => return Poll::Ready(Some(err)),
+                        },
+                    }
+                    if data_all.len() >= WRITE_BATCH_SIZE {
+                        break;
+                    }
+                }
+                match Pin::new(&mut *conn).poll_write(cx, &data_all[data_idx..]) {
+                    Poll::Ready(Ok(size)) => {
+                        data_idx += size;
+                        if data_idx < data_all.len() {
+                            write_packets.push_front(WritePacket::Data((
+                                VarBytes::Dynamic(data_all),
+                                data_idx,
+                            )));
+                        }
+                    }
+                    Poll::Ready(Err(err)) => return Poll::Ready(Some(err)),
+                    Poll::Pending => {
+                        write_packets
+                            .push_front(WritePacket::Data((VarBytes::Dynamic(data_all), data_idx)));
+                        return Poll::Pending;
+                    }
+                }
+            }
+            match Pin::new(&mut *conn).poll_flush(cx) {
+                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Err(err)) => return Poll::Ready(Some(err)),
+                Poll::Pending => return Poll::Pending,
+            }
+            match Pin::new(&mut *conn).poll_shutdown(cx) {
+                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Err(_)) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
+            }
+            if *draining != Some(Disconnected::ByServer) {
+                return Poll::Ready(None);
+            }
+            if drain_sleep.is_none() {
+                *drain_sleep = Some(Box::pin(tokio::time::sleep(
+                    std::time::Duration::from_secs(1),
+                )));
+            }
+            if let Some(sleep) = drain_sleep.as_mut() {
+                if sleep.as_mut().poll(cx).is_ready() {
+                    return Poll::Ready(None);
+                }
+            }
+            let mut drain_buf = [MaybeUninit::uninit(); 256];
+            let mut drain_rb = ReadBuf::uninit(&mut drain_buf);
+            match Pin::new(&mut *conn).poll_read(cx, &mut drain_rb) {
+                Poll::Ready(Ok(())) if drain_rb.filled().is_empty() => {
+                    return Poll::Ready(None);
+                }
+                Poll::Ready(Ok(())) => {
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(_)) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
+            }
         }
 
         // Check if all pending
@@ -639,7 +736,7 @@ pub trait OnlineSession {
     type SessionState;
 
     fn client_id(&self) -> ClientId;
-    fn disconnected(&self) -> bool;
+    fn disconnected(&self) -> Option<Disconnected>;
     fn build_state(&mut self, receiver: ClientReceiver) -> Self::SessionState;
 
     fn consume_broadcast(&mut self, count: usize);

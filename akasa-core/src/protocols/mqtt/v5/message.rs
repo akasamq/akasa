@@ -24,7 +24,7 @@ use crate::hook::{
     SubscribeAction, UnsubscribeAction,
 };
 use crate::protocols::mqtt::{
-    BroadcastPackets, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
+    BroadcastPackets, Disconnected, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
 };
 use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
@@ -340,8 +340,14 @@ impl OnlineSession for Session {
     fn client_id(&self) -> ClientId {
         self.client_id
     }
-    fn disconnected(&self) -> bool {
-        self.client_disconnected || self.server_disconnected
+    fn disconnected(&self) -> Option<Disconnected> {
+        if self.server_disconnected && !self.client_disconnected {
+            Some(Disconnected::ByServer)
+        } else if self.client_disconnected {
+            Some(Disconnected::ByClient)
+        } else {
+            None
+        }
     }
     fn build_state(&mut self, receiver: ClientReceiver) -> Self::SessionState {
         let mut pending_packets = PendingPackets::new(0, 0, 0);
@@ -388,7 +394,7 @@ impl OnlineSession for Session {
         match err {
             ErrorV5::Common(Error::IoError(kind)) => {
                 if kind == IoErrorKind::UnexpectedEof {
-                    if !self.disconnected() {
+                    if self.disconnected().is_none() {
                         Err(Some(io::ErrorKind::UnexpectedEof.into()))
                     } else {
                         Err(None)
@@ -522,6 +528,9 @@ impl OnlineSession for Session {
     }
 
     fn after_handle_packet(&mut self, write_packets: &mut VecDeque<WritePacket<Self::Packet>>) {
+        if self.disconnected().is_some() {
+            return;
+        }
         let pending_packets = after_handle_packet(self);
         write_packets.extend(pending_packets.into_iter().map(WritePacket::Packet));
     }
@@ -690,7 +699,7 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: 
 async fn handle_will(session: &mut Session, global: &Arc<GlobalState>) -> io::Result<()> {
     if let Some(last_will) = session.last_will.as_ref() {
         let delay_interval = last_will.properties.delay_interval.unwrap_or(0);
-        if delay_interval == 0 {
+        if delay_interval == 0 || session.session_expiry_interval == 0 {
             log::debug!(
                 "[{}] broadcast_packets.len(): {}",
                 session.client_id,
@@ -745,7 +754,7 @@ fn handle_control(
                     "kick \"{}\", reason: {}, online: {}",
                     session.client_identifier,
                     reason,
-                    !session.disconnected(),
+                    session.disconnected().is_none(),
                 );
                 stop = true;
             }

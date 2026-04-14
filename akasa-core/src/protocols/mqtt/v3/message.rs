@@ -21,7 +21,7 @@ use crate::hook::{
     SubscribeAction, UnsubscribeAction,
 };
 use crate::protocols::mqtt::{
-    BroadcastPackets, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
+    BroadcastPackets, Disconnected, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
 };
 use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
@@ -222,8 +222,8 @@ impl OnlineSession for Session {
     fn client_id(&self) -> ClientId {
         self.client_id
     }
-    fn disconnected(&self) -> bool {
-        self.disconnected
+    fn disconnected(&self) -> Option<Disconnected> {
+        self.disconnected.then_some(Disconnected::ByClient)
     }
     fn build_state(&mut self, receiver: ClientReceiver) -> Self::SessionState {
         let mut pending_packets = PendingPackets::new(0, 0, 0);
@@ -268,7 +268,7 @@ impl OnlineSession for Session {
     ) -> Result<(), Option<io::Error>> {
         log::debug!("[{}] mqtt v3.x codec error: {}", self.client_id, err);
         if err.is_eof() {
-            if !self.disconnected() {
+            if self.disconnected().is_none() {
                 Err(Some(io::ErrorKind::UnexpectedEof.into()))
             } else {
                 Err(None)
@@ -463,6 +463,9 @@ async fn handle_offline(mut session: Session, receiver: ClientReceiver, global: 
                 Ok(msg) => {
                     let (stop, sender_opt) = handle_control(&mut session, msg, true);
                     if let Some(sender) = sender_opt {
+                        while let Ok((sender_id, normal_msg)) = receiver.normal.try_recv() {
+                            let _ = handle_normal(&mut session, sender_id, normal_msg);
+                        }
                         let old_state = session.build_state(receiver);
                         if let Err(err) = sender.send_async(old_state).await {
                             log::warn!("offline send session state failed: {err:?}");
