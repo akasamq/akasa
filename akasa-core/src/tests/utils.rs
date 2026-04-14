@@ -55,6 +55,7 @@ pub struct MockConn {
     data_in: Vec<u8>,
     chan_in: Receiver<Vec<u8>>,
     chan_out: PollSender<Vec<u8>>,
+    shutdown: bool,
 }
 
 impl MockConn {
@@ -67,6 +68,7 @@ impl MockConn {
             data_in: Vec::new(),
             chan_in: in_rx,
             chan_out: PollSender::new(out_tx),
+            shutdown: false,
         };
         let control = MockConnControl {
             chan_in: in_tx,
@@ -130,6 +132,9 @@ impl AsyncRead for MockConn {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf,
     ) -> Poll<io::Result<()>> {
+        if self.shutdown {
+            return Poll::Ready(Ok(()));
+        }
         // let peer = self.peer.clone();
         if self.data_in.is_empty() {
             self.data_in = match self.chan_in.poll_recv(cx) {
@@ -212,6 +217,7 @@ impl AsyncWrite for MockConn {
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.shutdown = true;
         Pin::new(&mut self.chan_out)
             .as_mut()
             .poll_close(cx)
