@@ -36,7 +36,7 @@ async fn test_simple_subscription_id() {
         .await;
     client
         .recv_publish(QoS::Level0, 0, "abc/0", "data", |p| {
-            p.properties.subscription_id = Some(VarByteInt::try_from(33).unwrap());
+            p.properties.subscription_ids = vec![VarByteInt::try_from(33).unwrap()];
         })
         .await;
 
@@ -89,13 +89,66 @@ async fn test_subscription_id_with_multi_topics() {
             .await;
         client
             .recv_publish(QoS::Level0, 0, topic, "data", |p| {
-                p.properties.subscription_id = Some(VarByteInt::try_from(33).unwrap());
+                p.properties.subscription_ids = vec![VarByteInt::try_from(33).unwrap()];
             })
             .await;
-        // matched by topic filter: "#"
-        client
-            .recv_publish(QoS::Level0, 0, topic, "data", |_| ())
-            .await;
+    }
+
+    sleep(Duration::from_millis(10)).await;
+    assert!(!task.is_finished());
+}
+
+#[tokio::test]
+async fn test_multi_subscription_ids_same_client() {
+    let global = Arc::new(GlobalState::new(Config::new_allow_anonymous()));
+
+    let (task, mut client) = MockConn::start_with_global(111, Arc::clone(&global));
+    client.connect("client", true, false).await;
+
+    let filter1 = TopicFilter::try_from("sport/#").unwrap();
+    let sub_pid1 = Pid::try_from(1).unwrap();
+    let mut pkt1 = Subscribe::new(
+        sub_pid1,
+        vec![(filter1, SubscriptionOptions::new(QoS::Level0))],
+    );
+    pkt1.properties.subscription_id = Some(VarByteInt::try_from(1).unwrap());
+    client.write_packet(pkt1.into()).await;
+    assert_eq!(
+        client.read_packet().await,
+        Suback::new(sub_pid1, vec![SubscribeReasonCode::GrantedQoS0]).into()
+    );
+
+    let filter2 = TopicFilter::try_from("sport/tennis/#").unwrap();
+    let sub_pid2 = Pid::try_from(2).unwrap();
+    let mut pkt2 = Subscribe::new(
+        sub_pid2,
+        vec![(filter2, SubscriptionOptions::new(QoS::Level0))],
+    );
+    pkt2.properties.subscription_id = Some(VarByteInt::try_from(2).unwrap());
+    client.write_packet(pkt2.into()).await;
+    assert_eq!(
+        client.read_packet().await,
+        Suback::new(sub_pid2, vec![SubscribeReasonCode::GrantedQoS0]).into()
+    );
+
+    client
+        .send_publish(QoS::Level0, 0, "sport/tennis/match", "data", |_| ())
+        .await;
+
+    let packet = client.read_packet().await;
+    if let Packet::Publish(publish) = packet {
+        assert_eq!(publish.topic_name.as_ref() as &str, "sport/tennis/match");
+        assert_eq!(publish.payload.as_ref(), b"data");
+        let mut ids: Vec<u32> = publish
+            .properties
+            .subscription_ids
+            .iter()
+            .map(|id| id.value())
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 2]);
+    } else {
+        panic!("expected Publish packet");
     }
 
     sleep(Duration::from_millis(10)).await;

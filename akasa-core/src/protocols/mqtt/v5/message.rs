@@ -37,7 +37,7 @@ use super::{
         connect::{handle_auth, handle_connect, handle_disconnect, session_connect},
         publish::{
             handle_puback, handle_pubcomp, handle_publish, handle_pubrec, handle_pubrel,
-            recv_publish, send_publish, RecvPublish, SendPublish,
+            recv_publish, send_publish, RecvPublish, SendPublish, SubscriptionIds,
         },
         subscribe::{handle_subscribe, handle_unsubscribe},
     },
@@ -821,7 +821,7 @@ fn handle_normal(
                         qos,
                         retain,
                         payload,
-                        subscribe_filter,
+                        subscription_ids: SubscriptionIds::Lookup(subscribe_filter),
                         subscribe_qos,
                         properties: None,
                         // one byte is for property length
@@ -837,7 +837,7 @@ fn handle_normal(
             qos,
             mut retain,
             ref payload,
-            ref subscribe_filter,
+            ref subscribe_filters,
             subscribe_qos,
             ref properties,
             encode_len,
@@ -848,8 +848,24 @@ fn handle_normal(
                 sender,
                 msg
             );
-            if let Some(sub) = session.subscribes.get(subscribe_filter) {
-                if !global.config.retain_available || !sub.options.retain_as_published {
+            let mut retain_as_published = false;
+            let mut has_subscription = false;
+            let mut subscription_ids = Vec::new();
+            for subscribe_filter in subscribe_filters {
+                if let Some(sub) = session.subscribes.get(subscribe_filter) {
+                    has_subscription = true;
+                    retain_as_published |= sub.options.retain_as_published;
+                    if let Some(id) = sub.id {
+                        if !subscription_ids.contains(&id) {
+                            subscription_ids.push(id);
+                        }
+                    }
+                }
+            }
+            if !has_subscription {
+                None
+            } else {
+                if !global.config.retain_available || !retain_as_published {
                     retain = false;
                 }
                 recv_publish(
@@ -859,14 +875,12 @@ fn handle_normal(
                         qos,
                         retain,
                         payload,
-                        subscribe_filter,
+                        subscription_ids: SubscriptionIds::Precomputed(subscription_ids),
                         subscribe_qos,
                         properties: Some(properties),
                         encode_len,
                     },
                 )
-            } else {
-                None
             }
         }
     }
@@ -885,7 +899,7 @@ fn send_will(session: &mut Session, global: &Arc<GlobalState>) -> io::Result<()>
             response_topic: properties.response_topic,
             correlation_data: properties.correlation_data,
             user_properties: properties.user_properties,
-            subscription_id: None,
+            subscription_ids: Vec::new(),
             content_type: properties.content_type,
         };
         let encode_len = {
