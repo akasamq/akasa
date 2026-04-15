@@ -290,12 +290,12 @@ fn build_tls_context(listener: &TlsListener) -> io::Result<TlsAcceptor> {
 
 #[derive(Clone)]
 pub struct ConnectionArgs {
-    pub(crate) addr: SocketAddr,
-    pub(crate) reuse_port: bool,
-    pub(crate) proxy: bool,
-    pub(crate) proxy_tls_termination: bool,
-    pub(crate) websocket: bool,
-    pub(crate) tls_acceptor: Option<TlsAcceptor>,
+    pub addr: SocketAddr,
+    pub reuse_port: bool,
+    pub proxy: bool,
+    pub proxy_tls_termination: bool,
+    pub websocket: bool,
+    pub tls_acceptor: Option<TlsAcceptor>,
 }
 
 #[allow(clippy::large_enum_variant)]

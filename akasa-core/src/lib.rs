@@ -8,7 +8,10 @@ mod storage;
 #[cfg(test)]
 mod tests;
 
-pub use crate::config::Config;
+pub use crate::config::{
+    AuthConfig, Config, HookConfig, Http, Listener, Listeners, ProxyMode, SaslMechanism,
+    ScramPasswordInfo, SharedSubscriptionMode, TlsListener,
+};
 pub use crate::hook::{
     Hook, HookAction, HookConnectCode, HookError, HookPublishCode, HookRequest, HookResponse,
     HookResult, HookSubscribeCode, HookUnsubscribeCode, PublishAction, SubscribeAction,
