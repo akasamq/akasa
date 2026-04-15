@@ -613,7 +613,7 @@ fn handle_normal(
             qos,
             retain,
             ref payload,
-            ref subscribe_filter,
+            ref subscribe_filters,
             subscribe_qos,
             properties: _,
             encode_len: _,
@@ -630,7 +630,7 @@ fn handle_normal(
                     qos,
                     retain,
                     payload,
-                    subscribe_filter,
+                    subscribe_filter: subscribe_filters.first()?,
                     subscribe_qos,
                 },
             )

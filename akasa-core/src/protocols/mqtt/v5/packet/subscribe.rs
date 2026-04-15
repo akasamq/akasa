@@ -12,7 +12,7 @@ use mqtt_proto::{
 use crate::state::GlobalState;
 
 use super::common::{build_error_disconnect, handle_pendings};
-use super::publish::{recv_publish, RecvPublish};
+use super::publish::{recv_publish, RecvPublish, SubscriptionIds};
 use super::{Session, SubscriptionData};
 
 #[inline]
@@ -101,7 +101,7 @@ packet id : {}
                                 qos: msg.qos,
                                 retain,
                                 payload: &msg.payload,
-                                subscribe_filter: filter,
+                                subscription_ids: SubscriptionIds::Lookup(filter),
                                 subscribe_qos: granted_qos,
                                 properties: msg.properties.as_ref(),
                                 encode_len,

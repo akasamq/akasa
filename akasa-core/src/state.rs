@@ -256,7 +256,7 @@ pub enum NormalMessage {
         qos: QoS,
         topic_name: TopicName,
         payload: Bytes,
-        subscribe_filter: TopicFilter,
+        subscribe_filters: Vec<TopicFilter>,
         // [MQTTv5.0-3.8.4] keyword: downgraded
         subscribe_qos: QoS,
         properties: PublishProperties,

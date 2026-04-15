@@ -10,7 +10,7 @@ use mqtt_proto::{
     v5::{
         DisconnectReasonCode, Packet, Puback, PubackProperties, PubackReasonCode, Pubcomp,
         PubcompProperties, PubcompReasonCode, Publish, PublishProperties, Pubrec, PubrecProperties,
-        PubrecReasonCode, Pubrel, PubrelProperties, PubrelReasonCode,
+        PubrecReasonCode, Pubrel, PubrelProperties, PubrelReasonCode, VarByteInt,
     },
     Encodable, QoS, QosPid, TopicFilter, TopicName, SHARED_PREFIX,
 };
@@ -110,7 +110,7 @@ topic name : {}
         return Err(err_pkt);
     }
 
-    if properties.subscription_id.is_some() {
+    if !properties.subscription_id.is_empty() {
         let err_pkt = build_error_disconnect(
             session,
             DisconnectReasonCode::ProtocolError,
@@ -276,6 +276,12 @@ pub(crate) fn handle_pubcomp(session: &mut Session, packet: Pubcomp) {
 // ====================
 
 #[derive(Debug)]
+pub(crate) enum SubscriptionIds<'a> {
+    Lookup(&'a TopicFilter),
+    Precomputed(Vec<VarByteInt>),
+}
+
+#[derive(Debug)]
 pub(crate) struct RecvPublish<'a> {
     pub topic_name: &'a TopicName,
     pub qos: QoS,
@@ -283,7 +289,7 @@ pub(crate) struct RecvPublish<'a> {
     pub payload: &'a Bytes,
     // None for v3 publish packet
     pub properties: Option<&'a PublishProperties>,
-    pub subscribe_filter: &'a TopicFilter,
+    pub subscription_ids: SubscriptionIds<'a>,
     // [MQTTv5.0-3.8.4] keyword: downgraded
     pub subscribe_qos: QoS,
     pub encode_len: usize,
@@ -341,7 +347,8 @@ pub(crate) fn send_publish(
 
     let matches = global.route_table.get_matches(msg.topic_name);
     let matched_len = matches.len();
-    let mut senders = Vec::with_capacity(matched_len);
+    let mut senders: Vec<(crate::state::ClientId, Vec<TopicFilter>, QoS)> =
+        Vec::with_capacity(matched_len);
     for content in matches {
         let content = content.read();
         let subscribe_filter = content.topic_filter.as_ref().unwrap();
@@ -356,7 +363,15 @@ pub(crate) fn send_publish(
                     continue;
                 }
             }
-            senders.push((*client_id, subscribe_filter.clone(), *subscribe_qos));
+            if let Some((_, filters, max_qos)) = senders
+                .iter_mut()
+                .find(|(receiver_id, _, _)| receiver_id == client_id)
+            {
+                filters.push(subscribe_filter.clone());
+                *max_qos = cmp::max(*max_qos, *subscribe_qos);
+            } else {
+                senders.push((*client_id, vec![subscribe_filter.clone()], *subscribe_qos));
+            }
         }
         for (group_name, shared_clients) in &content.groups {
             let (client_id, subscribe_qos) = match global.config.shared_subscription_mode {
@@ -373,18 +388,26 @@ pub(crate) fn send_publish(
                 format!("{SHARED_PREFIX}{group_name}/{subscribe_filter}").as_str(),
             )
             .expect("full topic filter");
-            senders.push((client_id, full_filter, subscribe_qos));
+            if let Some((_, filters, max_qos)) = senders
+                .iter_mut()
+                .find(|(receiver_id, _, _)| *receiver_id == client_id)
+            {
+                filters.push(full_filter);
+                *max_qos = cmp::max(*max_qos, subscribe_qos);
+            } else {
+                senders.push((client_id, vec![full_filter], subscribe_qos));
+            }
         }
     }
 
     session.broadcast_packets_cnt += senders.len();
-    for (receiver_client_id, subscribe_filter, subscribe_qos) in senders {
+    for (receiver_client_id, subscribe_filters, subscribe_qos) in senders {
         let publish = NormalMessage::PublishV5 {
             retain: msg.retain,
             qos: msg.qos,
             topic_name: msg.topic_name.clone(),
             payload: msg.payload.clone(),
-            subscribe_filter,
+            subscribe_filters,
             subscribe_qos,
             properties: msg.properties.clone(),
             encode_len: msg.encode_len,
@@ -415,19 +438,19 @@ pub(crate) fn recv_publish(
     session: &mut Session,
     msg: RecvPublish,
 ) -> Option<(QoS, Option<Packet>)> {
-    let subscription_id = if let Some(sub) = session.subscribes.get(msg.subscribe_filter) {
-        sub.id
-    } else {
-        // the client already unsubscribed.
-        return None;
-    };
-
-    // TODO: detect costly topic name and enable topic alias
-    // TODO: support multiple subscription identifiers
-    //       (shared subscription not support multiple subscription identifiers)
-
     let mut properties = msg.properties.cloned().unwrap_or_default();
-    properties.subscription_id = subscription_id;
+    match msg.subscription_ids {
+        SubscriptionIds::Precomputed(ids) => properties.subscription_id = ids,
+        SubscriptionIds::Lookup(filter) => {
+            let subscription_id = if let Some(sub) = session.subscribes.get(filter) {
+                sub.id
+            } else {
+                // the client already unsubscribed.
+                return None;
+            };
+            properties.subscription_id = subscription_id.into_iter().collect();
+        }
+    }
 
     let final_qos = cmp::min(msg.qos, msg.subscribe_qos);
     if final_qos != QoS::Level0 {
