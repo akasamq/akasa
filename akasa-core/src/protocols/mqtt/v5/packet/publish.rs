@@ -110,7 +110,7 @@ topic name : {}
         return Err(err_pkt);
     }
 
-    if !properties.subscription_id.is_empty() {
+    if !properties.subscription_ids.is_empty() {
         let err_pkt = build_error_disconnect(
             session,
             DisconnectReasonCode::ProtocolError,
@@ -440,7 +440,7 @@ pub(crate) fn recv_publish(
 ) -> Option<(QoS, Option<Packet>)> {
     let mut properties = msg.properties.cloned().unwrap_or_default();
     match msg.subscription_ids {
-        SubscriptionIds::Precomputed(ids) => properties.subscription_id = ids,
+        SubscriptionIds::Precomputed(ids) => properties.subscription_ids = ids,
         SubscriptionIds::Lookup(filter) => {
             let subscription_id = if let Some(sub) = session.subscribes.get(filter) {
                 sub.id
@@ -448,7 +448,7 @@ pub(crate) fn recv_publish(
                 // the client already unsubscribed.
                 return None;
             };
-            properties.subscription_id = subscription_id.into_iter().collect();
+            properties.subscription_ids = subscription_id.into_iter().collect();
         }
     }
 

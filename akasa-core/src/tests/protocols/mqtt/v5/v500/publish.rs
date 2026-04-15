@@ -324,7 +324,7 @@ async fn test_forbid_publish_subscription_id() {
     client.connect("client", true, false).await;
     client
         .send_publish(QoS::Level0, 0, "xyz", "0", |p| {
-            p.properties.subscription_id = vec![VarByteInt::try_from(2).unwrap()];
+            p.properties.subscription_ids = vec![VarByteInt::try_from(2).unwrap()];
         })
         .await;
     let received_pkt = client.read_packet().await;

@@ -36,7 +36,7 @@ async fn test_simple_subscription_id() {
         .await;
     client
         .recv_publish(QoS::Level0, 0, "abc/0", "data", |p| {
-            p.properties.subscription_id = vec![VarByteInt::try_from(33).unwrap()];
+            p.properties.subscription_ids = vec![VarByteInt::try_from(33).unwrap()];
         })
         .await;
 
@@ -89,7 +89,7 @@ async fn test_subscription_id_with_multi_topics() {
             .await;
         client
             .recv_publish(QoS::Level0, 0, topic, "data", |p| {
-                p.properties.subscription_id = vec![VarByteInt::try_from(33).unwrap()];
+                p.properties.subscription_ids = vec![VarByteInt::try_from(33).unwrap()];
             })
             .await;
     }
@@ -141,7 +141,7 @@ async fn test_multi_subscription_ids_same_client() {
         assert_eq!(publish.payload.as_ref(), b"data");
         let mut ids: Vec<u32> = publish
             .properties
-            .subscription_id
+            .subscription_ids
             .iter()
             .map(|id| id.value())
             .collect();

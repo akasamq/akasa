@@ -899,7 +899,7 @@ fn send_will(session: &mut Session, global: &Arc<GlobalState>) -> io::Result<()>
             response_topic: properties.response_topic,
             correlation_data: properties.correlation_data,
             user_properties: properties.user_properties,
-            subscription_id: Vec::new(),
+            subscription_ids: Vec::new(),
             content_type: properties.content_type,
         };
         let encode_len = {
