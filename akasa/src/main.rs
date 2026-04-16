@@ -7,15 +7,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use akasa_core::{
-    dump_passwords, hash_password, load_passwords, server, AuthPassword, Config, GlobalState,
-    HashAlgorithm as CoreHashAlgorithm, MIN_SALT_LEN,
+    AuthPassword, Config, GlobalState, HashAlgorithm as CoreHashAlgorithm, MIN_SALT_LEN,
+    dump_passwords, hash_password, load_passwords, server,
 };
 use anyhow::{anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use dashmap::DashMap;
 use default_hook::DefaultHook;
-use rand::rngs::SysRng;
 use rand::TryRng;
+use rand::rngs::SysRng;
 
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 #[cfg(not(target_env = "msvc"))]

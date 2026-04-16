@@ -5,8 +5,8 @@ use std::time::Instant;
 use bytes::Bytes;
 use hashbrown::HashMap;
 use mqtt_proto::{
-    v5::{LastWill, PublishProperties, SubscriptionOptions, UserProperty, VarByteInt},
     Pid, Protocol, QoS, TopicFilter, TopicName,
+    v5::{LastWill, PublishProperties, SubscriptionOptions, UserProperty, VarByteInt},
 };
 use parking_lot::RwLock;
 

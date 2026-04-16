@@ -10,18 +10,18 @@ use flume::{Receiver, Sender};
 use futures_lite::FutureExt;
 use hashbrown::HashMap;
 use mqtt_proto::{
+    Error, IoErrorKind, Pid, Protocol, QoS, QosPid,
     v5::{
         Auth, AuthProperties, AuthReasonCode, Connect, ConnectReasonCode, DisconnectReasonCode,
         ErrorV5, Header, Packet, PollPacketState, Publish, PublishProperties, RetainHandling,
         Subscribe, SubscribeReasonCode, SubscriptionOptions, Unsubscribe,
     },
-    Error, IoErrorKind, Pid, Protocol, QoS, QosPid,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::hook::{
-    handle_request, Hook, HookAction, HookRequest, HookResponse, LockedHookContext, PublishAction,
-    SubscribeAction, UnsubscribeAction,
+    Hook, HookAction, HookRequest, HookResponse, LockedHookContext, PublishAction, SubscribeAction,
+    UnsubscribeAction, handle_request,
 };
 use crate::protocols::mqtt::{
     BroadcastPackets, Disconnected, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
@@ -29,6 +29,7 @@ use crate::protocols::mqtt::{
 use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
 use super::{
+    Session, SessionState,
     packet::{
         common::{
             after_handle_packet, build_error_connack, build_error_disconnect, handle_pendings,
@@ -36,12 +37,11 @@ use super::{
         },
         connect::{handle_auth, handle_connect, handle_disconnect, session_connect},
         publish::{
-            handle_puback, handle_pubcomp, handle_publish, handle_pubrec, handle_pubrel,
-            recv_publish, send_publish, RecvPublish, SendPublish, SubscriptionIds,
+            RecvPublish, SendPublish, SubscriptionIds, handle_puback, handle_pubcomp,
+            handle_publish, handle_pubrec, handle_pubrel, recv_publish, send_publish,
         },
         subscribe::{handle_subscribe, handle_unsubscribe},
     },
-    Session, SessionState,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -167,7 +167,7 @@ async fn handle_online<
                     write_packet(session.client_id, &mut conn, &err_pkt).await?;
                     Err(io::ErrorKind::InvalidData.into())
                 }
-            }
+            };
         }
     };
 
@@ -610,7 +610,11 @@ impl OnlineSession for Session {
                                     | SubscribeReasonCode::GrantedQoS1
                                     | SubscribeReasonCode::GrantedQoS2 => {}
                                     code => {
-                                        log::error!("action subscribe message error reason code: {:?}, topics={:?}", code, topics,);
+                                        log::error!(
+                                            "action subscribe message error reason code: {:?}, topics={:?}",
+                                            code,
+                                            topics,
+                                        );
                                         break;
                                     }
                                 }
@@ -855,10 +859,10 @@ fn handle_normal(
                 if let Some(sub) = session.subscribes.get(subscribe_filter) {
                     has_subscription = true;
                     retain_as_published |= sub.options.retain_as_published;
-                    if let Some(id) = sub.id {
-                        if !subscription_ids.contains(&id) {
-                            subscription_ids.push(id);
-                        }
+                    if let Some(id) = sub.id
+                        && !subscription_ids.contains(&id)
+                    {
+                        subscription_ids.push(id);
                     }
                 }
             }

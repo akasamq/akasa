@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use mqtt_proto::QoS;
 use serde::{Deserialize, Serialize};
@@ -305,12 +306,14 @@ impl Config {
     }
 }
 
-impl SaslMechanism {
-    pub fn from_str(value: &str) -> Option<SaslMechanism> {
+impl FromStr for SaslMechanism {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "SCRAM-SHA-256" => Some(SaslMechanism::ScramSha256),
-            "SCRAM-SHA-256-PLUS" => Some(SaslMechanism::ScramSha256Plus),
-            _ => None,
+            "SCRAM-SHA-256" => Ok(Self::ScramSha256),
+            "SCRAM-SHA-256-PLUS" => Ok(Self::ScramSha256Plus),
+            _ => Err(()),
         }
     }
 }

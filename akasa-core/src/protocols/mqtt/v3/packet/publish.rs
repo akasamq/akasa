@@ -7,9 +7,8 @@ use std::sync::Arc;
 use ahash::AHasher;
 use bytes::Bytes;
 use mqtt_proto::{
-    total_len,
+    Encodable, Pid, QoS, QosPid, TopicFilter, TopicName, total_len,
     v3::{Packet, Publish},
-    Encodable, Pid, QoS, QosPid, TopicFilter, TopicName,
 };
 
 use crate::protocols::mqtt::{BroadcastPackets, RetainContent};
@@ -162,8 +161,8 @@ pub(crate) struct RecvPublish<'a> {
 
 // Received a publish message from client or will, then publish the message to matched clients
 pub(crate) fn send_publish(session: &mut Session, msg: SendPublish, global: &Arc<GlobalState>) {
-    if msg.retain {
-        if let Some(old_content) = if msg.payload.is_empty() {
+    if msg.retain
+        && let Some(old_content) = if msg.payload.is_empty() {
             log::debug!("retain message removed");
             global.retain_table.remove(msg.topic_name)
         } else {
@@ -177,19 +176,19 @@ pub(crate) fn send_publish(session: &mut Session, msg: SendPublish, global: &Arc
             ));
             log::debug!("retain message inserted");
             global.retain_table.insert(content)
-        } {
-            log::debug!(
-                r#"old retain content:
+        }
+    {
+        log::debug!(
+            r#"old retain content:
  client identifier : {}
         topic name : {}
            payload : {:?}
                qos : {:?}"#,
-                old_content.client_identifier,
-                &old_content.topic_name.deref(),
-                old_content.payload.as_ref(),
-                old_content.qos,
-            );
-        }
+            old_content.client_identifier,
+            &old_content.topic_name.deref(),
+            old_content.payload.as_ref(),
+            old_content.qos,
+        );
     }
 
     let matches = global.route_table.get_matches(msg.topic_name);
@@ -213,17 +212,17 @@ pub(crate) fn send_publish(session: &mut Session, msg: SendPublish, global: &Arc
             subscribe_qos,
             encode_len: msg.encode_len,
         };
-        if !session.broadcast_packets.contains_key(&receiver_client_id) {
-            if let Some(sender) = global.get_client_normal_sender(&receiver_client_id) {
-                session.broadcast_packets.insert(
-                    receiver_client_id,
-                    BroadcastPackets {
-                        sink: sender.into_sink(),
-                        msgs: Default::default(),
-                        flushed: true,
-                    },
-                );
-            }
+        if !session.broadcast_packets.contains_key(&receiver_client_id)
+            && let Some(sender) = global.get_client_normal_sender(&receiver_client_id)
+        {
+            session.broadcast_packets.insert(
+                receiver_client_id,
+                BroadcastPackets {
+                    sink: sender.into_sink(),
+                    msgs: Default::default(),
+                    flushed: true,
+                },
+            );
         }
         if let Some(info) = session.broadcast_packets.get_mut(&receiver_client_id) {
             info.msgs.push_back(publish);

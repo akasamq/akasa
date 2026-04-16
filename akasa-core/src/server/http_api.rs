@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::net::TcpSocket;
 
-use crate::{protocols::http::get_router, GlobalState};
+use crate::{GlobalState, protocols::http::get_router};
 
 pub async fn serve(cfg: crate::config::Http, global: Arc<GlobalState>) -> std::io::Result<()> {
     let addr = cfg.addr;

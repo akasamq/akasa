@@ -2,17 +2,17 @@ use std::cmp;
 use std::sync::Arc;
 
 use mqtt_proto::{
+    MATCH_ALL_CHAR, MATCH_ONE_CHAR, QoS,
     v5::{
         DisconnectReasonCode, Packet, RetainHandling, Suback, SubackProperties, Subscribe,
         SubscribeReasonCode, Unsuback, UnsubackProperties, Unsubscribe, UnsubscribeReasonCode,
     },
-    QoS, MATCH_ALL_CHAR, MATCH_ONE_CHAR,
 };
 
 use crate::state::GlobalState;
 
 use super::common::{build_error_disconnect, handle_pendings};
-use super::publish::{recv_publish, RecvPublish, SubscriptionIds};
+use super::publish::{RecvPublish, SubscriptionIds, recv_publish};
 use super::{Session, SubscriptionData};
 
 #[inline]
@@ -49,7 +49,7 @@ packet id : {}
         vec![SubscribeReasonCode::SubscriptionIdentifiersNotSupported; packet.topics.len()]
     } else {
         let mut items = Vec::with_capacity(packet.topics.len());
-        for (filter, mut sub_opts) in &packet.topics {
+        for &(ref filter, mut sub_opts) in &packet.topics {
             let granted_qos = cmp::min(sub_opts.max_qos, global.config.max_allowed_qos());
             let reason_code = if !global.config.shared_subscription_available && filter.is_shared()
             {

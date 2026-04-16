@@ -3,13 +3,13 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::{Service, ServiceExt};
 
 use crate::{
+    GlobalState,
     config::{Config, Http},
     protocols::http::get_router,
-    GlobalState,
 };
 
 #[tokio::test]

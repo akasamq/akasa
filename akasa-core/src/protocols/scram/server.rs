@@ -1,14 +1,14 @@
 use std::borrow::Cow;
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use rand::distr::{Distribution, Uniform};
+use base64::engine::general_purpose::STANDARD;
 use rand::Rng;
+use rand::distr::{Distribution, Uniform};
 use ring::digest::SHA256_OUTPUT_LEN;
 use ring::hmac::Tag;
 
 use super::error::{Error, Field, Kind};
-use super::{find_proofs, NONCE_LENGTH};
+use super::{NONCE_LENGTH, find_proofs};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AuthenticationStatus {
@@ -242,7 +242,7 @@ fn parse_client_final(data: &str) -> Result<(&str, &str, &str), Error> {
 #[cfg(test)]
 mod tests {
     use super::super::{Error, Field, Kind};
-    use super::{parse_client_final, ScramServer};
+    use super::{ScramServer, parse_client_final};
 
     #[test]
     fn client_first_success() {

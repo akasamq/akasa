@@ -2,12 +2,12 @@ use std::io;
 use std::time::Instant;
 
 use mqtt_proto::{
-    v3::{Packet, Publish},
     QoS, QosPid,
+    v3::{Packet, Publish},
 };
 use tokio::io::AsyncWrite;
 
-use crate::protocols::mqtt::{get_unix_ts, PendingPacketStatus};
+use crate::protocols::mqtt::{PendingPacketStatus, get_unix_ts};
 use crate::state::ClientId;
 
 use super::Session;

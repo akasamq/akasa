@@ -9,8 +9,8 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use dashmap::DashMap;
-use flume::{bounded, Receiver, Sender};
-use mqtt_proto::{v5::PublishProperties, Protocol, QoS, TopicFilter, TopicName};
+use flume::{Receiver, Sender, bounded};
+use mqtt_proto::{Protocol, QoS, TopicFilter, TopicName, v5::PublishProperties};
 use parking_lot::Mutex;
 
 use crate::config::Config;

@@ -1,15 +1,15 @@
 use std::borrow::Cow;
 use std::num::NonZeroU32;
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use rand::distr::{Distribution, Uniform};
+use base64::engine::general_purpose::STANDARD;
 use rand::Rng;
+use rand::distr::{Distribution, Uniform};
 use ring::digest::SHA256_OUTPUT_LEN;
 use ring::hmac::Tag;
 
 use super::error::{Error, Field, Kind};
-use super::{find_proofs, hash_password, NONCE_LENGTH};
+use super::{NONCE_LENGTH, find_proofs, hash_password};
 
 pub enum ScramClient<'a> {
     New {

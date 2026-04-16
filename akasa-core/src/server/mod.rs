@@ -18,18 +18,17 @@ use flume::bounded;
 use futures_lite::{FutureExt, Stream};
 use futures_sink::Sink;
 use futures_util::TryFutureExt;
-use mqtt_proto::{decode_raw_header_async, v3, v5, Error, IoErrorKind, Protocol};
+use mqtt_proto::{Error, IoErrorKind, Protocol, decode_raw_header_async, v3, v5};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::WebPkiClientVerifier;
 use rustls::{RootCertStore, ServerConfig};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio_rustls::server::TlsStream;
 use tokio_rustls::TlsAcceptor;
+use tokio_rustls::server::TlsStream;
 use tokio_tungstenite::{
-    accept_hdr_async,
-    tungstenite::{http, Message},
-    WebSocketStream,
+    WebSocketStream, accept_hdr_async,
+    tungstenite::{Message, http},
 };
 
 use crate::config::TlsListener;
@@ -37,7 +36,7 @@ use crate::hook::Hook;
 use crate::protocols::mqtt;
 use crate::state::GlobalState;
 
-use proxy::{parse_header, Addresses};
+use proxy::{Addresses, parse_header};
 
 const CONNECT_TIMEOUT_SECS: u64 = 5;
 
@@ -530,7 +529,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for WebSocketWrapper<S> {
                         }
                         Poll::Pending => return Poll::Pending,
                         Poll::Ready(Err(_)) => {
-                            return Poll::Ready(Err(Into::into(io::ErrorKind::BrokenPipe)))
+                            return Poll::Ready(Err(Into::into(io::ErrorKind::BrokenPipe)));
                         }
                     }
                 }

@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::state::GlobalState;
 use crate::tests::utils::MockConn;
 
-use super::{build_publish, ClientV3};
+use super::{ClientV3, build_publish};
 
 #[tokio::test]
 async fn test_publish_qos0() {

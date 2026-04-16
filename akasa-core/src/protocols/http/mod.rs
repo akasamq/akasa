@@ -3,7 +3,7 @@ mod prometheus;
 
 use std::sync::Arc;
 
-use axum::{response::Html, routing::get, Json, Router};
+use axum::{Json, Router, response::Html, routing::get};
 use utoipa::OpenApi;
 
 use crate::GlobalState;

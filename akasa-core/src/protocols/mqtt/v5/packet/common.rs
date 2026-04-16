@@ -5,15 +5,15 @@ use std::time::Instant;
 
 use hashbrown::HashMap;
 use mqtt_proto::{
+    QoS, QosPid, TopicName,
     v5::{
         Connack, ConnackProperties, ConnectReasonCode, Disconnect, DisconnectProperties,
         DisconnectReasonCode, ErrorV5, Packet, Publish, Pubrel, PubrelProperties, PubrelReasonCode,
     },
-    QoS, QosPid, TopicName,
 };
 use tokio::io::AsyncWrite;
 
-use crate::protocols::mqtt::{get_unix_ts, PendingPacketStatus};
+use crate::protocols::mqtt::{PendingPacketStatus, get_unix_ts};
 use crate::state::ClientId;
 
 use super::Session;

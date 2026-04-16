@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use ConnectReasonCode::*;
 use bytes::Bytes;
 use mqtt_proto::v5::*;
 use mqtt_proto::*;
 use tokio::time::sleep;
-use ConnectReasonCode::*;
 
 use crate::config::Config;
 use crate::state::{GlobalState, HashAlgorithm};

@@ -6,9 +6,9 @@ use http_body_util::BodyExt;
 use tower::{Service, ServiceExt};
 
 use crate::{
+    GlobalState,
     config::{Config, Http},
     protocols::http::get_router,
-    GlobalState,
 };
 
 #[tokio::test]

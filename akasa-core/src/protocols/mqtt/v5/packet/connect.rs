@@ -4,11 +4,11 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use mqtt_proto::{
+    QoS,
     v5::{
         Auth, AuthProperties, AuthReasonCode, Connack, ConnackProperties, Connect,
         ConnectReasonCode, Disconnect, DisconnectReasonCode, Packet,
     },
-    QoS,
 };
 use tokio::io::AsyncWrite;
 
@@ -158,7 +158,7 @@ pub(crate) async fn handle_connect<T: AsyncWrite + Unpin>(
     }
 
     if let Some(auth_method) = session.auth_method.clone() {
-        let mechanism = if let Some(mechanism) = SaslMechanism::from_str(&auth_method) {
+        let mechanism = if let Ok(mechanism) = auth_method.parse::<SaslMechanism>() {
             mechanism
         } else {
             log::info!("connect properties auth method invalid: {}", auth_method);

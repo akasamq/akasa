@@ -8,16 +8,16 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use flume::{
-    r#async::{RecvStream, SendSink},
     Sender,
+    r#async::{RecvStream, SendSink},
 };
 use futures_lite::Stream;
 use futures_sink::Sink;
 use hashbrown::HashMap;
-use mqtt_proto::{v3, v5, GenericPollPacket, GenericPollPacketState, PollHeader, QoS, VarBytes};
+use mqtt_proto::{GenericPollPacket, GenericPollPacketState, PollHeader, QoS, VarBytes, v3, v5};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-use crate::hook::{handle_request, Hook, HookAction, HookRequest, HookResponse};
+use crate::hook::{Hook, HookAction, HookRequest, HookResponse, handle_request};
 use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
 const WRITE_BATCH_SIZE: usize = 2048;
@@ -123,15 +123,15 @@ where
         //   * Consumer finished should consider wake up Producer code
 
         let OnlineLoop {
-            ref mut session,
+            session,
             handler,
             global,
             receiver,
-            ref mut control_stream,
-            ref mut normal_stream,
-            ref mut conn,
-            ref mut read_unfinish,
-            ref mut normal_stream_unfinish,
+            control_stream,
+            normal_stream,
+            conn,
+            read_unfinish,
+            normal_stream_unfinish,
             packet_state,
             session_state_sender,
             hook_fut,
@@ -173,7 +173,10 @@ where
                     Poll::Ready(Ok(())) => {}
                     Poll::Ready(Err(_)) => {
                         // channel disconnected, cancel takeover
-                        log::info!("[{}] The connection want take over current session already ended, process canceled", current_client_id);
+                        log::info!(
+                            "[{}] The connection want take over current session already ended, process canceled",
+                            current_client_id
+                        );
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
                     }
@@ -186,7 +189,10 @@ where
                 let old_state = session.build_state(receiver.clone());
                 if Pin::new(&mut send_sink).start_send(old_state).is_err() {
                     // channel disconnected, cancel takeover
-                    log::info!("[{}] The connection want take over current session already ended, process canceled", current_client_id);
+                    log::info!(
+                        "[{}] The connection want take over current session already ended, process canceled",
+                        current_client_id
+                    );
                     cx.waker().wake_by_ref();
                     return Poll::Pending;
                 }
@@ -198,7 +204,10 @@ where
                     Poll::Ready(None)
                 }
                 Poll::Ready(Err(_)) => {
-                    log::info!("[{}] The connection want take over current session already ended, process canceled", current_client_id);
+                    log::info!(
+                        "[{}] The connection want take over current session already ended, process canceled",
+                        current_client_id
+                    );
                     cx.waker().wake_by_ref();
                     Poll::Pending
                 }
@@ -275,7 +284,7 @@ where
                                 Poll::Ready(resp) => match resp {
                                     HookResponse::Normal(Ok(actions)) => actions,
                                     HookResponse::Normal(Err(err_opt)) => {
-                                        return Poll::Ready(err_opt)
+                                        return Poll::Ready(err_opt);
                                     }
                                     _ => panic!("invalid hook response"),
                                 },
@@ -619,10 +628,10 @@ where
                     std::time::Duration::from_secs(1),
                 )));
             }
-            if let Some(sleep) = drain_sleep.as_mut() {
-                if sleep.as_mut().poll(cx).is_ready() {
-                    return Poll::Ready(None);
-                }
+            if let Some(sleep) = drain_sleep.as_mut()
+                && sleep.as_mut().poll(cx).is_ready()
+            {
+                return Poll::Ready(None);
             }
             let mut drain_buf = [MaybeUninit::uninit(); 256];
             let mut drain_rb = ReadBuf::uninit(&mut drain_buf);

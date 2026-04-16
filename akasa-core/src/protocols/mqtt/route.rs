@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use ahash::RandomState;
 use hashbrown::HashMap;
-use mqtt_proto::{QoS, TopicFilter, TopicName, LEVEL_SEP, MATCH_ALL_STR, MATCH_ONE_STR};
+use mqtt_proto::{LEVEL_SEP, MATCH_ALL_STR, MATCH_ONE_STR, QoS, TopicFilter, TopicName};
 use parking_lot::RwLock;
 
 use crate::state::ClientId;
@@ -147,10 +147,10 @@ impl RouteNode {
             // NOTE: [locks]
             //   * nodes read
             //   * content read
-            if let Some(node) = self.nodes.read().get(MATCH_ALL_STR) {
-                if !node.content.read().is_empty() {
-                    filters.push(Arc::clone(&node.content));
-                }
+            if let Some(node) = self.nodes.read().get(MATCH_ALL_STR)
+                && !node.content.read().is_empty()
+            {
+                filters.push(Arc::clone(&node.content));
             }
         }
     }
@@ -197,10 +197,10 @@ impl RouteNode {
             //   * content read
             let mut nodes = self.nodes.write();
             let mut remove_node = false;
-            if let Some(node) = nodes.get_mut(filter_item) {
-                if node.remove(rest_items, id, group) {
-                    remove_node = true;
-                }
+            if let Some(node) = nodes.get_mut(filter_item)
+                && node.remove(rest_items, id, group)
+            {
+                remove_node = true;
             }
             let remove_parent = if remove_node {
                 nodes.remove(filter_item);
@@ -293,9 +293,9 @@ pub(crate) fn split_topic(topic: &str) -> (&str, Option<&str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use Action::*;
     use hashbrown::HashMap;
     use mqtt_proto::TopicName;
-    use Action::*;
 
     impl RouteContent {
         fn to_simple(&self) -> (Option<String>, HashMap<ClientId, QoS>) {

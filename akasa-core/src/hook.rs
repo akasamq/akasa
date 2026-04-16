@@ -12,22 +12,22 @@ use mqtt_proto::{
 use thiserror::Error;
 
 use crate::protocols::mqtt::v3::{
+    Session as SessionV3,
     packet::{
         publish::handle_publish as v3_handle_publish,
         subscribe::{
             handle_subscribe as v3_handle_subscribe, handle_unsubscribe as v3_handle_unsubscribe,
         },
     },
-    Session as SessionV3,
 };
 use crate::protocols::mqtt::v5::{
+    Session as SessionV5,
     packet::{
         publish::handle_publish as v5_handle_publish,
         subscribe::{
             handle_subscribe as v5_handle_subscribe, handle_unsubscribe as v5_handle_unsubscribe,
         },
     },
-    Session as SessionV5,
 };
 use crate::protocols::mqtt::{OnlineSession, WritePacket};
 use crate::state::GlobalState;

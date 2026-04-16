@@ -1,7 +1,7 @@
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::num::NonZeroU32;
 
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD};
 use dashmap::DashMap;
 use ring::{
     digest::{Context, SHA256, SHA256_OUTPUT_LEN, SHA512, SHA512_OUTPUT_LEN},
@@ -152,10 +152,14 @@ pub fn dump_passwords<W: Write>(
                 format!("{username}:sha512,{base64_salt},{base64_hashed_password}\n")
             }
             HashAlgorithm::Sha256Pkbdf2 { iterations } => {
-                format!("{username}:sha256-pkbdf2,{iterations},{base64_salt},{base64_hashed_password}\n")
+                format!(
+                    "{username}:sha256-pkbdf2,{iterations},{base64_salt},{base64_hashed_password}\n"
+                )
             }
             HashAlgorithm::Sha512Pkbdf2 { iterations } => {
-                format!("{username}:sha512-pkbdf2,{iterations},{base64_salt},{base64_hashed_password}\n")
+                format!(
+                    "{username}:sha512-pkbdf2,{iterations},{base64_salt},{base64_hashed_password}\n"
+                )
             }
         };
         writer.write_all(line.as_bytes())?;

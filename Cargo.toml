@@ -1,15 +1,18 @@
 [workspace]
 members = ["akasa-core", "akasa"]
-resolver = "2"
+resolver = "3"
 
 [workspace.dependencies]
 dashmap = "6"
 log = "0.4"
-mqtt-proto = { git = "https://github.com/akasamq/mqtt-proto.git" }
+mqtt-proto = "0.4"
 rand = "0.10"
 serde = "1"
 serde_json = "1"
 thiserror = "2"
+
+[patch.crates-io]
+mqtt-proto = { git = "https://github.com/akasamq/mqtt-proto.git" }
 
 # [profile.release]
 # debug = true

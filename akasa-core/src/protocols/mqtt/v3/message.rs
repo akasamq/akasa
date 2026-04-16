@@ -8,17 +8,17 @@ use flume::{Receiver, Sender};
 use futures_lite::FutureExt;
 use hashbrown::HashMap;
 use mqtt_proto::{
+    Error, IoErrorKind, Pid, Protocol, QoS, QosPid,
     v3::{
         Connect, ConnectReturnCode, Header, Packet, PollPacketState, Publish, Subscribe,
         SubscribeReturnCode, Unsubscribe,
     },
-    Error, IoErrorKind, Pid, Protocol, QoS, QosPid,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::hook::{
-    handle_request, Hook, HookAction, HookRequest, HookResponse, LockedHookContext, PublishAction,
-    SubscribeAction, UnsubscribeAction,
+    Hook, HookAction, HookRequest, HookResponse, LockedHookContext, PublishAction, SubscribeAction,
+    UnsubscribeAction, handle_request,
 };
 use crate::protocols::mqtt::{
     BroadcastPackets, Disconnected, OnlineLoop, OnlineSession, PendingPackets, WritePacket,
@@ -26,16 +26,16 @@ use crate::protocols::mqtt::{
 use crate::state::{ClientId, ClientReceiver, ControlMessage, GlobalState, NormalMessage};
 
 use super::{
+    Session, SessionState,
     packet::{
         common::{after_handle_packet, handle_pendings, write_packet},
         connect::{handle_connect, handle_disconnect},
         publish::{
-            handle_puback, handle_pubcomp, handle_publish, handle_pubrec, handle_pubrel,
-            recv_publish, send_publish, RecvPublish, SendPublish,
+            RecvPublish, SendPublish, handle_puback, handle_pubcomp, handle_publish, handle_pubrec,
+            handle_pubrel, recv_publish, send_publish,
         },
         subscribe::{handle_subscribe, handle_unsubscribe},
     },
-    Session, SessionState,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -409,7 +409,11 @@ impl OnlineSession for Session {
                                     | SubscribeReturnCode::MaxLevel1
                                     | SubscribeReturnCode::MaxLevel2 => {}
                                     code => {
-                                        log::error!("action subscribe message error return code: {:?}, topics={:?}", code, topics,);
+                                        log::error!(
+                                            "action subscribe message error return code: {:?}, topics={:?}",
+                                            code,
+                                            topics,
+                                        );
                                         break;
                                     }
                                 }

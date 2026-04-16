@@ -3,16 +3,16 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use mqtt_proto::{
-    v3::{Connack, Connect, ConnectReturnCode},
     Protocol,
+    v3::{Connack, Connect, ConnectReturnCode},
 };
 use tokio::io::AsyncWrite;
 
 use crate::protocols::mqtt::{check_password, start_keep_alive_timer};
 use crate::state::{AddClientReceipt, ClientReceiver, GlobalState};
 
-use super::common::write_packet;
 use super::Session;
+use super::common::write_packet;
 
 pub(crate) async fn handle_connect<T: AsyncWrite + Unpin>(
     session: &mut Session,

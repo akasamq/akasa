@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use hashbrown::HashMap;
-use mqtt_proto::{v3::LastWill, Pid, Protocol, QoS, TopicFilter, TopicName};
+use mqtt_proto::{Pid, Protocol, QoS, TopicFilter, TopicName, v3::LastWill};
 use parking_lot::RwLock;
 
 use crate::config::Config;

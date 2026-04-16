@@ -25,10 +25,10 @@ pub use server::AuthenticationStatus;
 
 use std::num::NonZeroU32;
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use ring::digest::{self, digest, SHA256_OUTPUT_LEN};
-use ring::hmac::{self, Context, Key, HMAC_SHA256};
+use base64::engine::general_purpose::STANDARD;
+use ring::digest::{self, SHA256_OUTPUT_LEN, digest};
+use ring::hmac::{self, Context, HMAC_SHA256, Key};
 use ring::pbkdf2::{self, PBKDF2_HMAC_SHA256 as SHA256};
 
 pub fn hash_password(

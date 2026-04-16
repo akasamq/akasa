@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use tokio::{net::TcpSocket, runtime::Runtime};
 
-use super::{build_tls_context, handle_accept, ConnectionArgs};
+use super::{ConnectionArgs, build_tls_context, handle_accept};
 use crate::config::{Listener, ProxyMode, TlsListener};
 use crate::hook::Hook;
 use crate::state::GlobalState;
@@ -46,6 +46,7 @@ where
 
     rt.block_on(async move {
         let listeners = &global.config.listeners;
+        #[allow(unused_mut)]
         let mut tasks: Vec<_> = [
             listeners.mqtt.as_ref().map(
                 |Listener {

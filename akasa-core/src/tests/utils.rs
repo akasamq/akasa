@@ -8,11 +8,11 @@ use std::task::{Context, Poll};
 
 use futures_sink::Sink;
 use mqtt_proto::{v3, v5};
-use rand::rngs::SysRng;
 use rand::TryRng;
+use rand::rngs::SysRng;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::{
-    sync::mpsc::{channel, error::TryRecvError, Receiver, Sender},
+    sync::mpsc::{Receiver, Sender, channel, error::TryRecvError},
     task::JoinHandle,
 };
 use tokio_util::sync::PollSender;
@@ -22,9 +22,9 @@ use crate::hook::{
     Hook, HookAction, HookConnectCode, HookPublishCode, HookResult, HookSubscribeCode,
     HookUnsubscribeCode,
 };
-use crate::server::{handle_accept, ConnectionArgs};
+use crate::server::{ConnectionArgs, handle_accept};
 use crate::state::{AuthPassword, GlobalState, HashAlgorithm};
-use crate::{hash_password, SessionV3, SessionV5, MIN_SALT_LEN};
+use crate::{MIN_SALT_LEN, SessionV3, SessionV5, hash_password};
 
 impl GlobalState {
     pub(crate) fn insert_password(&mut self, username: &str, password: &str, algo: HashAlgorithm) {
@@ -141,7 +141,7 @@ impl AsyncRead for MockConn {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Some(v)) => v,
                 Poll::Ready(None) => {
-                    return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)))
+                    return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)));
                 }
             };
         }

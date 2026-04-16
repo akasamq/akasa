@@ -3,15 +3,15 @@ use std::io;
 use std::sync::Arc;
 
 use mqtt_proto::{
-    v3::{Packet, Suback, Subscribe, Unsubscribe},
     QoS,
+    v3::{Packet, Suback, Subscribe, Unsubscribe},
 };
 
 use crate::state::GlobalState;
 
-use super::common::handle_pendings;
-use super::publish::{recv_publish, RecvPublish};
 use super::Session;
+use super::common::handle_pendings;
+use super::publish::{RecvPublish, recv_publish};
 
 #[inline]
 pub(crate) fn handle_subscribe(
@@ -42,8 +42,8 @@ packet id : {}
 
         let mut process_pendings = false;
         for msg in global.retain_table.get_matches(filter) {
-            if msg.qos <= granted_qos {
-                if let Some((final_qos, packet_opt)) = recv_publish(
+            if msg.qos <= granted_qos
+                && let Some((final_qos, packet_opt)) = recv_publish(
                     session,
                     RecvPublish {
                         topic_name: &msg.topic_name,
@@ -53,13 +53,13 @@ packet id : {}
                         subscribe_filter: filter,
                         subscribe_qos: granted_qos,
                     },
-                ) {
-                    if let Some(packet) = packet_opt {
-                        rv_packets.push(packet);
-                    }
-                    if final_qos != QoS::Level0 {
-                        process_pendings = true;
-                    }
+                )
+            {
+                if let Some(packet) = packet_opt {
+                    rv_packets.push(packet);
+                }
+                if final_qos != QoS::Level0 {
+                    process_pendings = true;
                 }
             }
         }
